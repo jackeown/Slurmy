@@ -17,7 +17,7 @@ see the [main Slurmy documentation](../README.md).
 | [`example-drodi`](example-drodi/) | Drodi 4.1.1 from its [official CASC-J13 source archive](https://tptp.org/CASC/J13/SystemSources/Drodi---4.1.1.tgz); the archive is checked against the SHA-256 recorded in its build recipe |
 | [`example-combined`](example-combined/) | All three provers in one submission, run on five easy and five hard problems with a three-second CPU limit per call |
 | [`example-template`](example-template/) | A documented, reusable Makefile workflow whose variables cover remote building, solver limits, problem globs, array layout, submission, monitoring, and synchronization |
-| [`example-maker`](example-maker/) | A one-question-at-a-time Textual application that uses an existing solver description or creates one interactively, validates all input paths, then creates an `example-NAME/` workflow |
+| [`example-generator`](example-generator/) | A one-question-at-a-time Textual application that uses an existing solver description or creates one interactively, validates all input paths, then creates a workflow under [`GENERATED/`](GENERATED/) |
 
 </details>
 
@@ -26,32 +26,33 @@ see the [main Slurmy documentation](../README.md).
 
 <blockquote>
 
-For a guided setup, launch the interactive maker:
+For a guided setup, launch the interactive generator:
 
 ```bash
-cd examples/example-maker
+cd examples/example-generator
 make
 ```
 
-The maker supplies no defaults and asks one question at a time. It first asks
-whether to use existing solver-description files or create a description by
-entering a solver root and invocation lines. It validates each solver path and
-problem glob before advancing, then asks for the per-call limits, Slurm
+The generator supplies no defaults and asks one question at a time. It first
+asks whether to use existing solver-description files or create a description
+by entering a solver root and invocation lines. It validates each solver path
+and problem glob before advancing, then asks for the per-call limits, Slurm
 resource requests, and array layout. The final review shows every resolved
-input location before **Create workflow** writes anything. It creates a sibling
-`example-NAME/` directory without overwriting existing work.
+input location before **Create workflow** writes anything. It creates
+`GENERATED/example-NAME/` without overwriting existing work.
 
 The solver descriptions, solver roots, and problems remain in their existing
-locations; they do not need to be below `examples/` or the maker directory.
-Relative paths are interpreted from `examples/example-maker/`, then converted
-to absolute paths. The generated workflow stores those paths in its description
-and path-list files, and the normal `submit.sh` packaging transfers the inputs
-when the experiment is submitted.
+locations; they do not need to be below `examples/` or the generator directory.
+Relative paths are interpreted from `examples/example-generator/`, then
+converted to absolute paths. The generated workflow stores those paths in its
+description and path-list files, and the normal `submit.sh` packaging transfers
+the inputs when the experiment is submitted.
 
 If you prefer to work directly, copy `example-template/` to a new
-`example-NAME/` directory. Its Makefile begins with one documented variable
-block. Edit that block together with `build.sh` and `solver.solver`, add files
-under `problems/`, then use the same commands as every included example:
+`example-NAME/` directory alongside the maintained examples. Its Makefile
+begins with one documented variable block. Edit that block together with
+`build.sh` and `solver.solver`, add files under `problems/`, then use the same
+commands as every included example:
 
 ```bash
 make

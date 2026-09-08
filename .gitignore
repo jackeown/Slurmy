@@ -9,3 +9,4 @@ __pycache__/
 /examples/example-*/bin/
 /examples/example-*/submit.sh
 /examples/example-*/submit.sh.files/
+/examples/GENERATED/example-*/

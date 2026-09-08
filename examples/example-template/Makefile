@@ -6,7 +6,8 @@ REPO_ROOT := ../..
 # -----------------------------------------------------------------------------
 # Workflow variables
 # Copy this directory to example-NAME and edit these values, or run the
-# interactive ../example-maker/example-maker.py application to create them.
+# interactive ../example-generator/example-generator.py application. Generated
+# workflows live one level deeper and override REPO_ROOT in workflow.mk.
 # A generated workflow.mk may override any value without changing this template.
 # -----------------------------------------------------------------------------
 # SSH alias or host name used by every build, submit, monitor, and sync command.
@@ -20,7 +21,7 @@ SOLVER_ARTIFACT ?= my-solver
 # Solver root and invocation description consumed by slurmy.py.
 SOLVER_DESCRIPTION ?= solver.solver
 # Optional newline-delimited files containing existing solver-description paths
-# and problem globs. The interactive maker uses these so paths may contain spaces.
+# and problem globs. The interactive generator uses these so paths may contain spaces.
 SOLVER_PATHS_FILE ?=
 PROBLEM_GLOBS_FILE ?=
 # Bash recipe executed by slurmy-build.py on a compute node.

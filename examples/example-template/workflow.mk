@@ -1,5 +1,6 @@
 # Optional overrides for the variables documented in Makefile.
-# The interactive example maker writes this file for generated workflows.
+# The interactive example generator writes this file for generated workflows.
+# REPO_ROOT := ../../..
 #
 # EXAMPLE_NAME := my-solver
 # SOLVER_ARTIFACT := my-solver

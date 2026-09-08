@@ -67,8 +67,8 @@ export SLURMY_HOST=another-cluster
 
 `slurmy.py`, `building-dependencies/slurmy-build.py`, and `slurmy-sync.py` use
 only the Python standard library. The `slurmy-monitor.py` dashboard and
-interactive example maker additionally need Textual, which is installed through
-`requirements.txt`:
+interactive example generator additionally need Textual, which is installed
+through `requirements.txt`:
 
 ```bash
 # Optional: skip these two lines to use your current Python environment.
@@ -77,6 +77,40 @@ source .venv/bin/activate
 
 python -m pip install -r requirements.txt
 ```
+
+</details>
+
+<details>
+<summary><strong>🧭 Generate your own workflow interactively</strong></summary>
+
+Run the example generator when you want a guided alternative to writing a
+Makefile and solver description by hand:
+
+```bash
+cd examples/example-generator
+make
+```
+
+It asks one question at a time with no default answers. You can select existing
+solver-description files or create one by entering a solver root and invocation
+lines. Solver paths and problem globs are validated as they are entered.
+Relative paths start from `examples/example-generator/` and are converted to
+absolute paths in the generated workflow.
+
+The result is written to `examples/GENERATED/example-NAME/`. Solver
+installations and benchmark files remain in their existing locations; the
+normal submission step packages them later. Review the generated settings,
+then use the standard targets:
+
+```bash
+cd ../GENERATED/example-NAME
+make
+make submit
+make monitor
+```
+
+See the [example-generator documentation](examples/example-generator/README.md)
+for the exact validation and path behavior.
 
 </details>
 
@@ -100,7 +134,7 @@ monitor` opens the interactive dashboard.
 
 See [Prover examples](examples/README.md) for the E, Drodi, and combined
 three-prover examples, the reusable workflow template, the interactive example
-maker, and the available Makefile targets.
+generator, and the available Makefile targets.
 
 </details>
 
