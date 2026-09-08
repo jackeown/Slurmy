@@ -1,0 +1,4 @@
+./bin
+# Replace this command with the invocation for your solver. Every non-comment
+# command must contain {{problem}} or a specific {{problem=path/to/file.p}}.
+./my-solver --time-limit {{cpu-limit}} {{problem}}

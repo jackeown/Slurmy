@@ -66,8 +66,8 @@ export SLURMY_HOST=another-cluster
 ```
 
 `slurmy.py`, `slurmy-build.py`, and `slurmy-sync.py` use only the Python
-standard library. The `slurmy-monitor.py` dashboard additionally needs Textual,
-which is installed through `requirements.txt`:
+standard library. The `slurmy-monitor.py` dashboard and interactive example
+maker additionally need Textual, which is installed through `requirements.txt`:
 
 ```bash
 # Optional: skip these two lines to use your current Python environment.
@@ -98,7 +98,8 @@ transfers them to `datalab` and returns once Slurm accepts the array. `make
 monitor` opens the interactive dashboard.
 
 See [Prover examples](examples/README.md) for the E, Drodi, and combined
-three-prover examples, as well as the available Makefile targets.
+three-prover examples, the reusable workflow template, the interactive example
+maker, and the available Makefile targets.
 
 </details>
 

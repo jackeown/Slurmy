@@ -16,6 +16,46 @@ see the [main Slurmy documentation](../README.md).
 | [`example-e`](example-e/) | The latest E source from its [official Git repository](https://github.com/eprover/eprover); configured and rebuilt as a first-order prover |
 | [`example-drodi`](example-drodi/) | Drodi 4.1.1 from its [official CASC-J13 source archive](https://tptp.org/CASC/J13/SystemSources/Drodi---4.1.1.tgz); the archive is checked against the SHA-256 recorded in its build recipe |
 | [`example-combined`](example-combined/) | All three provers in one submission, run on five easy and five hard problems with a three-second CPU limit per call |
+| [`example-template`](example-template/) | A documented, reusable Makefile workflow whose variables cover remote building, solver limits, problem globs, array layout, submission, monitoring, and synchronization |
+| [`example-maker`](example-maker/) | An interactive Textual application that asks for a workflow's settings and creates a ready-to-edit `example-NAME/` directory |
+
+</details>
+
+<details>
+<summary><strong>🧭 Create your own workflow</strong></summary>
+
+<blockquote>
+
+For a guided setup, launch the interactive maker:
+
+```bash
+cd examples/example-maker
+make
+```
+
+Its four tabs ask for the workflow name, SSH host, Slurm partition, problem
+globs, remote build commands and resources, solver invocation, per-call limits,
+Slurm resource requests, and array layout. The review tab shows the resulting
+structure before anything is written. **Generate workflow** creates a sibling
+`example-NAME/` directory without overwriting existing work; the application
+stays open if you want to make another.
+
+If you prefer to work directly, copy `example-template/` to a new
+`example-NAME/` directory. Its Makefile begins with one documented variable
+block. Edit that block together with `build.sh` and `solver.solver`, add files
+under `problems/`, then use the same commands as every included example:
+
+```bash
+make
+make submit
+make monitor   # Or: make sync
+```
+
+Generated workflows keep their choices in the short `workflow.mk` file and
+reuse the template Makefile unchanged. This separates experiment settings from
+the common build, submission, monitoring, and synchronization logic.
+
+</blockquote>
 
 </details>
 
