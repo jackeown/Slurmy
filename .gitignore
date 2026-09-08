@@ -2,8 +2,9 @@ __pycache__/
 *.py[cod]
 /.venv/
 /submit.sh
-/slum-results/
+/slurmy-results/
 /runsolver-build/runsolver
+/runsolver-build/.built-on-*
 /examples/example-*/source/
 /examples/example-*/bin/
 /examples/example-*/submit.sh

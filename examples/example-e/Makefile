@@ -1,12 +1,13 @@
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := all
 
+REPO_ROOT := ../..
+include $(REPO_ROOT)/slurmy-build.mk
+
 .PHONY: all build clean distclean monitor submit
 
-SOURCE := source
-EPROVER := bin/eprover
-RUNSOLVER := ../../runsolver-build/runsolver
-JOBS ?= $(shell nproc)
+EPROVER := $(abspath bin/eprover)
+EPROVER_STAMP := $(abspath bin/.e-built-on-$(SLURMY_BUILD_TAG))
 
 all: build
 	@rm -f -- submit.sh
@@ -17,7 +18,8 @@ all: build
 	printf '%s\n' '$(CURDIR)/bin' \
 		'./eprover --auto-schedule --proof-object --cpu-limit={{cpu-limit}} --memory-limit={{mem-limit}} {{problem}}' \
 		> "$$solver_file"; \
-	python ../../slum.py \
+	python ../../slurmy.py \
+		--host '$(SLURMY_HOST)' \
 		--cpu-limit 8 \
 		--wc-limit 12 \
 		--mem-limit 1GiB \
@@ -25,64 +27,54 @@ all: build
 		--memory-request 1200MiB \
 		--problems '$(CURDIR)/problems/*.p' \
 		--solver "$$solver_file" \
-		--runsolver '$(abspath $(RUNSOLVER))' \
+		--runsolver '$(RUNSOLVER)' \
 		--batch-size 2 \
 		--max-parallel 2 \
 		--worker-overhead 60 \
-		--job-name SluM-e-example \
-		--sbatch-option=--partition=CPU-amd \
+		--job-name Slurmy-e-example \
+		--sbatch-option=--partition=$(SLURMY_BUILD_PARTITION) \
 		--output '$(CURDIR)/submit.sh'
-	@printf '\n\033[1;32m✅ Built E and generated its SluM submission.\033[0m\n'
+	@printf '\n\033[1;32m✅ Generated the E submission.\033[0m\n'
 	@printf '   Inspect submit.sh and submit.sh.files/ if you want to review it.\n'
-	@printf '\033[1;36m👉 Next: run "make submit" to copy it to slurmy and submit it.\033[0m\n'
+	@printf '\033[1;36m👉 Next: run "make submit" to send it to %s.\033[0m\n' '$(SLURMY_HOST)'
 
 build: $(EPROVER) $(RUNSOLVER)
-	@printf '\033[1;32m✅ E and runsolver are ready.\033[0m\n'
+	@printf '\033[1;32m✅ E and runsolver were built on %s and are ready.\033[0m\n' '$(SLURMY_HOST)'
 
-$(SOURCE)/.git:
-	@printf '\033[1;34m⬇️  Cloning the latest E source...\033[0m\n'
-	@GIT_TERMINAL_PROMPT=0 git clone --depth 1 https://github.com/eprover/eprover.git '$(SOURCE)' || { \
-		rmdir '$(SOURCE)' 2>/dev/null || true; \
-		printf 'HTTPS cloning was unavailable; retrying over SSH.\n'; \
-		git clone --depth 1 git@github.com:eprover/eprover.git '$(SOURCE)'; \
-	}
+$(EPROVER_STAMP): build.sh $(SLURMY_BUILD_DRIVER)
+	@printf '\033[1;34m🔨 Building E in a Slurm job on %s...\033[0m\n' '$(SLURMY_HOST)'
+	python '$(SLURMY_BUILD_DRIVER)' \
+		--host '$(SLURMY_HOST)' \
+		--name eprover \
+		--recipe '$(abspath build.sh)' \
+		--output '$(abspath bin)' \
+		--artifact eprover \
+		--cpus-per-task 8 \
+		--memory 8GiB \
+		--time 00:45:00 \
+		--sbatch-option=--partition=$(SLURMY_BUILD_PARTITION)
+	@touch '$@'
+	@printf '\033[1;32m✅ Built E on %s and downloaded it.\033[0m\n' '$(SLURMY_HOST)'
 
-$(EPROVER): $(SOURCE)/.git
-	@printf '\033[1;34m🔨 Building E...\033[0m\n'
-	cd '$(SOURCE)' && ./configure
-	$(MAKE) -C '$(SOURCE)' -j'$(JOBS)' rebuild
-	mkdir -p -- '$(dir $@)'
-	install -m 0755 -- '$(SOURCE)/PROVER/eprover' '$@'
-	@printf '\033[1;32m✅ Built %s.\033[0m\n' '$(abspath $@)'
-
-$(RUNSOLVER):
-	../../runsolver-build/build.sh '$@'
-	@printf '\033[1;32m✅ Built runsolver at %s.\033[0m\n' '$(abspath $@)'
+$(EPROVER): $(EPROVER_STAMP)
+	@test -x '$@' || { printf '❌ Remote build did not produce %s.\n' '$@' >&2; exit 1; }
 
 submit:
-	@if [ ! -x submit.sh ] || [ ! -d submit.sh.files ]; then \
-		printf '❌ Nothing is ready to submit. Run "make" first.\n' >&2; \
-		exit 1; \
-	fi
-	@printf '\033[1;34m🚀 Copying the prepared files to slurmy and submitting the Slurm job array...\033[0m\n'
-	@printf '   This returns after submission; it does not wait for the solver calls to finish.\n\n'
-	@./submit.sh
+	@if [ ! -x submit.sh ] || [ ! -d submit.sh.files ]; then printf '❌ Nothing is ready. Run "make" first.\n' >&2; exit 1; fi
+	@printf '\033[1;34m🚀 Transferring the prepared files to %s and submitting the array...\033[0m\n\n' '$(SLURMY_HOST)'
+	@SLURMY_HOST='$(SLURMY_HOST)' ./submit.sh
 	@printf '\n\033[1;32m✅ Submitted successfully.\033[0m\n'
-	@printf '\033[1;36m👉 Next: run "make monitor" to watch its progress.\033[0m\n'
 
 monitor:
-	@printf '\033[1;34m📊 Opening the SluM dashboard for slurmy...\033[0m\n'
-	@printf '   It shows every current and past SluM job; press Q to leave it.\n\n'
-	@python ../../slum-monitor.py --host slurmy
-	@printf '\n👋 Closed the SluM dashboard.\n'
+	@printf '\033[1;34m📊 Opening the Slurmy dashboard for %s...\033[0m\n\n' '$(SLURMY_HOST)'
+	@python ../../slurmy-monitor.py --host '$(SLURMY_HOST)'
+	@printf '\n👋 Closed the Slurmy dashboard.\n'
 
 clean:
 	@rm -f -- submit.sh
 	@rm -rf -- submit.sh.files
 	@printf '\033[1;32m🧹 Removed the generated submission files.\033[0m\n'
-	@printf '\033[1;36m👉 Next: run "make" to generate a fresh submission.\033[0m\n'
 
 distclean: clean
-	@rm -rf -- '$(SOURCE)' bin
-	@printf '\033[1;32m🧹 Also removed the cloned source and built E binary.\033[0m\n'
-	@printf '\033[1;36m👉 Next: run "make" to clone, build, and generate everything again.\033[0m\n'
+	@rm -rf -- source bin
+	@printf '\033[1;32m🧹 Also removed old local source data and downloaded E artifacts.\033[0m\n'

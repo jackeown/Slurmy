@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Incrementally download a SluM job and publish a watchable summary."""
+"""Incrementally download a Slurmy job and publish a watchable summary."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from typing import Any, Sequence
 
 
 VERSION = "0.1.0"
-DEFAULT_HOST = "slurmy"
+DEFAULT_HOST = os.environ.get("SLURMY_HOST", "datalab")
 DEFAULT_INTERVAL = 5.0
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 TASK_LOG_RE = re.compile(r"(?:^|/)task_(\d+)_[A-Fa-f0-9]+[.]solver[.]log$")
@@ -42,20 +42,20 @@ REMOTE_SELECT_SCRIPT = r"""
 set -u
 
 requested=${1:-}
-base="$HOME/SluM"
+base="$HOME/Slurmy"
 
 if [[ ! -d "$base" ]]; then
-    echo "No SluM jobs exist under $base" >&2
+    echo "No Slurmy jobs exist under $base" >&2
     exit 1
 fi
 
 if [[ -n "$requested" ]]; then
     if [[ ! "$requested" =~ ^[A-Za-z0-9._-]+$ ]]; then
-        echo "Invalid SluM job ID: $requested" >&2
+        echo "Invalid Slurmy job ID: $requested" >&2
         exit 2
     fi
     if [[ ! -d "$base/$requested" ]]; then
-        echo "SluM job does not exist: $requested" >&2
+        echo "Slurmy job does not exist: $requested" >&2
         exit 3
     fi
     printf '%s\n' "$requested"
@@ -80,7 +80,7 @@ latest=$(
     done | sort -t $'\t' -k1,1nr -k2,2r | awk -F '\t' 'NR == 1 {print $2}'
 )
 if [[ -z "$latest" ]]; then
-    echo "No SluM jobs exist under $base" >&2
+    echo "No Slurmy jobs exist under $base" >&2
     exit 1
 fi
 printf '%s\n' "$latest"
@@ -124,7 +124,7 @@ def resolve_job_id(host: str, requested: str | None, timeout: float) -> str:
         raise SyncError(message or f"ssh exited with status {process.returncode}")
     job_id = process.stdout.decode("utf-8", "replace").strip()
     if not JOB_ID_RE.fullmatch(job_id):
-        raise SyncError(f"cluster returned an invalid SluM job ID: {job_id!r}")
+        raise SyncError(f"cluster returned an invalid Slurmy job ID: {job_id!r}")
     return job_id
 
 
@@ -164,7 +164,7 @@ def rsync_job(host: str, job_id: str, destination: Path, timeout: float) -> int:
         "--include=/results/***",
         "--exclude=*",
         "--",
-        f"{host}:SluM/{job_id}/",
+        f"{host}:Slurmy/{job_id}/",
         os.fspath(destination) + "/",
     ]
     try:
@@ -393,9 +393,9 @@ def build_summary(
     now = datetime.now().astimezone()
     return {
         "schema_version": 1,
-        "slum_job_id": job_id,
+        "slurmy_job_id": job_id,
         "host": host,
-        "remote_directory": f"$HOME/SluM/{job_id}",
+        "remote_directory": f"$HOME/Slurmy/{job_id}",
         "local_directory": os.fspath(destination.resolve()),
         "updated_at": now.isoformat(timespec="seconds"),
         "updated_epoch": now.timestamp(),
@@ -450,12 +450,12 @@ def sync_loop(args: argparse.Namespace) -> int:
     destination = (
         Path(args.output).expanduser()
         if args.output
-        else Path.cwd() / "slum-results" / job_id
+        else Path.cwd() / "slurmy-results" / job_id
     )
     if destination.exists() and not destination.is_dir():
         raise SyncError(f"output path is not a directory: {destination}")
 
-    print(f"SluM job: {job_id}")
+    print(f"Slurmy job: {job_id}")
     print(f"Local directory: {destination.resolve()}")
     cache = ArchiveStatusCache()
     iteration = 0
@@ -487,23 +487,27 @@ def sync_loop(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="slum-sync.py",
+        prog="slurmy-sync.py",
         description=(
-            "Incrementally download a SluM job's results and write live summary metadata."
+            "Incrementally download a Slurmy job's results and write live summary metadata."
         ),
     )
-    parser.add_argument("--version", action="version", version=f"SluM sync {VERSION}")
+    parser.add_argument("--version", action="version", version=f"Slurmy sync {VERSION}")
     parser.add_argument(
         "job_id",
         nargs="?",
-        metavar="SLUM_ID",
-        help="SluM job ID; the latest remote job is used when omitted",
+        metavar="SLURMY_ID",
+        help="Slurmy job ID; the latest remote job is used when omitted",
     )
-    parser.add_argument("--host", default=DEFAULT_HOST, help="SSH host alias (default: slurmy)")
+    parser.add_argument(
+        "--host",
+        default=DEFAULT_HOST,
+        help="SSH host alias (default: $SLURMY_HOST, or datalab)",
+    )
     parser.add_argument(
         "--output",
         metavar="DIRECTORY",
-        help="local job directory (default: ./slum-results/<SluM-ID>)",
+        help="local job directory (default: ./slurmy-results/<Slurmy-ID>)",
     )
     parser.add_argument(
         "--follow",
@@ -536,10 +540,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return sync_loop(args)
     except KeyboardInterrupt:
-        print("\nSluM sync stopped; already downloaded files were kept.", file=sys.stderr)
+        print("\nSlurmy sync stopped; already downloaded files were kept.", file=sys.stderr)
         return 130
     except (OSError, SyncError) as exc:
-        print(f"SluM sync: {exc}", file=sys.stderr)
+        print(f"Slurmy sync: {exc}", file=sys.stderr)
         return 1
 
 

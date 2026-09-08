@@ -1,14 +1,13 @@
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := all
 
+REPO_ROOT := ../..
+include $(REPO_ROOT)/slurmy-build.mk
+
 .PHONY: all build clean distclean monitor submit
 
-DRODI_VERSION := 4.1.1
-DRODI_URL := https://tptp.org/CASC/J13/SystemSources/Drodi---$(DRODI_VERSION).tgz
-DRODI_SHA256 := 4967b522235df03e2b3e5a35e5284aa742cbfd6875b0f0a0c904ee8e0d3220ce
-SOURCE := source
-DRODI := bin/drodi
-RUNSOLVER := ../../runsolver-build/runsolver
+DRODI := $(abspath bin/drodi)
+DRODI_STAMP := $(abspath bin/.drodi-built-on-$(SLURMY_BUILD_TAG))
 
 all: build
 	@rm -f -- submit.sh
@@ -19,7 +18,8 @@ all: build
 	printf '%s\n' '$(CURDIR)/bin' \
 		"./drodi '-cores(1)' '-timeout({{cpu-limit}})' {{problem}}" \
 		> "$$solver_file"; \
-	python ../../slum.py \
+	python ../../slurmy.py \
+		--host '$(SLURMY_HOST)' \
 		--cpu-limit 8 \
 		--wc-limit 12 \
 		--mem-limit 1GiB \
@@ -27,66 +27,54 @@ all: build
 		--memory-request 1200MiB \
 		--problems '$(CURDIR)/problems/*.p' \
 		--solver "$$solver_file" \
-		--runsolver '$(abspath $(RUNSOLVER))' \
+		--runsolver '$(RUNSOLVER)' \
 		--batch-size 2 \
 		--max-parallel 2 \
 		--worker-overhead 60 \
-		--job-name SluM-drodi-example \
-		--sbatch-option=--partition=CPU-amd \
+		--job-name Slurmy-drodi-example \
+		--sbatch-option=--partition=$(SLURMY_BUILD_PARTITION) \
 		--output '$(CURDIR)/submit.sh'
-	@printf '\n\033[1;32m✅ Built Drodi and generated its SluM submission.\033[0m\n'
+	@printf '\n\033[1;32m✅ Generated the Drodi submission.\033[0m\n'
 	@printf '   Inspect submit.sh and submit.sh.files/ if you want to review it.\n'
-	@printf '\033[1;36m👉 Next: run "make submit" to copy it to slurmy and submit it.\033[0m\n'
+	@printf '\033[1;36m👉 Next: run "make submit" to send it to %s.\033[0m\n' '$(SLURMY_HOST)'
 
 build: $(DRODI) $(RUNSOLVER)
-	@printf '\033[1;32m✅ Drodi and runsolver are ready.\033[0m\n'
+	@printf '\033[1;32m✅ Drodi and runsolver were built on %s and are ready.\033[0m\n' '$(SLURMY_HOST)'
 
-$(SOURCE)/.unpacked:
-	@printf '\033[1;34m⬇️  Downloading the official Drodi %s source archive...\033[0m\n' '$(DRODI_VERSION)'
-	@set -eu; \
-	archive=$$(mktemp); \
-	trap 'rm -f -- "$$archive"' EXIT INT TERM; \
-	curl --fail --location --retry 2 --output "$$archive" '$(DRODI_URL)'; \
-	printf '%s  %s\n' '$(DRODI_SHA256)' "$$archive" | sha256sum --check --status; \
-	mkdir -p -- '$(SOURCE)'; \
-	tar -xzf "$$archive" --strip-components=1 -C '$(SOURCE)'; \
-	touch '$@'
-	@printf '\033[1;32m✅ Downloaded and verified Drodi %s.\033[0m\n' '$(DRODI_VERSION)'
+$(DRODI_STAMP): build.sh $(SLURMY_BUILD_DRIVER)
+	@printf '\033[1;34m🔨 Building Drodi in a Slurm job on %s...\033[0m\n' '$(SLURMY_HOST)'
+	python '$(SLURMY_BUILD_DRIVER)' \
+		--host '$(SLURMY_HOST)' \
+		--name drodi \
+		--recipe '$(abspath build.sh)' \
+		--output '$(abspath bin)' \
+		--artifact drodi \
+		--cpus-per-task 4 \
+		--memory 4GiB \
+		--time 00:20:00 \
+		--sbatch-option=--partition=$(SLURMY_BUILD_PARTITION)
+	@touch '$@'
+	@printf '\033[1;32m✅ Built Drodi on %s and downloaded it.\033[0m\n' '$(SLURMY_HOST)'
 
-$(DRODI): $(SOURCE)/.unpacked
-	@printf '\033[1;34m🔨 Building Drodi...\033[0m\n'
-	mkdir -p -- '$(dir $@)'
-	gcc -O3 -DNDEBUG -std=gnu11 -o '$@' '$(SOURCE)'/*.c -lm -pthread
-	@printf '\033[1;32m✅ Built %s.\033[0m\n' '$(abspath $@)'
-
-$(RUNSOLVER):
-	../../runsolver-build/build.sh '$@'
-	@printf '\033[1;32m✅ Built runsolver at %s.\033[0m\n' '$(abspath $@)'
+$(DRODI): $(DRODI_STAMP)
+	@test -x '$@' || { printf '❌ Remote build did not produce %s.\n' '$@' >&2; exit 1; }
 
 submit:
-	@if [ ! -x submit.sh ] || [ ! -d submit.sh.files ]; then \
-		printf '❌ Nothing is ready to submit. Run "make" first.\n' >&2; \
-		exit 1; \
-	fi
-	@printf '\033[1;34m🚀 Copying the prepared files to slurmy and submitting the Slurm job array...\033[0m\n'
-	@printf '   This returns after submission; it does not wait for the solver calls to finish.\n\n'
-	@./submit.sh
+	@if [ ! -x submit.sh ] || [ ! -d submit.sh.files ]; then printf '❌ Nothing is ready. Run "make" first.\n' >&2; exit 1; fi
+	@printf '\033[1;34m🚀 Transferring the prepared files to %s and submitting the array...\033[0m\n\n' '$(SLURMY_HOST)'
+	@SLURMY_HOST='$(SLURMY_HOST)' ./submit.sh
 	@printf '\n\033[1;32m✅ Submitted successfully.\033[0m\n'
-	@printf '\033[1;36m👉 Next: run "make monitor" to watch its progress.\033[0m\n'
 
 monitor:
-	@printf '\033[1;34m📊 Opening the SluM dashboard for slurmy...\033[0m\n'
-	@printf '   It shows every current and past SluM job; press Q to leave it.\n\n'
-	@python ../../slum-monitor.py --host slurmy
-	@printf '\n👋 Closed the SluM dashboard.\n'
+	@printf '\033[1;34m📊 Opening the Slurmy dashboard for %s...\033[0m\n\n' '$(SLURMY_HOST)'
+	@python ../../slurmy-monitor.py --host '$(SLURMY_HOST)'
+	@printf '\n👋 Closed the Slurmy dashboard.\n'
 
 clean:
 	@rm -f -- submit.sh
 	@rm -rf -- submit.sh.files
 	@printf '\033[1;32m🧹 Removed the generated submission files.\033[0m\n'
-	@printf '\033[1;36m👉 Next: run "make" to generate a fresh submission.\033[0m\n'
 
 distclean: clean
-	@rm -rf -- '$(SOURCE)' bin
-	@printf '\033[1;32m🧹 Also removed the downloaded source and built Drodi binary.\033[0m\n'
-	@printf '\033[1;36m👉 Next: run "make" to download, build, and generate everything again.\033[0m\n'
+	@rm -rf -- source bin
+	@printf '\033[1;32m🧹 Also removed old local source data and downloaded Drodi artifacts.\033[0m\n'

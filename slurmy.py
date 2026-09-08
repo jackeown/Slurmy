@@ -24,7 +24,7 @@ from typing import Any, Sequence
 
 
 VERSION = "0.4.1"
-DEFAULT_REMOTE_HOST = "slurmy"
+DEFAULT_REMOTE_HOST = os.environ.get("SLURMY_HOST", "datalab")
 DEFAULT_BATCH_SIZE = 50
 DEFAULT_MAX_PARALLEL = 100
 
@@ -47,8 +47,8 @@ CPU_REQUESTS = {
 }
 
 
-class SlumError(ValueError):
-    """An error in the user's SluM configuration."""
+class SlurmyError(ValueError):
+    """An error in the user's Slurmy configuration."""
 
 
 def absolute_path(value: str, *, relative_to: Path | None = None) -> Path:
@@ -64,19 +64,19 @@ def mirrored_relative(path: Path) -> str:
     """Map /old/absolute/path to old/absolute/path inside rootfs."""
 
     if not path.is_absolute():
-        raise SlumError(f"expected an absolute path, got {path}")
+        raise SlurmyError(f"expected an absolute path, got {path}")
     try:
         return path.relative_to(path.anchor).as_posix()
     except ValueError as exc:  # pragma: no cover - defensive on non-POSIX hosts
-        raise SlumError(f"cannot mirror path {path}") from exc
+        raise SlurmyError(f"cannot mirror path {path}") from exc
 
 
 def parse_positive_seconds(value: str, option: str) -> int:
     if not re.fullmatch(r"[0-9]+", value.strip()):
-        raise SlumError(f"{option} must be a positive integer number of seconds")
+        raise SlurmyError(f"{option} must be a positive integer number of seconds")
     seconds = int(value)
     if seconds <= 0:
-        raise SlumError(f"{option} must be greater than zero")
+        raise SlurmyError(f"{option} must be greater than zero")
     return seconds
 
 
@@ -85,13 +85,13 @@ def parse_memory_bytes(value: str, option: str) -> int:
 
     match = MEMORY_RE.fullmatch(value)
     if not match:
-        raise SlumError(
+        raise SlurmyError(
             f"{option} must be an integer optionally followed by MB, MiB, GB, "
             "GiB, TB, or TiB"
         )
     number = int(match.group("number"))
     if number <= 0:
-        raise SlumError(f"{option} must be greater than zero")
+        raise SlurmyError(f"{option} must be greater than zero")
     unit = (match.group("unit") or "mb").lower()
     factors = {
         "mb": 1_000_000,
@@ -118,7 +118,7 @@ def parse_cpu_request(value: str) -> int:
         return CPU_REQUESTS[normalized]
     except KeyError as exc:
         choices = "2-CPU, 1-CPU, 64-core, 32-core, 16-core, 8-core, 4-core, 1-core"
-        raise SlumError(f"--cpu-request must be one of: {choices}") from exc
+        raise SlurmyError(f"--cpu-request must be one of: {choices}") from exc
 
 
 def slurm_time(seconds: int) -> str:
@@ -142,12 +142,12 @@ def expand_problem_patterns(patterns: Sequence[str]) -> list[Path]:
         for match in matches:
             path = absolute_path(match)
             if not path.is_file():
-                raise SlumError(f"problem path is not a regular file: {path}")
+                raise SlurmyError(f"problem path is not a regular file: {path}")
             problems[os.fspath(path)] = path
     if unmatched:
-        raise SlumError("problem pattern(s) matched nothing: " + ", ".join(unmatched))
+        raise SlurmyError("problem pattern(s) matched nothing: " + ", ".join(unmatched))
     if not problems:
-        raise SlumError("--problems did not select any regular files")
+        raise SlurmyError("--problems did not select any regular files")
     return [problems[key] for key in sorted(problems)]
 
 
@@ -210,15 +210,15 @@ def parse_solver_files(
     for solver_number, solver_value in enumerate(solver_files):
         solver_file = absolute_path(solver_value)
         if not solver_file.is_file():
-            raise SlumError(f"solver description is not a regular file: {solver_file}")
+            raise SlurmyError(f"solver description is not a regular file: {solver_file}")
         lines = solver_file.read_text(encoding="utf-8").splitlines()
         if not lines or not lines[0].strip():
-            raise SlumError(f"solver description has no root on its first line: {solver_file}")
+            raise SlurmyError(f"solver description has no root on its first line: {solver_file}")
         solver_root = absolute_path(lines[0].strip(), relative_to=solver_file.parent)
         if solver_root == Path("/"):
-            raise SlumError(f"refusing to package / as a solver root in {solver_file}")
+            raise SlurmyError(f"refusing to package / as a solver root in {solver_file}")
         if not solver_root.is_dir():
-            raise SlumError(f"solver root is not a directory: {solver_root}")
+            raise SlurmyError(f"solver root is not a directory: {solver_root}")
         solver_roots.append(solver_root)
 
         configurations = [
@@ -227,7 +227,7 @@ def parse_solver_files(
             if line.strip() and not line.lstrip().startswith("#")
         ]
         if not configurations:
-            raise SlumError(f"solver description has no invocation lines: {solver_file}")
+            raise SlurmyError(f"solver description has no invocation lines: {solver_file}")
 
         for config_index, (line_number, command) in enumerate(configurations):
             command = replace_limit_placeholders(
@@ -238,14 +238,14 @@ def parse_solver_files(
             )
             matches = list(PROBLEM_PLACEHOLDER_RE.finditer(command))
             if not matches:
-                raise SlumError(
+                raise SlurmyError(
                     f"{solver_file}:{line_number}: invocation must contain {{problem}} "
                     "or {{problem=/path}}"
                 )
             generic = [match for match in matches if match.group(1) is None]
             specific = [match for match in matches if match.group(1) is not None]
             if generic and specific:
-                raise SlumError(
+                raise SlurmyError(
                     f"{solver_file}:{line_number}: cannot mix {{problem}} and "
                     "{{problem=/path}} in one invocation"
                 )
@@ -259,7 +259,7 @@ def parse_solver_files(
                 if token not in allowed_tokens
             ]
             if unknown:
-                raise SlumError(
+                raise SlurmyError(
                     f"{solver_file}:{line_number}: unknown placeholder(s): "
                     + ", ".join(f"{{{{{token}}}}}" for token in unknown)
                 )
@@ -290,7 +290,7 @@ def parse_solver_files(
                     assert raw is not None
                     path = absolute_path(raw.strip(), relative_to=solver_file.parent)
                     if not path.is_file():
-                        raise SlumError(
+                        raise SlurmyError(
                             f"{solver_file}:{line_number}: specific problem is not a "
                             f"regular file: {path}"
                         )
@@ -311,7 +311,7 @@ def parse_solver_files(
                 tasks.append(item)
 
     if not tasks:
-        raise SlumError("no solver invocations were generated")
+        raise SlurmyError("no solver invocations were generated")
     for task_id, task in enumerate(tasks):
         task["task_id"] = task_id
     return tasks, solver_roots, list(specific_problems.values())
@@ -353,12 +353,12 @@ def validate_sbatch_options(values: Sequence[str]) -> list[str]:
     result = []
     for value in values:
         if "\n" in value or "\r" in value or not value.startswith("--"):
-            raise SlumError(
+            raise SlurmyError(
                 "each --sbatch-option must be a single line beginning with -- "
                 "(use --sbatch-option=--partition=NAME)"
             )
         if value == "--array" or value.startswith("--array="):
-            raise SlumError("SluM manages --array; it cannot be an --sbatch-option")
+            raise SlurmyError("Slurmy manages --array; it cannot be an --sbatch-option")
         result.append(value)
     return result
 
@@ -378,7 +378,7 @@ def build_slurm_script(
     sbatch_options: Sequence[str],
 ) -> bytes:
     directives = "\n".join(f"#SBATCH {option}" for option in sbatch_options)
-    directives_token = "__SLUM_EXTRA_SBATCH_DIRECTIVES__"
+    directives_token = "__SLURMY_EXTRA_SBATCH_DIRECTIVES__"
     output_limit_setup = ""
     if output_limit_mb:
         first_part = min(10, output_limit_mb // 2)
@@ -405,7 +405,7 @@ def build_slurm_script(
         JOB_DIR=${{SLURM_SUBMIT_DIR:-$PWD}}
         export JOB_DIR
         RUNSOLVER=$(<"$JOB_DIR/runsolver.path")
-        BATCH_ID=$((SLURM_ARRAY_TASK_ID + ${{SLUM_BATCH_OFFSET:-0}}))
+        BATCH_ID=$((SLURM_ARRAY_TASK_ID + ${{SLURMY_BATCH_OFFSET:-0}}))
         export OMP_NUM_THREADS=${{SLURM_CPUS_PER_TASK:-{cpu_count}}}
         TASK_FIRST=$((BATCH_ID * {batch_size}))
         TASK_LAST=$((TASK_FIRST + {batch_size} - 1))
@@ -444,7 +444,7 @@ def build_slurm_script(
         STATUS_FILE=$(printf '%s/batch_%06d.tsv' "$RESULTS_DIR" "$BATCH_ID")
 
         # Publish a tiny, atomically replaced progress record for this batch.
-        # slum-monitor.py uses it to show the current task and live percentage.
+        # slurmy-monitor.py uses it to show the current task and live percentage.
         PROGRESS_DIR="$JOB_DIR/progress"
         PROGRESS_FILE=$(printf '%s/batch_%06d.tsv' "$PROGRESS_DIR" "$BATCH_ID")
         mkdir -p "$PROGRESS_DIR"
@@ -459,7 +459,7 @@ def build_slurm_script(
         write_progress starting "" "" 0
 
         SCRATCH_PARENT=${{SLURM_TMPDIR:-${{TMPDIR:-/tmp}}}}
-        ATTEMPT_DIR=$(mktemp -d "$SCRATCH_PARENT/slum-batch-${{BATCH_ID}}.XXXXXXXX")
+        ATTEMPT_DIR=$(mktemp -d "$SCRATCH_PARENT/slurmy-batch-${{BATCH_ID}}.XXXXXXXX")
         RECORDS_FILE="$ATTEMPT_DIR/records.tsv"
         cleanup() {{
             local exit_code=$?
@@ -474,13 +474,13 @@ def build_slurm_script(
 
         batch_file=$(printf '%s/batches/batch_%06d.sh' "$JOB_DIR" "$BATCH_ID")
         if [[ ! -f "$batch_file" ]]; then
-            echo "SluM: missing batch file: $batch_file" >&2
+            echo "Slurmy: missing batch file: $batch_file" >&2
             exit 1
         fi
         # Generated batch files contain only quoted Bash array assignments.
         source "$batch_file"
 
-        echo "SluM batch $BATCH_ID: tasks $TASK_FIRST through $TASK_LAST"
+        echo "Slurmy batch $BATCH_ID: tasks $TASK_FIRST through $TASK_LAST"
         completed_this_attempt=0
         for index in "${{!TASK_IDS[@]}}"; do
             (( STOP_REQUESTED )) && break
@@ -491,7 +491,7 @@ def build_slurm_script(
             TASK_COMMAND=${{TASK_COMMANDS[$index]}}
             task_id=$TASK_ID
             if is_complete "$task_id" "$STATUS_FILE"; then
-                echo "SluM task $task_id: already complete; skipping"
+                echo "Slurmy task $task_id: already complete; skipping"
                 continue
             fi
 
@@ -502,18 +502,18 @@ def build_slurm_script(
             var_file="$ATTEMPT_DIR/$stem.var"
             solver_root="$JOB_DIR/rootfs/$TASK_SOLVER_ROOT_REL"
             if [[ ! -d "$solver_root" ]]; then
-                echo "SluM: mapped solver root does not exist: $solver_root" >&2
+                echo "Slurmy: mapped solver root does not exist: $solver_root" >&2
                 exit 1
             fi
 
-            export SLUM_TASK_ID="$TASK_ID"
-            export SLUM_PROBLEM=
+            export SLURMY_TASK_ID="$TASK_ID"
+            export SLURMY_PROBLEM=
             if [[ -n "$TASK_PROBLEM_REL" ]]; then
-                SLUM_PROBLEM="$JOB_DIR/rootfs/$TASK_PROBLEM_REL"
-                export SLUM_PROBLEM
+                SLURMY_PROBLEM="$JOB_DIR/rootfs/$TASK_PROBLEM_REL"
+                export SLURMY_PROBLEM
             fi
 
-            echo "SluM task $TASK_ID: $TASK_COMMAND"
+            echo "Slurmy task $TASK_ID: $TASK_COMMAND"
             task_started_epoch=$(date +%s)
             write_progress running "$TASK_ID" "$task_started_epoch" "$completed_this_attempt"
             old_pwd=$PWD
@@ -596,7 +596,7 @@ def build_slurm_script(
         fi
 
         write_progress complete "" "" "$completed_this_attempt"
-        echo "SluM batch $BATCH_ID: finished $completed_this_attempt tasks"
+        echo "Slurmy batch $BATCH_ID: finished $completed_this_attempt tasks"
         (( STOP_REQUESTED == 0 ))
         """
     return (
@@ -614,14 +614,14 @@ def render_remote_command(task: dict[str, Any]) -> str:
         explicit = match.group(1)
         problem = explicit if explicit is not None else task.get("problem")
         if not problem:
-            raise SlumError(f"task {task['task_id']} has no problem for placeholder")
+            raise SlurmyError(f"task {task['task_id']} has no problem for placeholder")
         relative = mirrored_relative(Path(problem))
         return "${JOB_DIR}/rootfs/" + shlex.quote(relative)
 
     command = PROBLEM_PLACEHOLDER_RE.sub(replace, task["command"])
     leftovers = ANY_PLACEHOLDER_RE.findall(command)
     if leftovers:
-        raise SlumError(
+        raise SlurmyError(
             f"task {task['task_id']} has unresolved placeholders: {leftovers}"
         )
     return command
@@ -636,7 +636,7 @@ def bash_array(name: str, values: Sequence[str]) -> str:
 
 def build_batch_file(tasks: Sequence[dict[str, Any]]) -> str:
     sections = [
-        "# Generated by SluM. This file contains data only.",
+        "# Generated by Slurmy. This file contains data only.",
         bash_array("TASK_IDS", [str(task["task_id"]) for task in tasks]),
         bash_array("TASK_KEYS", [str(task["task_key"]) for task in tasks]),
         bash_array("TASK_SYSTEMS", [str(task["system"]) for task in tasks]),
@@ -665,16 +665,16 @@ def prepare_submission(args: argparse.Namespace) -> dict[str, Any]:
     )
     cpu_count = parse_cpu_request(args.cpu_request)
     if args.batch_size <= 0:
-        raise SlumError("--batch-size must be greater than zero")
+        raise SlurmyError("--batch-size must be greater than zero")
     if args.max_parallel <= 0:
-        raise SlumError("--max-parallel must be greater than zero")
+        raise SlurmyError("--max-parallel must be greater than zero")
     if args.output_limit_mb < 0:
-        raise SlumError("--output-limit-mb cannot be negative")
+        raise SlurmyError("--output-limit-mb cannot be negative")
     if memory_request_bytes < mem_limit_bytes:
-        raise SlumError("--memory-request must be at least as large as --mem-limit")
+        raise SlurmyError("--memory-request must be at least as large as --mem-limit")
     if memory_request_bytes == mem_limit_bytes:
         print(
-            "SluM warning: memory-request equals mem-limit; consider adding room "
+            "Slurmy warning: memory-request equals mem-limit; consider adding room "
             "for Bash and runsolver",
             file=sys.stderr,
         )
@@ -691,7 +691,7 @@ def prepare_submission(args: argparse.Namespace) -> dict[str, Any]:
     entries = archive_entries(solver_roots, list(problems) + specific_problems)
     for path in entries:
         if "\n" in os.fspath(path) or "\r" in os.fspath(path):
-            raise SlumError(f"input paths may not contain newlines: {path}")
+            raise SlurmyError(f"input paths may not contain newlines: {path}")
 
     batch_count = math.ceil(len(tasks) / args.batch_size)
     largest_batch = min(args.batch_size, len(tasks))
@@ -700,10 +700,10 @@ def prepare_submission(args: argparse.Namespace) -> dict[str, Any]:
     memory_request_mib = bytes_to_mib_ceil(memory_request_bytes)
     sbatch_options = validate_sbatch_options(args.sbatch_option)
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", args.job_name):
-        raise SlumError("--job-name may contain only letters, digits, _, ., and -")
+        raise SlurmyError("--job-name may contain only letters, digits, _, ., and -")
 
     metadata = {
-        "slum_version": VERSION,
+        "slurmy_version": VERSION,
         "remote_runtime": "bash+runsolver",
         "job_name": args.job_name,
         "task_count": len(tasks),
@@ -773,7 +773,7 @@ def build_submit_script(
     assets_display = asset_dir_name.encode("unicode_escape").decode("ascii")
     script = rf"""
         #!/usr/bin/env bash
-        # Generated by SluM {VERSION}; run this script on the laptop.
+        # Generated by Slurmy {VERSION}; run this script on the laptop.
         #
         # Purpose
         # -------
@@ -808,18 +808,19 @@ def build_submit_script(
         # is safe only when the paths in archive-paths.txt are still valid.
         SCRIPT_DIR=$(cd -- "$(dirname -- "${{BASH_SOURCE[0]}}")" && pwd)
         ASSET_DIR="$SCRIPT_DIR"/{assets}
-        HOST={host}
+        DEFAULT_HOST={host}
+        HOST=${{SLURMY_HOST:-$DEFAULT_HOST}}
 
         # Stage 1/5: fail early if the laptop lacks a required command or companion
         # directory. No remote state has been changed at this point.
-        command -v ssh >/dev/null || {{ echo "SluM: ssh is required" >&2; exit 1; }}
-        command -v scp >/dev/null || {{ echo "SluM: scp is required" >&2; exit 1; }}
-        command -v tar >/dev/null || {{ echo "SluM: tar is required" >&2; exit 1; }}
-        [[ -d "$ASSET_DIR" ]] || {{ echo "SluM: missing asset directory: $ASSET_DIR" >&2; exit 1; }}
+        command -v ssh >/dev/null || {{ echo "Slurmy: ssh is required" >&2; exit 1; }}
+        command -v scp >/dev/null || {{ echo "Slurmy: scp is required" >&2; exit 1; }}
+        command -v tar >/dev/null || {{ echo "Slurmy: tar is required" >&2; exit 1; }}
+        [[ -d "$ASSET_DIR" ]] || {{ echo "Slurmy: missing asset directory: $ASSET_DIR" >&2; exit 1; }}
 
         # Temporary archives exist only for this submission attempt and are removed
         # on normal exit or error. The original inputs are never modified.
-        TEMP_DIR=$(mktemp -d "${{TMPDIR:-/tmp}}/slum-submit.XXXXXXXX")
+        TEMP_DIR=$(mktemp -d "${{TMPDIR:-/tmp}}/slurmy-submit.XXXXXXXX")
         cleanup() {{ rm -rf -- "$TEMP_DIR"; }}
         trap cleanup EXIT
 
@@ -827,35 +828,35 @@ def build_submit_script(
         # SSH configuration; the first actual connection happens in Stage 4.
         REMOTE_USER=$(ssh -T -G -- "$HOST" | awk 'tolower($1) == "user" {{ print $2; exit }}')
         if [[ ! "$REMOTE_USER" =~ ^[A-Za-z0-9._-]+$ ]]; then
-            echo "SluM: unable to obtain a safe remote username from ssh -G $HOST" >&2
+            echo "Slurmy: unable to obtain a safe remote username from ssh -G $HOST" >&2
             exit 1
         fi
         JOB_ID="${{REMOTE_USER}}_$(date +%s)_$$"
-        REMOTE_REL="SluM/$JOB_ID"
+        REMOTE_REL="Slurmy/$JOB_ID"
 
         # Stage 3/5: create two archives:
         #   inputs.tar.gz     solver resources and problem files, mirrored from /
         #   job-files.tar.gz generated scripts, metadata, commands, and runsolver
-        echo "SluM: packaging {task_count} calls in {batch_count} batches..." >&2
+        echo "Slurmy: packaging {task_count} calls in {batch_count} batches..." >&2
         tar --create --gzip --file "$TEMP_DIR/inputs.tar.gz" \
             --directory=/ --dereference --verbatim-files-from \
             --files-from="$ASSET_DIR/archive-paths.txt"
         tar --create --gzip --file "$TEMP_DIR/job-files.tar.gz" \
             --directory="$ASSET_DIR" .
 
-        # Stage 4/5: create an empty $HOME/SluM/<job-id>/incoming directory, then
+        # Stage 4/5: create an empty $HOME/Slurmy/<job-id>/incoming directory, then
         # transfer both archives. Remote logic lives in named, readable helpers.
         ssh -T -- "$HOST" bash -s -- "$JOB_ID" \
             < "$ASSET_DIR/remote_prepare.sh"
 
-        echo "SluM: transferring inputs and readable job files to $HOST:$REMOTE_REL..." >&2
+        echo "Slurmy: transferring inputs and readable job files to $HOST:$REMOTE_REL..." >&2
         scp -- \
             "$TEMP_DIR/inputs.tar.gz" \
             "$TEMP_DIR/job-files.tar.gz" \
             "$HOST:$REMOTE_REL/incoming/"
 
         # Stage 5/5: install the uploaded files, validate runsolver, and invoke
-        # sbatch. The helper prints the SluM ID, Slurm ID(s), and result directory.
+        # sbatch. The helper prints the Slurmy ID, Slurm ID(s), and result directory.
         ssh -T -- "$HOST" bash -s -- "$JOB_ID" \
             < "$ASSET_DIR/remote_submit.sh"
         """
@@ -866,14 +867,14 @@ def build_remote_prepare_script() -> str:
     return textwrap.dedent(
         """\
         #!/usr/bin/env bash
-        # Generated by SluM. Creates a fresh remote job staging directory.
+        # Generated by Slurmy. Creates a fresh remote job staging directory.
         set -euo pipefail
 
         JOB_ID=$1
-        JOB_DIR="$HOME/SluM/$JOB_ID"
+        JOB_DIR="$HOME/Slurmy/$JOB_ID"
 
         if [[ -e "$JOB_DIR" ]]; then
-            echo "SluM: remote job directory already exists: $JOB_DIR" >&2
+            echo "Slurmy: remote job directory already exists: $JOB_DIR" >&2
             exit 73
         fi
         mkdir -p "$JOB_DIR/incoming"
@@ -884,11 +885,11 @@ def build_remote_prepare_script() -> str:
 def build_remote_submit_script(*, batch_count: int, max_parallel: int) -> str:
     script = rf"""
         #!/usr/bin/env bash
-        # Generated by SluM. Installs the uploaded files and submits Slurm arrays.
+        # Generated by Slurmy. Installs the uploaded files and submits Slurm arrays.
         set -euo pipefail
 
         JOB_ID=$1
-        JOB_DIR="$HOME/SluM/$JOB_ID"
+        JOB_DIR="$HOME/Slurmy/$JOB_ID"
         INCOMING_DIR="$JOB_DIR/incoming"
 
         mkdir -p "$JOB_DIR/rootfs" "$JOB_DIR/results" "$JOB_DIR/logs"
@@ -898,12 +899,12 @@ def build_remote_submit_script(*, batch_count: int, max_parallel: int) -> str:
 
         RUNSOLVER="$JOB_DIR/runsolver"
         if [[ ! -x "$RUNSOLVER" ]]; then
-            echo "SluM: included runsolver is missing or not executable: $RUNSOLVER" >&2
+            echo "Slurmy: included runsolver is missing or not executable: $RUNSOLVER" >&2
             exit 1
         fi
         RUNSOLVER_HELP=$("$RUNSOLVER" 2>&1 || true)
         if ! grep -q -- '--rss-swap-limit' <<< "$RUNSOLVER_HELP"; then
-            echo "SluM: runsolver lacks --rss-swap-limit; version 3.4.1 is recommended" >&2
+            echo "Slurmy: runsolver lacks --rss-swap-limit; version 3.4.1 is recommended" >&2
             exit 1
         fi
         printf '%s\n' "$RUNSOLVER" > "$JOB_DIR/runsolver.path"
@@ -933,7 +934,7 @@ def build_remote_submit_script(*, batch_count: int, max_parallel: int) -> str:
             SLICE_SIZE=$((REMAINING < MAX_ARRAY_SIZE ? REMAINING : MAX_ARRAY_SIZE))
             ARRAY_SPEC="0-$((SLICE_SIZE - 1))%$MAX_PARALLEL"
             SUBMIT=(sbatch --parsable "--array=$ARRAY_SPEC" \
-                "--export=ALL,SLUM_BATCH_OFFSET=$OFFSET")
+                "--export=ALL,SLURMY_BATCH_OFFSET=$OFFSET")
             if [[ -n "$PREVIOUS_JOB" ]]; then
                 SUBMIT+=("--dependency=afterany:$PREVIOUS_JOB")
             fi
@@ -946,7 +947,7 @@ def build_remote_submit_script(*, batch_count: int, max_parallel: int) -> str:
             OFFSET=$((OFFSET + SLICE_SIZE))
         done
 
-        printf 'SluM job ID: %s\nSlurm job ID(s): %s\nRemote directory: %s\n' \
+        printf 'Slurmy job ID: %s\nSlurm job ID(s): %s\nRemote directory: %s\n' \
             "$JOB_ID" "${{SLURM_IDS[*]}}" "$JOB_DIR"
         """
     return textwrap.dedent(script).lstrip("\n")
@@ -956,7 +957,7 @@ def generate_submission(args: argparse.Namespace, output: Path) -> tuple[Path, P
     prepared = prepare_submission(args)
     asset_dir = output.with_name(output.name + ".files")
     if output.exists() or asset_dir.exists():
-        raise SlumError(
+        raise SlurmyError(
             f"refusing to overwrite existing output: {output if output.exists() else asset_dir}"
         )
 
@@ -995,7 +996,7 @@ def generate_submission(args: argparse.Namespace, output: Path) -> tuple[Path, P
 
         source = absolute_path(args.runsolver)
         if not source.is_file() or not os.access(source, os.X_OK):
-            raise SlumError(f"--runsolver path is not executable: {source}")
+            raise SlurmyError(f"--runsolver path is not executable: {source}")
         shutil.copy2(source, asset_dir / "runsolver")
         (asset_dir / "runsolver").chmod(0o755)
 
@@ -1018,13 +1019,13 @@ def generate_submission(args: argparse.Namespace, output: Path) -> tuple[Path, P
 
 def generator_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="slum.py",
+        prog="slurmy.py",
         description=(
             "Generate readable Bash submission files that package solver jobs, "
             "copy them over SSH, and submit a batched Slurm array."
         ),
     )
-    parser.add_argument("--version", action="version", version=f"SluM {VERSION}")
+    parser.add_argument("--version", action="version", version=f"Slurmy {VERSION}")
     parser.add_argument("--cpu-limit", required=True, metavar="SECONDS")
     parser.add_argument("--wc-limit", required=True, metavar="SECONDS")
     parser.add_argument("--mem-limit", required=True, metavar="MEMORY")
@@ -1045,7 +1046,11 @@ def generator_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="solver description file; may be repeated",
     )
-    parser.add_argument("--host", default=DEFAULT_REMOTE_HOST, help="SSH host alias")
+    parser.add_argument(
+        "--host",
+        default=DEFAULT_REMOTE_HOST,
+        help="SSH host alias (default: $SLURMY_HOST, or datalab)",
+    )
     parser.add_argument(
         "--runsolver",
         required=True,
@@ -1081,7 +1086,7 @@ def generator_parser() -> argparse.ArgumentParser:
         metavar="MB",
         help="runsolver output cap per call; 0 is unlimited (default: 0)",
     )
-    parser.add_argument("--job-name", default="SluM")
+    parser.add_argument("--job-name", default="Slurmy")
     parser.add_argument(
         "--sbatch-option",
         action="append",
@@ -1107,13 +1112,13 @@ def generator_main(argv: Sequence[str]) -> int:
     args = parser.parse_args(argv)
     try:
         if args.worker_overhead < 0:
-            raise SlumError("--worker-overhead cannot be negative")
+            raise SlurmyError("--worker-overhead cannot be negative")
         output = absolute_path(args.output)
         output, asset_dir = generate_submission(args, output)
-    except (SlumError, OSError, UnicodeError) as exc:
+    except (SlurmyError, OSError, UnicodeError) as exc:
         parser.error(str(exc))
-    print(f"SluM: wrote {output}", file=sys.stderr)
-    print(f"SluM: wrote {asset_dir}", file=sys.stderr)
+    print(f"Slurmy: wrote {output}", file=sys.stderr)
+    print(f"Slurmy: wrote {asset_dir}", file=sys.stderr)
     return 0
 
 

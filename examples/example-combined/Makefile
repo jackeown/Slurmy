@@ -1,10 +1,10 @@
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := all
 
-.PHONY: all build clean distclean monitor submit sync
+REPO_ROOT := ../..
+include $(REPO_ROOT)/slurmy-build.mk
 
-RUNSOLVER := ../../runsolver-build/runsolver
-JOBS ?= $(shell nproc)
+.PHONY: all build clean distclean monitor submit sync
 
 all: build
 	@rm -f -- submit.sh
@@ -21,7 +21,8 @@ all: build
 	printf '%s\n' '$(abspath ../example-drodi/bin)' \
 		"./drodi '-cores(1)' '-timeout({{cpu-limit}})' {{problem}}" \
 		> "$$solver_dir/drodi.solver"; \
-	python ../../slum.py \
+	python ../../slurmy.py \
+		--host '$(SLURMY_HOST)' \
 		--cpu-limit 3 \
 		--wc-limit 6 \
 		--mem-limit 1GiB \
@@ -31,55 +32,49 @@ all: build
 		--solver "$$solver_dir/vampire.solver" \
 		--solver "$$solver_dir/e.solver" \
 		--solver "$$solver_dir/drodi.solver" \
-		--runsolver '$(abspath $(RUNSOLVER))' \
+		--runsolver '$(RUNSOLVER)' \
 		--batch-size 5 \
 		--max-parallel 6 \
 		--worker-overhead 60 \
-		--job-name SluM-combined-example \
-		--sbatch-option=--partition=CPU-amd \
+		--job-name Slurmy-combined-example \
+		--sbatch-option=--partition=$(SLURMY_BUILD_PARTITION) \
 		--output '$(CURDIR)/submit.sh'
 	@printf '\n\033[1;32m✅ Generated one submission with 30 calls: 3 provers × 10 problems.\033[0m\n'
 	@printf '   Every call has a 3-second CPU limit and a 6-second wall-clock limit.\n'
-	@printf '   Inspect submit.sh and submit.sh.files/ if you want to review it.\n'
-	@printf '\033[1;36m👉 Next: run "make submit" to copy it to slurmy and submit it.\033[0m\n'
+	@printf '\033[1;36m👉 Next: run "make submit" to send it to %s.\033[0m\n' '$(SLURMY_HOST)'
 
 build:
-	@printf '\033[1;34m🔨 Building Vampire, E, Drodi, and runsolver...\033[0m\n'
-	@$(MAKE) -C ../example-vampire build JOBS='$(JOBS)'
-	@$(MAKE) -C ../example-e build JOBS='$(JOBS)'
-	@$(MAKE) -C ../example-drodi build
-	@printf '\033[1;32m✅ All three provers and runsolver are ready.\033[0m\n'
+	@printf '\033[1;34m🔨 Building all three provers and runsolver with Slurm on %s...\033[0m\n' '$(SLURMY_HOST)'
+	@$(MAKE) -C ../example-vampire build SLURMY_HOST='$(SLURMY_HOST)' SLURMY_BUILD_PARTITION='$(SLURMY_BUILD_PARTITION)'
+	@$(MAKE) -C ../example-e build SLURMY_HOST='$(SLURMY_HOST)' SLURMY_BUILD_PARTITION='$(SLURMY_BUILD_PARTITION)'
+	@$(MAKE) -C ../example-drodi build SLURMY_HOST='$(SLURMY_HOST)' SLURMY_BUILD_PARTITION='$(SLURMY_BUILD_PARTITION)'
+	@printf '\033[1;32m✅ All cluster-built artifacts are ready.\033[0m\n'
 
 submit:
-	@if [ ! -x submit.sh ] || [ ! -d submit.sh.files ]; then \
-		printf '❌ Nothing is ready to submit. Run "make" first.\n' >&2; \
-		exit 1; \
-	fi
-	@printf '\033[1;34m🚀 Copying all three provers and ten problems to slurmy, then submitting 30 calls...\033[0m\n'
-	@printf '   This returns after submission; it does not wait for the calls to finish.\n\n'
-	@./submit.sh
+	@if [ ! -x submit.sh ] || [ ! -d submit.sh.files ]; then printf '❌ Nothing is ready. Run "make" first.\n' >&2; exit 1; fi
+	@printf '\033[1;34m🚀 Sending all three provers and ten problems to %s, then submitting 30 calls...\033[0m\n\n' '$(SLURMY_HOST)'
+	@SLURMY_HOST='$(SLURMY_HOST)' ./submit.sh
 	@printf '\n\033[1;32m✅ Submitted successfully.\033[0m\n'
-	@printf '\033[1;36m👉 Next: run "make sync" to download results until the job finishes.\033[0m\n'
+	@printf '\033[1;36m👉 Next: run "make sync" to download results until completion.\033[0m\n'
 
 sync:
-	@printf '\033[1;34m🔄 Syncing the latest SluM job until every call has a final result...\033[0m\n'
-	@cd ../.. && python ./slum-sync.py $(SLUM_ID) --follow --interval 2
-	@printf '\n\033[1;32m✅ Results are synchronized under ../../slum-results/.\033[0m\n'
+	@printf '\033[1;34m🔄 Syncing the selected (or latest) Slurmy job from %s...\033[0m\n' '$(SLURMY_HOST)'
+	@cd ../.. && python ./slurmy-sync.py $(SLURMY_ID) --host '$(SLURMY_HOST)' --follow --interval 2
+	@printf '\n\033[1;32m✅ Results are synchronized under ../../slurmy-results/.\033[0m\n'
 
 monitor:
-	@printf '\033[1;34m📊 Opening the SluM dashboard for slurmy...\033[0m\n'
-	@printf '   It shows every current and past SluM job; press Q to leave it.\n\n'
-	@python ../../slum-monitor.py --host slurmy
-	@printf '\n👋 Closed the SluM dashboard.\n'
+	@printf '\033[1;34m📊 Opening the Slurmy dashboard for %s...\033[0m\n\n' '$(SLURMY_HOST)'
+	@python ../../slurmy-monitor.py --host '$(SLURMY_HOST)'
+	@printf '\n👋 Closed the Slurmy dashboard.\n'
 
 clean:
 	@rm -f -- submit.sh
 	@rm -rf -- submit.sh.files
-	@printf '\033[1;32m🧹 Removed the combined example submission files.\033[0m\n'
-	@printf '\033[1;36m👉 Next: run "make" to generate a fresh submission.\033[0m\n'
+	@printf '\033[1;32m🧹 Removed the combined submission files.\033[0m\n'
 
 distclean: clean
 	@$(MAKE) -C ../example-vampire distclean
 	@$(MAKE) -C ../example-e distclean
 	@$(MAKE) -C ../example-drodi distclean
-	@printf '\033[1;32m🧹 Also removed all three downloaded source trees and prover binaries.\033[0m\n'
+	@rm -f -- ../../runsolver-build/runsolver ../../runsolver-build/.built-on-*
+	@printf '\033[1;32m🧹 Also removed every downloaded build artifact.\033[0m\n'

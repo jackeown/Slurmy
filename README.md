@@ -1,14 +1,14 @@
 <div align="center">
-  <img src="logo.svg" alt="SluM logo" width="240"><br>
+  <img src="logo.svg" alt="Slurmy logo" width="240"><br>
 
-# SluM
+# Slurmy
 
 </div>
 
 Run reproducible, resource-limited theorem-prover experiments on a Slurm
 cluster.
 
-SluM turns local solver descriptions and problem files into an inspectable
+Slurmy turns local solver descriptions and problem files into an inspectable
 Slurm job-array submission. It copies everything the experiment needs to the
 cluster, measures and limits each solver call with `runsolver`, and provides
 separate tools for live monitoring and incremental result synchronization.
@@ -17,10 +17,10 @@ separate tools for live monitoring and incremental result synchronization.
 ## Usage
 
 1. Describe one or more solver command lines and select the problem files.
-2. Run `slum.py` locally to generate `submit.sh` and `submit.sh.files/`.
+2. Run `slurmy.py` locally to generate `submit.sh` and `submit.sh.files/`.
 3. Inspect and run `submit.sh` to copy the experiment and submit a Slurm array.
-4. Follow the job with `slum-monitor.py` or download results with
-   `slum-sync.py`.
+4. Follow the job with `slurmy-monitor.py` or download results with
+   `slurmy-sync.py`.
 
 Python runs only on the local machine. Compute nodes run the generated Bash
 scripts, Slurm commands, and the included `runsolver` binary directly.
@@ -46,14 +46,28 @@ On the cluster:
 - Slurm, Bash, `rsync`, GNU `tar`, `awk`, `sed`, and `base64`
 
 Building all three included prover examples additionally requires `git`,
-`curl`, `sha256sum`, `make`, C and C++ compilers with their static standard
-libraries, and CMake 3.14 or newer.
+`curl`, `sha256sum`, `make`, C and C++ compilers, and CMake 3.14 or newer on
+the cluster compute nodes.
 
-`slurmy` is the default SSH host. It can be an alias in `~/.ssh/config`.
+`datalab` is the default SSH host. It can be an alias in `~/.ssh/config`:
 
-`slum.py` and `slum-sync.py` use only the Python standard library. The
-`slum-monitor.py` dashboard additionally needs Textual, which is installed
-through `requirements.txt`:
+```sshconfig
+Host datalab
+    HostName cluster.datalab.tuwien.ac.at
+    User your-account
+    IdentityFile ~/.ssh/your-key
+```
+
+Every Slurmy Python script accepts `--host HOST`. You can instead set
+`SLURMY_HOST` once for the shell; an explicit `--host` always wins:
+
+```bash
+export SLURMY_HOST=another-cluster
+```
+
+`slurmy.py`, `slurmy-build.py`, and `slurmy-sync.py` use only the Python
+standard library. The `slurmy-monitor.py` dashboard additionally needs Textual,
+which is installed through `requirements.txt`:
 
 ```bash
 # Optional: skip these two lines to use your current Python environment.
@@ -78,9 +92,10 @@ make submit
 make monitor
 ```
 
-`make` downloads and builds Vampire and `runsolver`, then generates the
-submission files. `make submit` transfers them to `slurmy` and returns once
-Slurm accepts the array. `make monitor` opens the interactive dashboard.
+`make` submits Slurm build jobs for Vampire and `runsolver`, downloads their
+cluster-built binaries, then generates the submission files. `make submit`
+transfers them to `datalab` and returns once Slurm accepts the array. `make
+monitor` opens the interactive dashboard.
 
 See [Prover examples](examples/README.md) for the E, Drodi, and combined
 three-prover examples, as well as the available Makefile targets.
@@ -97,18 +112,23 @@ three-prover examples, as well as the available Makefile targets.
 <blockquote>
 
 <details>
-<summary><strong>1. 🔧 Build runsolver</strong></summary>
+<summary><strong>1. 🔧 Build runsolver on the cluster</strong></summary>
 
-Build the portable static runsolver binary for inclusion in the generated
-submission files:
+Run the runsolver recipe as a Slurm job, validate its output, and download the
+binary for inclusion in generated submission files:
 
 ```bash
-./runsolver-build/build.sh
+python ./slurmy-build.py \
+  --name runsolver \
+  --recipe ./runsolver-build/build.sh \
+  --output ./runsolver-build \
+  --artifact runsolver \
+  --sbatch-option=--partition=CPU-amd
 ```
 
-This creates `runsolver-build/runsolver`. SluM copies it to
-`submit.sh.files/runsolver`. The build helper needs a C++ compiler, `make`,
-`curl`, and standard archive tools.
+This creates `runsolver-build/runsolver` using the compute-node architecture.
+Slurmy copies that binary to `submit.sh.files/runsolver`. The included example
+Makefiles run this build automatically.
 
 </details>
 
@@ -116,7 +136,7 @@ This creates `runsolver-build/runsolver`. SluM copies it to
 <summary><strong>2. 📝 Describe the solver</strong></summary>
 
 Create `solver.solver`. The comments shown here are valid description-file
-comments and are ignored by SluM:
+comments and are ignored by Slurmy:
 
 ```text
 ./solver-root
@@ -150,7 +170,8 @@ comments and are ignored by SluM:
 <summary><strong>3. ⚙️ Generate the submission files</strong></summary>
 
 ```bash
-slum_args=(
+slurmy_args=(
+  --host "${SLURMY_HOST:-datalab}"                # SSH host used to submit and later inspect the experiment.
   --cpu-limit 60                                 # Maximum CPU seconds for each solver call.
   --wc-limit 70                                  # Maximum elapsed seconds for each solver call.
   --mem-limit 2GiB                               # Memory limit enforced on each solver call.
@@ -165,7 +186,7 @@ slum_args=(
   --sbatch-option=--partition=CPU-amd            # Tell Slurm to use machines in the CPU-amd partition.
   --output submit.sh                             # Creates submit.sh and submit.sh.files/.
 )
-./slum.py "${slum_args[@]}"                      # Generate files locally; do not submit yet.
+./slurmy.py "${slurmy_args[@]}"                      # Generate files locally; do not submit yet.
 ```
 
 All `--problems` occurrences contribute to one problem set. Every glob must
@@ -217,20 +238,20 @@ The script prints the Slurm job ID and remote directory. It submits the work
 but does not wait for it to finish.
 
 ```text
-SluM job ID: alice_1786464000_12345
+Slurmy job ID: alice_1786464000_12345
 Slurm job ID(s): 123456
-Remote directory: /home/alice/SluM/alice_1786464000_12345
+Remote directory: /home/alice/Slurmy/alice_1786464000_12345
 ```
 
-A SluM ID contains the remote username, submission time in Unix seconds, and
+A Slurmy ID contains the remote username, submission time in Unix seconds, and
 the laptop submission script's process ID. The process ID keeps simultaneous
 submissions made during the same second from choosing the same remote path.
 
 Monitor it normally with Slurm:
 
 ```bash
-ssh slurmy squeue -j 123456
-ssh slurmy sacct -j 123456
+ssh datalab squeue -j 123456
+ssh datalab sacct -j 123456
 ```
 
 </details>
@@ -250,10 +271,10 @@ ssh slurmy sacct -j 123456
 Open the interactive dashboard on your laptop:
 
 ```bash
-./slum-monitor.py
+./slurmy-monitor.py
 ```
 
-It discovers every current and past SluM job under `$HOME/SluM/` on `slurmy`
+It discovers every current and past Slurmy job under `$HOME/Slurmy/` on `datalab`
 and refreshes automatically. The six tabs provide:
 
 - **Jobs:** all submissions, their state, completion percentage, task counts,
@@ -274,7 +295,7 @@ to change tabs, `R` to refresh immediately, and `Q` to quit. Use another SSH
 host or a slower refresh interval when needed:
 
 ```bash
-./slum-monitor.py --host another-cluster --refresh 15
+./slurmy-monitor.py --host another-cluster --refresh 15
 ```
 
 The system name is inferred from the executable in the solver command—for
@@ -288,11 +309,11 @@ solver inputs or whole result archives. When you open a task's output, the
 needed files are extracted from its archive on the cluster and only those files
 are sent to the dashboard. Each displayed file is limited to 1 MiB; for a
 larger file, the first and last 512 KiB are shown. A job remains in the
-dashboard as long as its remote `$HOME/SluM/<job-id>/` directory remains
+dashboard as long as its remote `$HOME/Slurmy/<job-id>/` directory remains
 available.
 
 `time-limit` and `memory-limit` are normal solver results and are not counted as
-execution errors. An execution error means that SluM could not run or record
+execution errors. An execution error means that Slurmy could not run or record
 work normally—for example, a solver launch error, corrupt task data, an interrupted
 worker, a failed Slurm task, or a node failure. Select an affected task and
 press `O` to inspect its output. Scheduler-level errors are shown in the
@@ -300,33 +321,33 @@ press `O` to inspect its output. Scheduler-level errors are shown in the
 
 The dashboard distinguishes a solver `time-limit` from Slurm's `TIMEOUT`
 state. The former is expected; the latter means Slurm stopped an array task
-before SluM saved all of its results, so it is an execution error.
+before Slurmy saved all of its results, so it is an execution error.
 
 </details>
 
 <details>
 <summary><strong>📥 Sync results</strong></summary>
 
-Download the latest SluM job from `slurmy`:
+Download the latest Slurmy job from `datalab`:
 
 ```bash
-./slum-sync.py
+./slurmy-sync.py
 ```
 
 The command performs one incremental sync and exits. Unchanged files are not
 transferred again. By default, files are stored under
-`slum-results/<SluM-ID>/`. Supply an ID to sync a particular job or choose an
+`slurmy-results/<Slurmy-ID>/`. Supply an ID to sync a particular job or choose an
 exact local directory:
 
 ```bash
-./slum-sync.py john.keown_1787570882
-./slum-sync.py john.keown_1787570882 --output ~/results/vampire-run
+./slurmy-sync.py john.keown_1787570882
+./slurmy-sync.py john.keown_1787570882 --output ~/results/vampire-run
 ```
 
 Use follow mode while a job is running:
 
 ```bash
-./slum-sync.py john.keown_1787570882 --follow --interval 5
+./slurmy-sync.py john.keown_1787570882 --follow --interval 5
 ```
 
 Each pass downloads only the remote job's metadata and batch definitions,
@@ -341,7 +362,7 @@ SZS-status counts, aggregate CPU/wall/memory measurements, archive counts,
 bytes downloaded, and the time of the latest sync. For example:
 
 ```bash
-watch -n 1 cat slum-results/john.keown_1787570882/sync-metadata.json
+watch -n 1 cat slurmy-results/john.keown_1787570882/sync-metadata.json
 ```
 
 `percent_complete` measures calls with final runsolver records.
@@ -360,6 +381,46 @@ complete while reporting 0% solved.
 <summary><strong>🧠 Advanced usage</strong></summary>
 
 <blockquote>
+
+<details>
+<summary><strong>🏗️ Building software on the cluster</strong></summary>
+
+`slurmy-build.py` is the shared remote-build mechanism used for runsolver,
+Vampire, E, and Drodi. It copies a Bash recipe to the SSH host, submits the
+recipe with `sbatch`, waits for its final state, checks every declared artifact,
+and uses `rsync` to download the output. Compilation never runs on the SSH head
+node or on the laptop.
+
+A recipe runs on one compute node with these directories available:
+
+```bash
+$SLURMY_BUILD_ROOT    # Persistent directory containing the recipe and build log.
+$SLURMY_BUILD_WORK    # Empty working directory for sources and intermediate files.
+$SLURMY_BUILD_OUTPUT  # Put every artifact that should be downloaded here.
+```
+
+For example, a recipe that builds a local source tree can be submitted with a
+build context:
+
+```bash
+python ./slurmy-build.py \
+  --host "${SLURMY_HOST:-datalab}" \
+  --name my-solver \
+  --recipe ./build-my-solver.sh \
+  --context ./my-solver-source \
+  --output ./solver-root/bin \
+  --artifact my-solver \
+  --cpus-per-task 8 \
+  --memory 8GiB \
+  --time 00:30:00 \
+  --sbatch-option=--partition=CPU-amd
+```
+
+The optional context is unpacked into `$SLURMY_BUILD_WORK`. A recipe may also
+clone or download its source directly, as the included recipes do. Remote build
+directories and logs remain under `$HOME/Slurmy-builds/` for diagnosis.
+
+</details>
 
 <details>
 <summary><strong>📁 Structuring larger submissions</strong></summary>
@@ -390,27 +451,27 @@ solver root:
 ```
 
 The first line is resolved relative to the solver description file, and that
-whole directory is packaged recursively. On each compute node, SluM changes to
+whole directory is packaged recursively. On each compute node, Slurmy changes to
 the packaged copy of that directory before running the command. Consequently,
 relative command paths such as `./bin/my-solver`, `configs/competition.toml`,
 and `libraries/` continue to work without alteration.
 
-SluM preserves each input's absolute laptop path underneath a private `rootfs`
+Slurmy preserves each input's absolute laptop path underneath a private `rootfs`
 inside the remote job directory. For a job named `alice_1786464000_12345`, the
 mapping looks like this:
 
 | Laptop path | Path used on the cluster |
 | --- | --- |
-| `/home/alice/work/experiment/solver-root` | `$HOME/SluM/alice_1786464000_12345/rootfs/home/alice/work/experiment/solver-root` |
-| `/home/alice/work/experiment/solver-root/problems/batch-a/problem.p` | `$HOME/SluM/alice_1786464000_12345/rootfs/home/alice/work/experiment/solver-root/problems/batch-a/problem.p` |
+| `/home/alice/work/experiment/solver-root` | `$HOME/Slurmy/alice_1786464000_12345/rootfs/home/alice/work/experiment/solver-root` |
+| `/home/alice/work/experiment/solver-root/problems/batch-a/problem.p` | `$HOME/Slurmy/alice_1786464000_12345/rootfs/home/alice/work/experiment/solver-root/problems/batch-a/problem.p` |
 
 Problem globs passed to `--problems` are resolved from the directory in which
-`slum.py` is run. A path in `{{problem=/path/to/problem}}` is instead resolved
+`slurmy.py` is run. A path in `{{problem=/path/to/problem}}` is instead resolved
 relative to the solver description file when it is not absolute. Selected
 problem files are packaged, and every problem placeholder in a generated task
 is replaced with its full path inside the remote `rootfs`.
 
-SluM does not inspect arbitrary command arguments or configuration files for
+Slurmy does not inspect arbitrary command arguments or configuration files for
 more laptop paths. A literal path such as `/home/alice/tools/config.toml` in a
 solver command remains unchanged and will normally be absent on the compute
 node. Keep such resources under the solver root and refer to them relatively.
@@ -431,7 +492,7 @@ independent solver layouts, make one description file per root and repeat
 <details>
 <summary><strong>🧩 How jobs are divided</strong></summary>
 
-SluM expands every solver command over the selected problems. `--batch-size`
+Slurmy expands every solver command over the selected problems. `--batch-size`
 controls how many calls one array element runs sequentially. `--max-parallel`
 limits how many array elements from this submission may be running at the same
 time. It does not limit how many run in total. For example, with 1,000 batches
@@ -476,8 +537,8 @@ starts with `--`:
 --sbatch-option=--qos=normal
 ```
 
-Use `--host HOST` when the cluster SSH name is not `slurmy`. Run
-`./slum.py --help` for every option.
+Use `--host HOST` or `SLURMY_HOST` when the cluster SSH name is not `datalab`. Run
+`./slurmy.py --help` for every option.
 
 </details>
 
@@ -491,7 +552,7 @@ Use `--host HOST` when the cluster SSH name is not `slurmy`. Run
 The remote directory contains:
 
 ```text
-$HOME/SluM/<job-id>/
+$HOME/Slurmy/<job-id>/
   metadata.json
   submission.tsv
   batches/

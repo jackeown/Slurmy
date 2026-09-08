@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Interactive laptop dashboard for current and historical SluM jobs."""
+"""Interactive laptop dashboard for current and historical Slurmy jobs."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import base64
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import shlex
@@ -37,7 +38,7 @@ except ModuleNotFoundError as exc:
     if exc.name == "textual" or (exc.name and exc.name.startswith("rich")):
         requirements = Path(__file__).resolve().with_name("requirements.txt")
         print(
-            "SluM monitor needs its laptop dependencies. Install them with:\n"
+            "Slurmy monitor needs its laptop dependencies. Install them with:\n"
             f"  python -m pip install -r {requirements}",
             file=sys.stderr,
         )
@@ -46,7 +47,7 @@ except ModuleNotFoundError as exc:
 
 
 VERSION = "0.1.0"
-DEFAULT_HOST = "slurmy"
+DEFAULT_HOST = os.environ.get("SLURMY_HOST", "datalab")
 NORMAL_TASK_RESULTS = {"ok", "time-limit", "memory-limit"}
 SLURM_ERROR_STATES = {
     "BOOT_FAIL",
@@ -64,13 +65,13 @@ def slurm_state_code(state: str) -> str:
     return state.upper().split()[0].rstrip("+") if state else ""
 
 # This script is sent to `ssh HOST bash -s`. It reads only the small monitoring
-# files under $HOME/SluM and emits NUL-delimited records. Python is not needed on
+# files under $HOME/Slurmy and emits NUL-delimited records. Python is not needed on
 # the cluster. Large solver inputs and result archives are never transferred.
 REMOTE_SNAPSHOT_SCRIPT = r"""
 set -u
 
 DETAIL=${1:-}
-BASE="$HOME/SluM"
+BASE="$HOME/Slurmy"
 
 printf 'REMOTE_HOME\0%s\0' "$BASE"
 if [[ ! -d "$BASE" ]]; then
@@ -105,7 +106,7 @@ for directory in "${job_dirs[@]}"; do
         printf '\0'
     fi
 
-    # New jobs use batch_*; the second pattern keeps older SluM jobs readable.
+    # New jobs use batch_*; the second pattern keeps older Slurmy jobs readable.
     tsv_results=("$directory"/results/batch_*.tsv "$directory"/results/chunk_*.tsv)
     if (( ${#tsv_results[@]} )); then
         printf 'SUMMARY\0%s\0' "$job"
@@ -255,7 +256,7 @@ if [[ ! "$JOB" =~ ^[A-Za-z0-9._-]+$ ]] \
     exit 0
 fi
 
-archive_path="$HOME/SluM/$JOB/results/$ARCHIVE"
+archive_path="$HOME/Slurmy/$JOB/results/$ARCHIVE"
 if [[ ! -f "$archive_path" ]]; then
     printf 'ERROR\0Result archive not found: %s\0' "$ARCHIVE"
     exit 0
@@ -283,7 +284,7 @@ emit_member() {
         half=$((LIMIT / 2))
         {
             tar -xOzf "$archive_path" "$member" 2>/dev/null | head -c "$half" || true
-            printf '\n\n--- middle omitted by SluM monitor ---\n\n'
+            printf '\n\n--- middle omitted by Slurmy monitor ---\n\n'
             tar -xOzf "$archive_path" "$member" 2>/dev/null | tail -c "$half" || true
         } | base64 -w0
     else
@@ -406,7 +407,7 @@ class JobSnapshot:
         for record in self.slurm:
             if record.job_name:
                 return record.job_name
-        return "SluM"
+        return "Slurmy"
 
     @property
     def issue_count(self) -> int:
@@ -1005,8 +1006,8 @@ def parse_iso_epoch(value: str) -> float | None:
         return None
 
 
-class SlumMonitorApp(App[None]):
-    TITLE = "SluM Monitor"
+class SlurmyMonitorApp(App[None]):
+    TITLE = "Slurmy Monitor"
     SUB_TITLE = "Slurm solver experiments"
     ENABLE_COMMAND_PALETTE = False
 
@@ -1164,7 +1165,7 @@ class SlumMonitorApp(App[None]):
         with Vertical(id="main"):
             yield Static(f"Connecting to {self.host}…", id="connection")
             with Horizontal(id="cards"):
-                yield Static("[b]—[/b]\nSluM jobs", id="card-jobs", classes="card card-primary")
+                yield Static("[b]—[/b]\nSlurmy jobs", id="card-jobs", classes="card card-primary")
                 yield Static("[b]—[/b]\nactive", id="card-active", classes="card")
                 yield Static("[b]—[/b]\ntasks finished", id="card-tasks", classes="card card-good")
                 yield Static("[b]—[/b]\nexecution errors", id="card-issues", classes="card card-warn")
@@ -1205,7 +1206,7 @@ class SlumMonitorApp(App[None]):
 
     def on_mount(self) -> None:
         self.query_one("#jobs", DataTable).add_columns(
-            "Name", "State", "Progress", "Active", "Errors", "Elapsed", "Submitted", "SluM ID"
+            "Name", "State", "Progress", "Active", "Errors", "Elapsed", "Submitted", "Slurmy ID"
         )
         self.query_one("#tasks", DataTable).add_columns(
             "Task", "State", "System", "Benchmark", "Wall time", "CPU time", "Peak memory", "Exit"
@@ -1300,7 +1301,7 @@ class SlumMonitorApp(App[None]):
         finished = sum(job.effective_completed for job in jobs)
         total = sum(job.task_count for job in jobs)
         issues = sum(job.issue_count for job in jobs)
-        self.query_one("#card-jobs", Static).update(f"[b #75a9ff]{len(jobs)}[/]\nSluM jobs")
+        self.query_one("#card-jobs", Static).update(f"[b #75a9ff]{len(jobs)}[/]\nSlurmy jobs")
         self.query_one("#card-active", Static).update(f"[b #55c2ff]{active}[/]\nactive")
         self.query_one("#card-tasks", Static).update(f"[b #52d6a3]{finished:,} / {total:,}[/]\ntasks finished")
         self.query_one("#card-issues", Static).update(f"[b #f4c95d]{issues:,}[/]\nexecution errors")
@@ -1394,7 +1395,7 @@ class SlumMonitorApp(App[None]):
         log_table.clear(columns=False)
         output_table.clear(columns=False)
         if not job:
-            self.query_one("#job-summary", Static).update("No SluM jobs found on this host.")
+            self.query_one("#job-summary", Static).update("No Slurmy jobs found on this host.")
             progress_bar.update(total=100, progress=0)
             self.query_one("#slurm-summary", Static).update("No job selected.")
             self.query_one("#log-body", RichLog).clear()
@@ -1678,7 +1679,7 @@ class SlumMonitorApp(App[None]):
         details = self.query_one("#details-body", RichLog)
         details.clear()
         details.write(Text(f"{job.job_name}\n", style="bold #75a9ff"))
-        details.write(Text(f"SluM ID       {job.job_id}\nRemote path   {job.remote_dir}\n"))
+        details.write(Text(f"Slurmy ID       {job.job_id}\nRemote path   {job.remote_dir}\n"))
         details.write(Text(f"State         {job.state}\nProgress      {job.effective_completed}/{job.task_count} ({job.percent:.1f}%; {job.completed} saved)\n"))
         details.write(Text(f"Total solver wall time  {format_duration(job.wall_sum, precise=True)}\nLongest solver call     {format_duration(job.wall_max, precise=True)}\n"))
         if job.status_counts:
@@ -1785,12 +1786,16 @@ class SlumMonitorApp(App[None]):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="slum-monitor.py",
-        description="Open an interactive dashboard for current and historical SluM jobs.",
+        prog="slurmy-monitor.py",
+        description="Open an interactive dashboard for current and historical Slurmy jobs.",
     )
-    parser.add_argument("--version", action="version", version=f"SluM monitor {VERSION}")
-    parser.add_argument("--host", default=DEFAULT_HOST, help="SSH host alias (default: slurmy)")
-    parser.add_argument("--job", metavar="SLUM_ID", help="initial SluM job to select")
+    parser.add_argument("--version", action="version", version=f"Slurmy monitor {VERSION}")
+    parser.add_argument(
+        "--host",
+        default=DEFAULT_HOST,
+        help="SSH host alias (default: $SLURMY_HOST, or datalab)",
+    )
+    parser.add_argument("--job", metavar="SLURMY_ID", help="initial Slurmy job to select")
     parser.add_argument(
         "--refresh",
         type=float,
@@ -1814,7 +1819,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("--refresh must be at least 1 second")
     if args.ssh_timeout <= 0:
         raise SystemExit("--ssh-timeout must be greater than zero")
-    SlumMonitorApp(args.host, args.refresh, args.ssh_timeout, args.job).run()
+    SlurmyMonitorApp(args.host, args.refresh, args.ssh_timeout, args.job).run()
     return 0
 
 
