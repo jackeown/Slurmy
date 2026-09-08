@@ -3,8 +3,8 @@ __pycache__/
 /.venv/
 /submit.sh
 /slurmy-results/
-/runsolver-build/runsolver
-/runsolver-build/.built-on-*
+/building-dependencies/runsolver/runsolver
+/building-dependencies/runsolver/.built-on-*
 /examples/example-*/source/
 /examples/example-*/bin/
 /examples/example-*/submit.sh

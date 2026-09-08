@@ -2,17 +2,19 @@
 SLURMY_HOST ?= datalab
 SLURMY_BUILD_PARTITION ?= CPU-amd
 SLURMY_BUILD_TAG := $(subst :,_,$(subst /,_,$(SLURMY_HOST)))
-SLURMY_BUILD_DRIVER := $(abspath $(REPO_ROOT)/slurmy-build.py)
-RUNSOLVER := $(abspath $(REPO_ROOT)/runsolver-build/runsolver)
-RUNSOLVER_STAMP := $(abspath $(REPO_ROOT)/runsolver-build/.built-on-$(SLURMY_BUILD_TAG))
+BUILDING_DEPENDENCIES := $(abspath $(REPO_ROOT)/building-dependencies)
+SLURMY_BUILD_DRIVER := $(BUILDING_DEPENDENCIES)/slurmy-build.py
+RUNSOLVER_DIRECTORY := $(BUILDING_DEPENDENCIES)/runsolver
+RUNSOLVER := $(RUNSOLVER_DIRECTORY)/runsolver
+RUNSOLVER_STAMP := $(RUNSOLVER_DIRECTORY)/.built-on-$(SLURMY_BUILD_TAG)
 
-$(RUNSOLVER_STAMP): $(REPO_ROOT)/runsolver-build/build.sh $(SLURMY_BUILD_DRIVER)
+$(RUNSOLVER_STAMP): $(RUNSOLVER_DIRECTORY)/build.sh $(SLURMY_BUILD_DRIVER)
 	@printf '\033[1;34m🔨 Building runsolver in a Slurm job on %s...\033[0m\n' '$(SLURMY_HOST)'
 	python '$(SLURMY_BUILD_DRIVER)' \
 		--host '$(SLURMY_HOST)' \
 		--name runsolver \
-		--recipe '$(abspath $(REPO_ROOT)/runsolver-build/build.sh)' \
-		--output '$(abspath $(REPO_ROOT)/runsolver-build)' \
+		--recipe '$(RUNSOLVER_DIRECTORY)/build.sh' \
+		--output '$(RUNSOLVER_DIRECTORY)' \
 		--artifact runsolver \
 		--cpus-per-task 4 \
 		--memory 4GiB \

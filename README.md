@@ -65,9 +65,10 @@ Every Slurmy Python script accepts `--host HOST`. You can instead set
 export SLURMY_HOST=another-cluster
 ```
 
-`slurmy.py`, `slurmy-build.py`, and `slurmy-sync.py` use only the Python
-standard library. The `slurmy-monitor.py` dashboard and interactive example
-maker additionally need Textual, which is installed through `requirements.txt`:
+`slurmy.py`, `building-dependencies/slurmy-build.py`, and `slurmy-sync.py` use
+only the Python standard library. The `slurmy-monitor.py` dashboard and
+interactive example maker additionally need Textual, which is installed through
+`requirements.txt`:
 
 ```bash
 # Optional: skip these two lines to use your current Python environment.
@@ -119,17 +120,17 @@ Run the runsolver recipe as a Slurm job, validate its output, and download the
 binary for inclusion in generated submission files:
 
 ```bash
-python ./slurmy-build.py \
+python ./building-dependencies/slurmy-build.py \
   --name runsolver \
-  --recipe ./runsolver-build/build.sh \
-  --output ./runsolver-build \
+  --recipe ./building-dependencies/runsolver/build.sh \
+  --output ./building-dependencies/runsolver \
   --artifact runsolver \
   --sbatch-option=--partition=CPU-amd
 ```
 
-This creates `runsolver-build/runsolver` using the compute-node architecture.
-Slurmy copies that binary to `submit.sh.files/runsolver`. The included example
-Makefiles run this build automatically.
+This creates `building-dependencies/runsolver/runsolver` using the compute-node
+architecture. Slurmy copies that binary to `submit.sh.files/runsolver`. The
+included example Makefiles run this build automatically.
 
 </details>
 
@@ -181,7 +182,7 @@ slurmy_args=(
   --problems 'problems/easy/**/*.p'              # Add every file matched by this quoted glob.
   --problems 'problems/hard/**/*.p'              # Add these matches too; duplicate paths are removed.
   --solver solver.solver                         # Solver root and command-line configurations.
-  --runsolver runsolver-build/runsolver          # Local runsolver binary copied to the cluster.
+  --runsolver building-dependencies/runsolver/runsolver  # Cluster-built runsolver binary to package.
   --batch-size 20                                # Solver calls run sequentially in each array element.
   --max-parallel 100                             # Maximum number of Slurm array elements allowed to run simultaneously.
   --sbatch-option=--partition=CPU-amd            # Tell Slurm to use machines in the CPU-amd partition.
@@ -386,11 +387,11 @@ complete while reporting 0% solved.
 <details>
 <summary><strong>🏗️ Building software on the cluster</strong></summary>
 
-`slurmy-build.py` is the shared remote-build mechanism used for runsolver,
-Vampire, E, and Drodi. It copies a Bash recipe to the SSH host, submits the
-recipe with `sbatch`, waits for its final state, checks every declared artifact,
-and uses `rsync` to download the output. Compilation never runs on the SSH head
-node or on the laptop.
+`building-dependencies/slurmy-build.py` is the shared remote-build mechanism
+used for runsolver, Vampire, E, and Drodi. It copies a Bash recipe to the SSH
+host, submits the recipe with `sbatch`, waits for its final state, checks every
+declared artifact, and uses `rsync` to download the output. Compilation never
+runs on the SSH head node or on the laptop.
 
 A recipe runs on one compute node with these directories available:
 
@@ -404,7 +405,7 @@ For example, a recipe that builds a local source tree can be submitted with a
 build context:
 
 ```bash
-python ./slurmy-build.py \
+python ./building-dependencies/slurmy-build.py \
   --host "${SLURMY_HOST:-datalab}" \
   --name my-solver \
   --recipe ./build-my-solver.sh \

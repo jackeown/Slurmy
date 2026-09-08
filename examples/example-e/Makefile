@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := all
 
 REPO_ROOT := ../..
-include $(REPO_ROOT)/slurmy-build.mk
+include $(REPO_ROOT)/building-dependencies/slurmy-build.mk
 
 .PHONY: all build clean distclean monitor submit
 

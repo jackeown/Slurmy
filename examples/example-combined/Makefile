@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := all
 
 REPO_ROOT := ../..
-include $(REPO_ROOT)/slurmy-build.mk
+include $(REPO_ROOT)/building-dependencies/slurmy-build.mk
 
 .PHONY: all build clean distclean monitor submit sync
 
@@ -76,5 +76,5 @@ distclean: clean
 	@$(MAKE) -C ../example-vampire distclean
 	@$(MAKE) -C ../example-e distclean
 	@$(MAKE) -C ../example-drodi distclean
-	@rm -f -- ../../runsolver-build/runsolver ../../runsolver-build/.built-on-*
+	@rm -f -- ../../building-dependencies/runsolver/runsolver ../../building-dependencies/runsolver/.built-on-*
 	@printf '\033[1;32m🧹 Also removed every downloaded build artifact.\033[0m\n'

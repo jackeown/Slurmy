@@ -50,7 +50,7 @@ BUILD_TIME ?= 00:30:00
 BUILD_SBATCH_OPTIONS ?= --partition=$(SLURMY_BUILD_PARTITION)
 
 -include workflow.mk
-include $(REPO_ROOT)/slurmy-build.mk
+include $(REPO_ROOT)/building-dependencies/slurmy-build.mk
 
 SOLVER := $(abspath bin/$(SOLVER_ARTIFACT))
 SOLVER_STAMP := $(abspath bin/.$(EXAMPLE_NAME)-built-on-$(SLURMY_BUILD_TAG))
