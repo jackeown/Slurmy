@@ -19,6 +19,10 @@ EXAMPLE_NAME ?= my-solver
 SOLVER_ARTIFACT ?= my-solver
 # Solver root and invocation description consumed by slurmy.py.
 SOLVER_DESCRIPTION ?= solver.solver
+# Optional newline-delimited files containing existing solver-description paths
+# and problem globs. The interactive maker uses these so paths may contain spaces.
+SOLVER_PATHS_FILE ?=
+PROBLEM_GLOBS_FILE ?=
 # Bash recipe executed by slurmy-build.py on a compute node.
 BUILD_RECIPE ?= build.sh
 
@@ -55,33 +59,52 @@ include $(REPO_ROOT)/building-dependencies/slurmy-build.mk
 SOLVER := $(abspath bin/$(SOLVER_ARTIFACT))
 SOLVER_STAMP := $(abspath bin/.$(EXAMPLE_NAME)-built-on-$(SLURMY_BUILD_TAG))
 
+ifeq ($(strip $(SOLVER_PATHS_FILE)),)
+WORKFLOW_BUILD_TARGETS := $(SOLVER)
+WORKFLOW_BUILD_MESSAGE := $(EXAMPLE_NAME) and runsolver were built on $(SLURMY_HOST) and are ready.
+else
+WORKFLOW_BUILD_TARGETS :=
+WORKFLOW_BUILD_MESSAGE := Existing solver descriptions and runsolver are ready.
+endif
+
 .PHONY: all build clean distclean monitor submit sync
 
 all: build
 	@rm -f -- submit.sh
 	@rm -rf -- submit.sh.files
-	python '$(abspath $(REPO_ROOT)/slurmy.py)' \
+	@set -euo pipefail; \
+	slurmy_args=( \
 		--host '$(SLURMY_HOST)' \
 		--cpu-limit '$(CPU_LIMIT)' \
 		--wc-limit '$(WALL_LIMIT)' \
 		--mem-limit '$(MEMORY_LIMIT)' \
 		--cpu-request '$(CPU_REQUEST)' \
 		--memory-request '$(MEMORY_REQUEST)' \
-		$(foreach pattern,$(PROBLEM_GLOBS),--problems '$(pattern)') \
-		--solver '$(abspath $(SOLVER_DESCRIPTION))' \
 		--runsolver '$(RUNSOLVER)' \
 		--batch-size '$(BATCH_SIZE)' \
 		--max-parallel '$(MAX_PARALLEL)' \
 		--worker-overhead '$(WORKER_OVERHEAD)' \
 		--job-name 'Slurmy-$(EXAMPLE_NAME)' \
 		$(foreach option,$(SUBMIT_SBATCH_OPTIONS),--sbatch-option='$(option)') \
-		--output '$(CURDIR)/submit.sh'
+		--output '$(CURDIR)/submit.sh' \
+	); \
+	if [[ -n '$(SOLVER_PATHS_FILE)' ]]; then \
+		while IFS= read -r solver; do [[ -z "$$solver" ]] || slurmy_args+=(--solver "$$solver"); done < '$(SOLVER_PATHS_FILE)'; \
+	else \
+		slurmy_args+=(--solver '$(abspath $(SOLVER_DESCRIPTION))'); \
+	fi; \
+	if [[ -n '$(PROBLEM_GLOBS_FILE)' ]]; then \
+		while IFS= read -r pattern; do [[ -z "$$pattern" ]] || slurmy_args+=(--problems "$$pattern"); done < '$(PROBLEM_GLOBS_FILE)'; \
+	else \
+		$(foreach pattern,$(PROBLEM_GLOBS),slurmy_args+=(--problems '$(pattern)');) \
+	fi; \
+	python '$(abspath $(REPO_ROOT)/slurmy.py)' "$${slurmy_args[@]}"
 	@printf '\n\033[1;32m✅ Generated the %s submission.\033[0m\n' '$(EXAMPLE_NAME)'
 	@printf '   Inspect submit.sh and submit.sh.files/ before submitting.\n'
 	@printf '\033[1;36m👉 Next: run "make submit" to send it to %s.\033[0m\n' '$(SLURMY_HOST)'
 
-build: $(SOLVER) $(RUNSOLVER)
-	@printf '\033[1;32m✅ %s and runsolver were built on %s and are ready.\033[0m\n' '$(EXAMPLE_NAME)' '$(SLURMY_HOST)'
+build: $(WORKFLOW_BUILD_TARGETS) $(RUNSOLVER)
+	@printf '\033[1;32m✅ %s\033[0m\n' '$(WORKFLOW_BUILD_MESSAGE)'
 
 $(SOLVER_STAMP): $(BUILD_RECIPE) $(SLURMY_BUILD_DRIVER)
 	@printf '\033[1;34m🔨 Building %s in a Slurm job on %s...\033[0m\n' '$(EXAMPLE_NAME)' '$(SLURMY_HOST)'
