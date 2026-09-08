@@ -17,7 +17,7 @@ see the [main Slurmy documentation](../README.md).
 | [`example-drodi`](example-drodi/) | Drodi 4.1.1 from its [official CASC-J13 source archive](https://tptp.org/CASC/J13/SystemSources/Drodi---4.1.1.tgz); the archive is checked against the SHA-256 recorded in its build recipe |
 | [`example-combined`](example-combined/) | All three provers in one submission, run on five easy and five hard problems with a three-second CPU limit per call |
 | [`example-template`](example-template/) | A documented, reusable Makefile workflow whose variables cover remote building, solver limits, problem globs, array layout, submission, monitoring, and synchronization |
-| [`example-maker`](example-maker/) | A one-question-at-a-time Textual application that validates existing solver and problem paths, then creates an `example-NAME/` workflow without copying those inputs |
+| [`example-maker`](example-maker/) | A one-question-at-a-time Textual application that uses an existing solver description or creates one interactively, validates all input paths, then creates an `example-NAME/` workflow |
 
 </details>
 
@@ -33,17 +33,20 @@ cd examples/example-maker
 make
 ```
 
-The maker supplies no defaults and asks one question at a time. It validates
-each solver-description path and problem glob before advancing, then asks for
-the per-call limits, Slurm resource requests, and array layout. The final review
-shows every resolved input location before **Create workflow** writes anything.
-It creates a sibling `example-NAME/` directory without overwriting existing
-work.
+The maker supplies no defaults and asks one question at a time. It first asks
+whether to use existing solver-description files or create a description by
+entering a solver root and invocation lines. It validates each solver path and
+problem glob before advancing, then asks for the per-call limits, Slurm
+resource requests, and array layout. The final review shows every resolved
+input location before **Create workflow** writes anything. It creates a sibling
+`example-NAME/` directory without overwriting existing work.
 
 The solver descriptions, solver roots, and problems remain in their existing
 locations; they do not need to be below `examples/` or the maker directory.
-The generated workflow records absolute paths, and the normal `submit.sh`
-packaging transfers those inputs when the experiment is submitted.
+Relative paths are interpreted from `examples/example-maker/`, then converted
+to absolute paths. The generated workflow stores those paths in its description
+and path-list files, and the normal `submit.sh` packaging transfers the inputs
+when the experiment is submitted.
 
 If you prefer to work directly, copy `example-template/` to a new
 `example-NAME/` directory. Its Makefile begins with one documented variable

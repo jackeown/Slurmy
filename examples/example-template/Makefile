@@ -64,7 +64,7 @@ WORKFLOW_BUILD_TARGETS := $(SOLVER)
 WORKFLOW_BUILD_MESSAGE := $(EXAMPLE_NAME) and runsolver were built on $(SLURMY_HOST) and are ready.
 else
 WORKFLOW_BUILD_TARGETS :=
-WORKFLOW_BUILD_MESSAGE := Existing solver descriptions and runsolver are ready.
+WORKFLOW_BUILD_MESSAGE := Solver descriptions and runsolver are ready.
 endif
 
 .PHONY: all build clean distclean monitor submit sync
