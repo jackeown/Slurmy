@@ -38,7 +38,7 @@ scripts, Slurm commands, and the included `runsolver` binary directly.
 
 On the local machine:
 
-- Python 3.9+, Bash, `make`, `ssh`, `scp`, `rsync`, and GNU tar
+- Python 3.9+, Bash, `make`, `ssh`, `scp`, `rsync`, and tar (GNU or BSD)
 - Non-interactive SSH access to the cluster
 
 Use Linux, macOS (Intel or Apple Silicon, including M4), or Windows through
@@ -50,17 +50,15 @@ must likewise be built for the cluster.
 **macOS:** with [Homebrew](https://brew.sh/) installed, run:
 
 ```bash
-brew install python gnu-tar rsync
+brew install python rsync
 ```
 
 If `make` is missing, install Apple's command-line tools with
 `xcode-select --install`. Enter `bash` in Terminal before following the shell
 examples below; this also allows pasting their comments into macOS Terminal.
 
-Apple's bundled tar has different flags. Slurmy automatically uses Homebrew's
-[`gtar`](https://formulae.brew.sh/formula/gnu-tar); no tar alias or PATH override
-is needed. The built-in Bash is sufficient. Use Homebrew's Python to create
-the environment below.
+The built-in Bash and tar are sufficient; no GNU tar installation is needed.
+Use Homebrew's Python to create the environment below.
 
 **Linux (Ubuntu/Debian):** install any missing prerequisites:
 

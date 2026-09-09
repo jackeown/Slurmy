@@ -815,20 +815,7 @@ def build_submit_script(
         # directory. No remote state has been changed at this point.
         command -v ssh >/dev/null || {{ echo "Slurmy: ssh is required" >&2; exit 1; }}
         command -v scp >/dev/null || {{ echo "Slurmy: scp is required" >&2; exit 1; }}
-        # macOS ships BSD tar. Homebrew installs GNU tar as gtar; prefer it
-        # without requiring a PATH override that replaces the system tar.
-        TAR=
-        for candidate in gtar tar; do
-            if command -v "$candidate" >/dev/null &&
-                [[ "$("$candidate" --version 2>/dev/null)" == *"GNU tar"* ]]; then
-                TAR=$candidate
-                break
-            fi
-        done
-        if [[ -z "$TAR" ]]; then
-            echo "Slurmy: GNU tar is required (macOS: brew install gnu-tar)." >&2
-            exit 1
-        fi
+        command -v tar >/dev/null || {{ echo "Slurmy: tar is required" >&2; exit 1; }}
         [[ -d "$ASSET_DIR" ]] || {{ echo "Slurmy: missing asset directory: $ASSET_DIR" >&2; exit 1; }}
 
         # Temporary archives exist only for this submission attempt and are removed
@@ -851,11 +838,15 @@ def build_submit_script(
         #   inputs.tar.gz     solver resources and problem files, mirrored from /
         #   job-files.tar.gz generated scripts, metadata, commands, and runsolver
         echo "Slurmy: packaging {task_count} calls in {batch_count} batches..." >&2
-        "$TAR" --create --gzip --file "$TEMP_DIR/inputs.tar.gz" \
-            --directory=/ --dereference --verbatim-files-from \
-            --files-from="$ASSET_DIR/archive-paths.txt"
-        "$TAR" --create --gzip --file "$TEMP_DIR/job-files.tar.gz" \
-            --directory="$ASSET_DIR" .
+        # Both BSD tar (macOS) and GNU tar accept these options. NUL-separated
+        # names preserve spaces and backslashes literally; input paths cannot
+        # contain newlines. -h packages symlink targets, including solver files.
+        # COPYFILE_DISABLE skips macOS metadata sidecars when packaging for Linux.
+        tr '\n' '\0' < "$ASSET_DIR/archive-paths.txt" |
+            COPYFILE_DISABLE=1 tar -chzf "$TEMP_DIR/inputs.tar.gz" \
+                -C / --null -T -
+        COPYFILE_DISABLE=1 tar -czf "$TEMP_DIR/job-files.tar.gz" \
+            -C "$ASSET_DIR" .
 
         # Stage 4/5: create an empty $HOME/Slurmy/<job-id>/incoming directory, then
         # transfer both archives. Remote logic lives in named, readable helpers.
