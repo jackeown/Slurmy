@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Generate readable Bash submission files for solver jobs with Slurm.
 
 Python is used only on the laptop to expand solver configurations and write the
@@ -815,7 +815,20 @@ def build_submit_script(
         # directory. No remote state has been changed at this point.
         command -v ssh >/dev/null || {{ echo "Slurmy: ssh is required" >&2; exit 1; }}
         command -v scp >/dev/null || {{ echo "Slurmy: scp is required" >&2; exit 1; }}
-        command -v tar >/dev/null || {{ echo "Slurmy: tar is required" >&2; exit 1; }}
+        # macOS ships BSD tar. Homebrew installs GNU tar as gtar; prefer it
+        # without requiring a PATH override that replaces the system tar.
+        TAR=
+        for candidate in gtar tar; do
+            if command -v "$candidate" >/dev/null &&
+                [[ "$("$candidate" --version 2>/dev/null)" == *"GNU tar"* ]]; then
+                TAR=$candidate
+                break
+            fi
+        done
+        if [[ -z "$TAR" ]]; then
+            echo "Slurmy: GNU tar is required (macOS: brew install gnu-tar)." >&2
+            exit 1
+        fi
         [[ -d "$ASSET_DIR" ]] || {{ echo "Slurmy: missing asset directory: $ASSET_DIR" >&2; exit 1; }}
 
         # Temporary archives exist only for this submission attempt and are removed
@@ -826,7 +839,7 @@ def build_submit_script(
 
         # Stage 2/5: derive a unique remote job directory. `ssh -G` reads the local
         # SSH configuration; the first actual connection happens in Stage 4.
-        REMOTE_USER=$(ssh -T -G -- "$HOST" | awk 'tolower($1) == "user" {{ print $2; exit }}')
+        REMOTE_USER=$(ssh -T -G -- "$HOST" | awk 'tolower($1) == "user" && !found {{ print $2; found=1 }}')
         if [[ ! "$REMOTE_USER" =~ ^[A-Za-z0-9._-]+$ ]]; then
             echo "Slurmy: unable to obtain a safe remote username from ssh -G $HOST" >&2
             exit 1
@@ -838,10 +851,10 @@ def build_submit_script(
         #   inputs.tar.gz     solver resources and problem files, mirrored from /
         #   job-files.tar.gz generated scripts, metadata, commands, and runsolver
         echo "Slurmy: packaging {task_count} calls in {batch_count} batches..." >&2
-        tar --create --gzip --file "$TEMP_DIR/inputs.tar.gz" \
+        "$TAR" --create --gzip --file "$TEMP_DIR/inputs.tar.gz" \
             --directory=/ --dereference --verbatim-files-from \
             --files-from="$ASSET_DIR/archive-paths.txt"
-        tar --create --gzip --file "$TEMP_DIR/job-files.tar.gz" \
+        "$TAR" --create --gzip --file "$TEMP_DIR/job-files.tar.gz" \
             --directory="$ASSET_DIR" .
 
         # Stage 4/5: create an empty $HOME/Slurmy/<job-id>/incoming directory, then

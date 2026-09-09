@@ -38,8 +38,41 @@ scripts, Slurm commands, and the included `runsolver` binary directly.
 
 On the local machine:
 
-- Python 3.9+, Bash, `ssh`, `scp`, `rsync`, and GNU `tar`
+- Python 3.9+, Bash, `make`, `ssh`, `scp`, `rsync`, and GNU tar
 - Non-interactive SSH access to the cluster
+
+Use Linux, macOS (Intel or Apple Silicon, including M4), or Windows through
+WSL. The laptop and cluster can have different CPU architectures: the example
+Makefiles build provers and `runsolver` in Slurm jobs, download them for
+packaging, and execute them only on the cluster. Custom solver installations
+must likewise be built for the cluster.
+
+**macOS:** with [Homebrew](https://brew.sh/) installed, run:
+
+```bash
+brew install python gnu-tar rsync
+```
+
+If `make` is missing, install Apple's command-line tools with
+`xcode-select --install`. Enter `bash` in Terminal before following the shell
+examples below; this also allows pasting their comments into macOS Terminal.
+
+Apple's bundled tar has different flags. Slurmy automatically uses Homebrew's
+[`gtar`](https://formulae.brew.sh/formula/gnu-tar); no tar alias or PATH override
+is needed. The built-in Bash is sufficient. Use Homebrew's Python to create
+the environment below.
+
+**Linux (Ubuntu/Debian):** install any missing prerequisites:
+
+```bash
+sudo apt install python3 python3-venv make openssh-client rsync tar git
+```
+
+**Windows:** install [WSL with Ubuntu](https://learn.microsoft.com/en-us/windows/wsl/install)
+using `wsl --install` in an administrator PowerShell, then follow the Linux
+setup inside Ubuntu. Run all Slurmy commands there, keep the checkout under
+your Linux home directory (such as `~/Slurmy`), and configure SSH inside WSL.
+Native PowerShell and Windows Python are not supported.
 
 On the cluster:
 
@@ -58,12 +91,18 @@ Host datalab
     IdentityFile ~/.ssh/your-key
 ```
 
-Every Slurmy Python script accepts `--host HOST`. You can instead set
-`SLURMY_HOST` once for the shell; an explicit `--host` always wins:
+The submission generator, build, monitor, and sync scripts accept `--host HOST`.
+You can instead set `SLURMY_HOST` once for the shell; an explicit `--host`
+always wins:
 
 ```bash
 export SLURMY_HOST=another-cluster
 ```
+
+Connect to the cluster VPN if needed, then verify access with
+`ssh datalab 'command -v sbatch'` (substitute your host alias). Complete any
+first-connection host-key and authentication setup before running the examples.
+The interactive example generator asks for the host explicitly.
 
 `slurmy.py`, `building-dependencies/slurmy-build.py`, and `slurmy-sync.py` use
 only the Python standard library. The `slurmy-monitor.py` dashboard and
@@ -71,12 +110,15 @@ interactive example generator additionally need Textual, which is installed
 through `requirements.txt`:
 
 ```bash
-# Optional: skip these two lines to use your current Python environment.
-python -m venv .venv
+# Optional if your existing environment already provides a suitable `python`.
+python3 -m venv .venv
 source .venv/bin/activate
 
 python -m pip install -r requirements.txt
 ```
+
+The Makefiles use `python` from your PATH. Activating the environment above
+provides that command on macOS and Linux without changing the system Python.
 
 </details>
 
