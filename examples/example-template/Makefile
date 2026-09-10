@@ -26,6 +26,10 @@ SOLVER_PATHS_FILE ?=
 PROBLEM_GLOBS_FILE ?=
 # Bash recipe executed by slurmy-build.py on a compute node.
 BUILD_RECIPE ?= build.sh
+# Optional local source directory uploaded to the build job. Generated workflows
+# use BUILD_CONTEXT_FILE so absolute paths containing spaces remain intact.
+BUILD_CONTEXT ?=
+BUILD_CONTEXT_FILE ?=
 
 # Every quoted glob contributes problems. Spaces in glob paths are unsupported.
 PROBLEM_GLOBS ?= $(CURDIR)/problems/*.p
@@ -107,17 +111,26 @@ all: build
 build: $(WORKFLOW_BUILD_TARGETS) $(RUNSOLVER)
 	@printf '\033[1;32m✅ %s\033[0m\n' '$(WORKFLOW_BUILD_MESSAGE)'
 
-$(SOLVER_STAMP): $(BUILD_RECIPE) $(SLURMY_BUILD_DRIVER)
+$(SOLVER_STAMP): $(BUILD_RECIPE) $(BUILD_CONTEXT_FILE) $(SLURMY_BUILD_DRIVER)
 	@printf '\033[1;34m🔨 Building %s in a Slurm job on %s...\033[0m\n' '$(EXAMPLE_NAME)' '$(SLURMY_HOST)'
+	@set -euo pipefail; \
+	context_args=(); \
+	if [[ -n '$(BUILD_CONTEXT_FILE)' ]]; then \
+		IFS= read -r build_context < '$(BUILD_CONTEXT_FILE)'; \
+		context_args+=(--context "$$build_context"); \
+	elif [[ -n '$(BUILD_CONTEXT)' ]]; then \
+		context_args+=(--context '$(abspath $(BUILD_CONTEXT))'); \
+	fi; \
 	python '$(SLURMY_BUILD_DRIVER)' \
 		--host '$(SLURMY_HOST)' \
 		--name '$(EXAMPLE_NAME)' \
 		--recipe '$(abspath $(BUILD_RECIPE))' \
 		--output '$(abspath bin)' \
-		--artifact '$(SOLVER_ARTIFACT)' \
+		--artifact='$(SOLVER_ARTIFACT)' \
 		--cpus-per-task '$(BUILD_CPUS)' \
 		--memory '$(BUILD_MEMORY)' \
 		--time '$(BUILD_TIME)' \
+		"$${context_args[@]}" \
 		$(foreach option,$(BUILD_SBATCH_OPTIONS),--sbatch-option='$(option)')
 	@touch '$@'
 	@printf '\033[1;32m✅ Built %s on %s and downloaded it.\033[0m\n' '$(EXAMPLE_NAME)' '$(SLURMY_HOST)'

@@ -12,7 +12,10 @@ and `problem-globs.txt` files, then set `SOLVER_PATHS_FILE` and
 packages them only when the experiment is submitted.
 
 For the self-contained build-recipe mode, put benchmark files below
-`problems/`. In either mode, run:
+`problems/`. `build.sh` runs on a Slurm compute node and must install the
+declared `SOLVER_ARTIFACT` below `$SLURMY_BUILD_OUTPUT`. Set `BUILD_CONTEXT` to
+send an existing local source directory whose contents will be extracted below
+`$SLURMY_BUILD_WORK`. In either mode, run:
 
 ```bash
 make          # Build the solver and runsolver on the cluster, then generate submit.sh.

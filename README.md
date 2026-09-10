@@ -131,16 +131,20 @@ cd examples/example-generator
 make
 ```
 
-It asks one question at a time with no default answers. You can select existing
-solver-description files or create one by entering a solver root and invocation
-lines. Solver paths and problem globs are validated as they are entered.
-Relative paths start from `examples/example-generator/` and are converted to
-absolute paths in the generated workflow.
+It asks one question at a time with no default answers. It can create a remote
+build recipe like the Vampire and E examples, use existing solver-description
+files, or create a description for an existing solver root. For a remote build,
+you enter an optional source directory, the Bash build steps, the executable
+produced below `$SLURMY_BUILD_OUTPUT`, its invocation, and the Slurm resources
+for compilation. Solver, source, and problem paths are validated as they are
+entered. Relative paths start from `examples/example-generator/` and are
+converted to absolute paths in the generated workflow.
 
-The result is written to `examples/GENERATED/example-NAME/`. Solver
-installations and benchmark files remain in their existing locations; the
-normal submission step packages them later. Review the generated settings,
-then use the standard targets:
+The result is written to `examples/GENERATED/example-NAME/`. A remote-build
+workflow downloads its cluster-built executable into that directory's `bin/`;
+a workflow using existing inputs keeps absolute references to them. The normal
+submission step packages the resulting solver and selected benchmarks. Review
+the generated settings, then use the standard targets:
 
 ```bash
 cd ../GENERATED/example-NAME

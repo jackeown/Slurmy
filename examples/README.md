@@ -17,7 +17,7 @@ see the [main Slurmy documentation](../README.md).
 | [`example-drodi`](example-drodi/) | Drodi 4.1.1 from its [official CASC-J13 source archive](https://tptp.org/CASC/J13/SystemSources/Drodi---4.1.1.tgz); the archive is checked against the SHA-256 recorded in its build recipe |
 | [`example-combined`](example-combined/) | All three provers in one submission, run on five easy and five hard problems with a three-second CPU limit per call |
 | [`example-template`](example-template/) | A documented, reusable Makefile workflow whose variables cover remote building, solver limits, problem globs, array layout, submission, monitoring, and synchronization |
-| [`example-generator`](example-generator/) | A one-question-at-a-time Textual application that uses an existing solver description or creates one interactively, validates all input paths, then creates a workflow under [`GENERATED/`](GENERATED/) |
+| [`example-generator`](example-generator/) | A one-question-at-a-time Textual application that configures a remote solver build, uses an existing solver description, or creates one interactively, then writes a workflow under [`GENERATED/`](GENERATED/) |
 
 </details>
 
@@ -33,20 +33,21 @@ cd examples/example-generator
 make
 ```
 
-The generator supplies no defaults and asks one question at a time. It first
-asks whether to use existing solver-description files or create a description
-by entering a solver root and invocation lines. It validates each solver path
-and problem glob before advancing, then asks for the per-call limits, Slurm
-resource requests, and array layout. The final review shows every resolved
-input location before **Create workflow** writes anything. It creates
+The generator supplies no defaults and asks one question at a time. It can
+create a remote build recipe and solver description, use existing description
+files, or create a description for an existing solver root. It validates each
+input path before advancing, then asks for the per-call limits, Slurm resource
+requests, and array layout. The final review shows the build settings and every
+resolved input location before **Create workflow** writes anything. It creates
 `GENERATED/example-NAME/` without overwriting existing work.
 
-The solver descriptions, solver roots, and problems remain in their existing
-locations; they do not need to be below `examples/` or the generator directory.
-Relative paths are interpreted from `examples/example-generator/`, then
-converted to absolute paths. The generated workflow stores those paths in its
-description and path-list files, and the normal `submit.sh` packaging transfers
-the inputs when the experiment is submitted.
+Existing solver descriptions, solver roots, source contexts, and problems do
+not need to be below `examples/` or the generator directory. Relative paths are
+interpreted from `examples/example-generator/`, then converted to absolute
+paths. The generated workflow stores those paths in its description and
+path-list files. A remote build downloads its executable into the generated
+workflow's `bin/`; the normal `submit.sh` packaging then transfers the solver
+and problems when the experiment is submitted.
 
 If you prefer to work directly, copy `example-template/` to a new
 `example-NAME/` directory alongside the maintained examples. Its Makefile

@@ -4,6 +4,7 @@
 #
 # EXAMPLE_NAME := my-solver
 # SOLVER_ARTIFACT := my-solver
+# BUILD_CONTEXT_FILE := $(CURDIR)/build-context.txt
 # SOLVER_PATHS_FILE := $(CURDIR)/solver-paths.txt
 # PROBLEM_GLOBS_FILE := $(CURDIR)/problem-globs.txt
 # PROBLEM_GLOBS := $(CURDIR)/problems/*.p $(CURDIR)/more-problems/**/*.p
