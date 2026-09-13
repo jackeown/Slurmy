@@ -460,6 +460,7 @@ Review `workflow.mk`, then run:
 make
 make submit
 make monitor   # Or use make sync to download results.
+make stop      # Select an active Slurm job to cancel.
 ```
 {rebuild_note}
 

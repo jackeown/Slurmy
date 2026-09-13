@@ -7,7 +7,7 @@ include $(REPO_ROOT)/building-dependencies/slurmy-build.mk
 # Leave empty to sync the newest job, or pass SLURMY_ID=name_timestamp_pid.
 SLURMY_ID ?=
 
-.PHONY: all build clean distclean monitor submit sync
+.PHONY: all build clean distclean monitor stop submit sync
 
 all: build
 	@rm -f -- submit.sh
@@ -58,7 +58,10 @@ submit:
 	@printf '\033[1;34m🚀 Sending all three provers and ten problems to %s, then submitting 30 calls...\033[0m\n\n' '$(SLURMY_HOST)'
 	@SLURMY_HOST='$(SLURMY_HOST)' ./submit.sh
 	@printf '\n\033[1;32m✅ Submitted successfully.\033[0m\n'
-	@printf '\033[1;36m👉 Next: run "make sync" to download results until completion.\033[0m\n'
+	@printf '\033[1;36m👉 Next: run "make monitor", "make sync", or "make stop".\033[0m\n'
+
+stop:
+	@cd '$(REPO_ROOT)' && python ./slurmy-cancel.py --host '$(SLURMY_HOST)'
 
 sync:
 	@printf '\033[1;34m🔄 Syncing the selected (or latest) Slurmy job from %s...\033[0m\n' '$(SLURMY_HOST)'

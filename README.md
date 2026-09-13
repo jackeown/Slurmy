@@ -19,8 +19,8 @@ separate tools for live monitoring and incremental result synchronization.
 1. Describe one or more solver command lines and select the problem files.
 2. Run `slurmy.py` locally to generate `submit.sh` and `submit.sh.files/`.
 3. Inspect and run `submit.sh` to copy the experiment and submit a Slurm array.
-4. Follow the job with `slurmy-monitor.py` or download results with
-   `slurmy-sync.py`.
+4. Follow the job with `slurmy-monitor.py`, download results with
+   `slurmy-sync.py`, or cancel it with `slurmy-cancel.py`.
 
 Python runs only on the local machine. Compute nodes run the generated Bash
 scripts, Slurm commands, and the included `runsolver` binary directly.
@@ -89,9 +89,9 @@ Host datalab
     IdentityFile ~/.ssh/your-key
 ```
 
-The submission generator, build, monitor, and sync scripts accept `--host HOST`.
-You can instead set `SLURMY_HOST` once for the shell; an explicit `--host`
-always wins:
+The submission generator, build, monitor, sync, and cancel scripts accept
+`--host HOST`. You can instead set `SLURMY_HOST` once for the shell; an
+explicit `--host` always wins:
 
 ```bash
 export SLURMY_HOST=another-cluster
@@ -102,10 +102,10 @@ Connect to the cluster VPN if needed, then verify access with
 first-connection host-key and authentication setup before running the examples.
 The interactive example generator asks for the host explicitly.
 
-`slurmy.py`, `building-dependencies/slurmy-build.py`, and `slurmy-sync.py` use
-only the Python standard library. The `slurmy-monitor.py` dashboard and
-interactive example generator additionally need Textual, which is installed
-through `requirements.txt`:
+`slurmy.py`, `building-dependencies/slurmy-build.py`, `slurmy-sync.py`, and
+`slurmy-cancel.py` use only the Python standard library. The
+`slurmy-monitor.py` dashboard and interactive example generator additionally
+need Textual, which is installed through `requirements.txt`:
 
 ```bash
 # Optional if your existing environment already provides a suitable `python`.
@@ -152,6 +152,7 @@ make
 make submit
 make monitor
 make sync     # Or use this to download results incrementally.
+make stop     # Select an active Slurm job to cancel.
 ```
 
 See the [example-generator documentation](examples/example-generator/README.md)
@@ -180,6 +181,30 @@ monitor` opens the interactive dashboard.
 See [Prover examples](examples/README.md) for the E, Drodi, and combined
 three-prover examples, the reusable workflow template, the interactive example
 generator, and the available Makefile targets.
+
+</details>
+
+<details>
+<summary><strong>🛑 Cancel a job</strong></summary>
+
+Run the cancel tool without an ID to list your active jobs and select one:
+
+```bash
+./slurmy-cancel.py
+```
+
+The list groups a job array under its base Slurm ID. Selecting that ID cancels
+the entire array. To cancel immediately without the selection prompt, supply a
+Slurm ID directly; an array-element ID cancels only that element:
+
+```bash
+./slurmy-cancel.py 123456
+./slurmy-cancel.py 123456_7
+```
+
+Use `--host HOST` or `SLURMY_HOST` as with the other tools. Every example also
+provides `make stop`, which opens the same selection prompt for its configured
+host.
 
 </details>
 

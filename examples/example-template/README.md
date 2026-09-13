@@ -22,6 +22,7 @@ make          # Build the solver and runsolver on the cluster, then generate sub
 make submit   # Transfer the experiment and submit its Slurm array.
 make monitor  # Inspect current and historical jobs interactively.
 make sync     # Incrementally download the selected or latest job.
+make stop     # Select an active Slurm job to cancel.
 ```
 
 Use `SLURMY_HOST=another-cluster make` to override the default `datalab` SSH

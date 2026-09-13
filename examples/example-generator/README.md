@@ -51,12 +51,16 @@ cd ../GENERATED/example-NAME
 make
 make submit
 make sync
+make stop
 ```
 
 `make sync` follows the newest Slurmy job and incrementally downloads its
 results. Run it from the generated workflow or directly from this generator
 directory. To select a particular run, use
 `make sync SLURMY_ID=name_timestamp_pid`.
+
+`make stop` shows your active Slurm jobs on the configured host and asks which
+one to cancel.
 
 If the contents of an external build-context directory change after a
 successful build, run `make distclean` before `make` to rebuild them on the

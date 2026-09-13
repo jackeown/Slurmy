@@ -107,6 +107,7 @@ The single-prover Makefiles provide the same targets:
 | `make submit` | Run the generated `submit.sh` and return after Slurm accepts the job array |
 | `make monitor` | Open the Slurmy dashboard for `datalab` |
 | `make sync` | Follow the newest job and incrementally download its results; set `SLURMY_ID=...` to choose one |
+| `make stop` | Show active Slurm jobs and cancel the one you select |
 | `make clean` | Remove only `submit.sh` and `submit.sh.files/` |
 | `make distclean` | Also remove old local source data and the downloaded prover binary |
 

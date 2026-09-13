@@ -6,11 +6,14 @@ SLURMY_HOST ?= datalab
 # Leave empty to sync the newest job, or pass SLURMY_ID=name_timestamp_pid.
 SLURMY_ID ?=
 
-.PHONY: run sync
+.PHONY: run stop sync
 
 run:
 	@printf '\033[1;34m🧭 Opening the interactive Slurmy workflow generator...\033[0m\n'
 	@python ./example-generator.py
+
+stop:
+	@cd '$(REPO_ROOT)' && python ./slurmy-cancel.py --host '$(SLURMY_HOST)'
 
 sync:
 	@printf '\033[1;34m🔄 Syncing the selected (or latest) Slurmy job from %s...\033[0m\n' '$(SLURMY_HOST)'

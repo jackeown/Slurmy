@@ -13,4 +13,6 @@ cd example-NAME
 make
 make submit
 make monitor
+make sync
+make stop
 ```
