@@ -63,6 +63,7 @@ class Workflow:
     wall_limit: int
     memory_limit: str
     cpu_request: str
+    exclusive_nodes: bool
     memory_request: str
     batch_size: int
     max_parallel: int
@@ -218,6 +219,14 @@ FINAL_QUESTIONS = (
         "How many CPUs should each Slurm array task request?",
         "This is the allocation for one array task, which runs its calls sequentially.",
         "Choose one of: 1-core, 4-core, 8-core, 16-core, 32-core, 64-core",
+    ),
+    Question(
+        "exclusive_nodes",
+        "Should each Slurm array task reserve its entire node?",
+        "Choose no to reserve the requested CPUs and memory while other jobs may "
+        "use the node's remaining resources. Choose yes to prevent any other job "
+        "from sharing a node assigned to this task.",
+        "Enter exactly: yes or no",
     ),
     Question(
         "memory_request",
@@ -406,6 +415,7 @@ def workflow_makefile(workflow: Workflow) -> str:
             f"WALL_LIMIT := {workflow.wall_limit}",
             f"MEMORY_LIMIT := {workflow.memory_limit}",
             f"CPU_REQUEST := {workflow.cpu_request}",
+            f"EXCLUSIVE_NODES := {'yes' if workflow.exclusive_nodes else 'no'}",
             f"MEMORY_REQUEST := {workflow.memory_request}",
             f"BATCH_SIZE := {workflow.batch_size}",
             f"MAX_PARALLEL := {workflow.max_parallel}",
@@ -637,7 +647,7 @@ class ExampleGeneratorApp(App[None]):
             if not SIMPLE_RE.fullmatch(value):
                 raise WorkflowError("Use only letters, numbers, dots, underscores, and hyphens.")
             return value, "Accepted."
-        if question.key == "remote_build":
+        if question.key in {"remote_build", "exclusive_nodes"}:
             choice = value.lower()
             if choice not in {"yes", "no"}:
                 raise WorkflowError("Enter exactly: yes or no")
@@ -806,6 +816,7 @@ class ExampleGeneratorApp(App[None]):
             wall_limit=self.answers["wall_limit"],
             memory_limit=self.answers["memory_limit"],
             cpu_request=self.answers["cpu_request"],
+            exclusive_nodes=self.answers["exclusive_nodes"],
             memory_request=self.answers["memory_request"],
             batch_size=self.answers["batch_size"],
             max_parallel=self.answers["max_parallel"],
@@ -863,6 +874,11 @@ class ExampleGeneratorApp(App[None]):
                     *(f"  {escape(pattern)}" for pattern in workflow.problem_globs),
                     f"Limits: {workflow.cpu_limit}s CPU · {workflow.wall_limit}s wall · {workflow.memory_limit}",
                     f"Allocation: {workflow.cpu_request} · {workflow.memory_request}",
+                    (
+                        "Node sharing: entire assigned node reserved"
+                        if workflow.exclusive_nodes
+                        else "Node sharing: unrequested node resources remain available"
+                    ),
                     f"Array: {workflow.batch_size} calls/task · {workflow.max_parallel} simultaneous tasks",
                 ]
             )

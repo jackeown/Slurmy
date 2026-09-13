@@ -282,6 +282,7 @@ slurmy_args=(
   --wc-limit 70                                  # Maximum elapsed seconds for each solver call.
   --mem-limit 2GiB                               # Memory limit enforced on each solver call.
   --cpu-request 1-core                           # Slurm CPUs requested for each array element.
+  # --exclusive-nodes                           # Optional: reserve every node assigned to an array element.
   --memory-request 2300MiB                       # Slurm memory request; leave room above mem-limit.
   --problems 'problems/easy/**/*.p'              # Add every file matched by this quoted glob.
   --problems 'problems/hard/**/*.p'              # Add these matches too; duplicate paths are removed.
@@ -627,6 +628,10 @@ process-tree limits.
   runsolver.
 - `--cpu-request` and `--memory-request` request resources for each Slurm array
   element.
+- By default, Slurmy never requests oversubscription: an array element receives
+  its allocated CPUs, while other jobs may use the node's remaining resources.
+  Add `--exclusive-nodes` only when each array element must reserve every node
+  assigned to it. Slurm partition policy ultimately controls resource sharing.
 - `--memory-request` must be at least `--mem-limit` and should leave a little
   room for Bash and runsolver.
 

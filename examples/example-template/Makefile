@@ -41,6 +41,9 @@ MEMORY_LIMIT ?= 2GiB
 # Resources requested for each Slurm array task.
 CPU_REQUEST ?= 1-core
 MEMORY_REQUEST ?= 2300MiB
+# "no" reserves the requested CPUs and memory while allowing other jobs to use
+# the rest of the node. "yes" requests every assigned node exclusively.
+EXCLUSIVE_NODES ?= no
 # Calls run sequentially per array task, then the cluster-wide concurrency cap.
 BATCH_SIZE ?= 20
 MAX_PARALLEL ?= 100
@@ -60,6 +63,10 @@ BUILD_SBATCH_OPTIONS ?= --partition=$(SLURMY_BUILD_PARTITION)
 
 -include workflow.mk
 include $(REPO_ROOT)/building-dependencies/slurmy-build.mk
+
+ifneq ($(words $(filter yes no,$(EXCLUSIVE_NODES))),1)
+$(error EXCLUSIVE_NODES must be either yes or no)
+endif
 
 SOLVER := $(abspath bin/$(SOLVER_ARTIFACT))
 SOLVER_STAMP := $(abspath bin/.$(EXAMPLE_NAME)-built-on-$(SLURMY_BUILD_TAG))
@@ -84,6 +91,7 @@ all: build
 		--wc-limit '$(WALL_LIMIT)' \
 		--mem-limit '$(MEMORY_LIMIT)' \
 		--cpu-request '$(CPU_REQUEST)' \
+		$(if $(filter yes,$(EXCLUSIVE_NODES)),--exclusive-nodes) \
 		--memory-request '$(MEMORY_REQUEST)' \
 		--runsolver '$(RUNSOLVER)' \
 		--batch-size '$(BATCH_SIZE)' \

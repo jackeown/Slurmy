@@ -26,4 +26,7 @@ make stop     # Select an active Slurm job to cancel.
 ```
 
 Use `SLURMY_HOST=another-cluster make` to override the default `datalab` SSH
-host. `make build`, `make clean`, and `make distclean` are also available.
+host. Keep `EXCLUSIVE_NODES=no` to reserve only each task's requested CPUs and
+memory while leaving the rest of its node available to other jobs. Set
+`EXCLUSIVE_NODES=yes` only when every array task must reserve its assigned node
+exclusively. `make build`, `make clean`, and `make distclean` are also available.
