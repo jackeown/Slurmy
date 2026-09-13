@@ -6,8 +6,9 @@ REPO_ROOT := ../..
 # -----------------------------------------------------------------------------
 # Workflow variables
 # Copy this directory to example-NAME and edit these values, or run the
-# interactive ../example-generator/example-generator.py application. Generated
-# workflows live one level deeper and override REPO_ROOT in workflow.mk.
+# interactive ../../YourRuns/example-generator/example-generator.py application.
+# Generated workflows live under YourRuns/GENERATED and override REPO_ROOT in
+# workflow.mk.
 # A generated workflow.mk may override any value without changing this template.
 # -----------------------------------------------------------------------------
 # SSH alias or host name used by every build, submit, monitor, and sync command.

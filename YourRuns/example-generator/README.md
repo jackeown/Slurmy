@@ -26,7 +26,7 @@ to be built on the cluster.
 
 Problem globs are also validated immediately, and every glob must match at
 least one existing regular file. Relative solver and problem paths always
-start from this `examples/example-generator/` directory—even if the application
+start from this `YourRuns/example-generator/` directory—even if the application
 is launched elsewhere. The generator converts them to absolute paths before
 showing the review screen or generating files.
 
@@ -36,9 +36,9 @@ asks for the number of cores per physical CPU, then reserves and packs complete
 Slurm sockets. Whole-node exclusivity is a separate yes/no question, so it can
 be enabled only when no other job may share the assigned node.
 
-The application creates `examples/GENERATED/example-NAME/` using
-`example-template/`. It writes no files until generation and never overwrites
-an existing directory. Keeping generated workflows under `GENERATED/` makes
+The application creates `YourRuns/GENERATED/example-NAME/` using
+`ExampleRuns/example-template/`. It writes no files until generation and never
+overwrites an existing directory. Keeping generated workflows under `GENERATED/` makes
 them easy to distinguish from the maintained examples. Solver roots and
 problems can live anywhere on the local filesystem: the generated workflow
 records their absolute locations but does not copy them. `workflow.mk` points

@@ -5,8 +5,8 @@ __pycache__/
 /slurmy-results/
 /building-dependencies/runsolver/runsolver
 /building-dependencies/runsolver/.built-on-*
-/examples/example-*/source/
-/examples/example-*/bin/
-/examples/example-*/submit.sh
-/examples/example-*/submit.sh.files/
-/examples/GENERATED/example-*/
+/ExampleRuns/example-*/source/
+/ExampleRuns/example-*/bin/
+/ExampleRuns/example-*/submit.sh
+/ExampleRuns/example-*/submit.sh.files/
+/YourRuns/GENERATED/example-*/

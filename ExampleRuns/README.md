@@ -17,7 +17,6 @@ see the [main Slurmy documentation](../README.md).
 | [`example-drodi`](example-drodi/) | Drodi 4.1.1 from its [official CASC-J13 source archive](https://tptp.org/CASC/J13/SystemSources/Drodi---4.1.1.tgz); the archive is checked against the SHA-256 recorded in its build recipe |
 | [`example-combined`](example-combined/) | All three provers in one submission, run on five easy and five hard problems with a three-second CPU limit per call |
 | [`example-template`](example-template/) | A documented, reusable Makefile workflow whose variables cover remote building, solver limits, problem globs, array layout, submission, monitoring, and synchronization |
-| [`example-generator`](example-generator/) | A one-question-at-a-time Textual application that configures a remote solver build, uses an existing solver description, or creates one interactively, then writes a workflow under [`GENERATED/`](GENERATED/) |
 
 </details>
 
@@ -26,10 +25,10 @@ see the [main Slurmy documentation](../README.md).
 
 <blockquote>
 
-For a guided setup, launch the interactive generator:
+From the repository root, launch the interactive generator:
 
 ```bash
-cd examples/example-generator
+cd YourRuns/example-generator
 make
 ```
 
@@ -40,19 +39,19 @@ input path before advancing, then asks for the per-call limits, Slurm resource
 requests—including separate core, physical-CPU/socket, and whole-node
 isolation—and array layout. The final review shows the build settings and every
 resolved input location before **Create workflow** writes anything. It creates
-`GENERATED/example-NAME/` without overwriting existing work.
+`YourRuns/GENERATED/example-NAME/` without overwriting existing work.
 
 Existing solver descriptions, solver roots, source contexts, and problems do
-not need to be below `examples/` or the generator directory. Relative paths are
-interpreted from `examples/example-generator/`, then converted to absolute
-paths. The generated workflow stores those paths in its description and
-path-list files. A remote build downloads its executable into the generated
+not need to be below `ExampleRuns/`, `YourRuns/`, or the generator directory.
+Relative paths are interpreted from `YourRuns/example-generator/`, then
+converted to absolute paths. The generated workflow stores those paths in its
+description and path-list files. A remote build downloads its executable into the generated
 workflow's `bin/`; the normal `submit.sh` packaging then transfers the solver
 and problems when the experiment is submitted.
 
-If you prefer to work directly, copy `example-template/` to a new
-`example-NAME/` directory alongside the maintained examples. Its Makefile
-begins with one documented variable block. Edit that block together with
+If you prefer to work directly, copy `ExampleRuns/example-template/` to a new
+directory such as `YourRuns/example-NAME/`. Its Makefile begins with one
+documented variable block. Edit that block together with
 `build.sh` and `solver.solver`, add files under `problems/`, then use the same
 commands as every included example:
 
@@ -84,7 +83,7 @@ create `submit.sh` and `submit.sh.files/`.
 From the repository root, build, inspect, and submit Vampire with:
 
 ```bash
-cd examples/example-vampire
+cd ExampleRuns/example-vampire
 make
 less submit.sh
 less submit.sh.files/slurm_job.sh
@@ -93,7 +92,7 @@ make submit
 make monitor
 ```
 
-Use `examples/example-e` or `examples/example-drodi` in the first command to
+Use `ExampleRuns/example-e` or `ExampleRuns/example-drodi` in the first command to
 run the corresponding example.
 
 <details>
@@ -157,7 +156,7 @@ limit per prover call.
 From the repository root:
 
 ```bash
-cd examples/example-combined
+cd ExampleRuns/example-combined
 make
 make submit
 make sync

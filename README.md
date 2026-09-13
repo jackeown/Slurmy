@@ -127,7 +127,7 @@ Run the example generator when you want a guided alternative to writing a
 Makefile and solver description by hand:
 
 ```bash
-cd examples/example-generator
+cd YourRuns/example-generator
 make
 ```
 
@@ -137,10 +137,10 @@ files, or create a description for an existing solver root. For a remote build,
 you enter an optional source directory, the Bash build steps, the executable
 produced below `$SLURMY_BUILD_OUTPUT`, its invocation, and the Slurm resources
 for compilation. Solver, source, and problem paths are validated as they are
-entered. Relative paths start from `examples/example-generator/` and are
+entered. Relative paths start from `YourRuns/example-generator/` and are
 converted to absolute paths in the generated workflow.
 
-The result is written to `examples/GENERATED/example-NAME/`. A remote-build
+The result is written to `YourRuns/GENERATED/example-NAME/`. A remote-build
 workflow downloads its cluster-built executable into that directory's `bin/`;
 a workflow using existing inputs keeps absolute references to them. The normal
 submission step packages the resulting solver and selected benchmarks. Review
@@ -155,7 +155,7 @@ make sync     # Or use this to download results incrementally.
 make stop     # Select an active Slurm job to cancel.
 ```
 
-See the [example-generator documentation](examples/example-generator/README.md)
+See the [example-generator documentation](YourRuns/example-generator/README.md)
 for the exact validation and path behavior.
 
 </details>
@@ -167,7 +167,7 @@ The Vampire example provides the shortest complete path from source code to a
 submitted experiment:
 
 ```bash
-cd examples/example-vampire
+cd ExampleRuns/example-vampire
 make
 make submit
 make monitor
@@ -178,9 +178,9 @@ cluster-built binaries, then generates the submission files. `make submit`
 transfers them to `datalab` and returns once Slurm accepts the array. `make
 monitor` opens the interactive dashboard.
 
-See [Prover examples](examples/README.md) for the E, Drodi, and combined
-three-prover examples, the reusable workflow template, the interactive example
-generator, and the available Makefile targets.
+See [Prover examples](ExampleRuns/README.md) for the E, Drodi, and combined
+three-prover examples, the reusable workflow template, and the available
+Makefile targets.
 
 </details>
 

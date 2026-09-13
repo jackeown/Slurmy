@@ -1,9 +1,9 @@
 # Slurmy workflow template
 
-Copy this directory to `examples/example-NAME`, then edit the workflow-variable
+Copy this directory to `YourRuns/example-NAME`, then edit the workflow-variable
 block in `Makefile`, `solver.solver`, and `build.sh`. Alternatively, launch the
-guided generator in `../example-generator/`; it creates configured workflows
-under `../GENERATED/`.
+guided generator in `YourRuns/example-generator/`; it creates configured
+workflows under `YourRuns/GENERATED/`.
 
 For an experiment using solver descriptions and problems that already exist
 elsewhere, put their absolute locations in newline-delimited `solver-paths.txt`

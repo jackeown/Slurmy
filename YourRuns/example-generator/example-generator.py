@@ -93,7 +93,7 @@ INITIAL_QUESTIONS = (
     Question(
         "name",
         "What should this workflow be called?",
-        "This creates examples/GENERATED/example-NAME.",
+        "This creates YourRuns/GENERATED/example-NAME.",
         "Use lowercase letters, numbers, and hyphens, for example: superposition-study",
     ),
     Question(
@@ -177,7 +177,7 @@ EXISTING_SOLVER_QUESTIONS = (
         "solver_files",
         "Where are the solver description files?",
         "Enter one path or glob per line. Every glob is checked now, and every matched .solver-style description must name an existing solver root.",
-        "Relative paths start from examples/example-generator/. All matches are stored as absolute paths.",
+        "Relative paths start from YourRuns/example-generator/. All matches are stored as absolute paths.",
         multiline=True,
     ),
 )
@@ -187,7 +187,7 @@ CREATE_SOLVER_QUESTIONS = (
         "solver_root",
         "Where is the solver root directory?",
         "This existing directory should contain the executable and every runtime file the solver needs.",
-        "Relative paths start from examples/example-generator/. The stored path will be absolute.",
+        "Relative paths start from YourRuns/example-generator/. The stored path will be absolute.",
     ),
     Question(
         "solver_commands",
@@ -203,7 +203,7 @@ FINAL_QUESTIONS = (
         "problem_globs",
         "Where are the benchmark problems?",
         "Enter one path or glob per line. Every glob must match at least one existing regular file before you can continue.",
-        "Relative paths start from examples/example-generator/. Absolute globs are stored and packaged only when the submission runs.",
+        "Relative paths start from YourRuns/example-generator/. Absolute globs are stored and packaged only when the submission runs.",
         multiline=True,
     ),
     Question(
@@ -500,7 +500,7 @@ If referenced files move, update the generated path-list files before running
 
 def generate_workflow(workflow: Workflow) -> Path:
     repository = Path(__file__).resolve().parents[2]
-    template = repository / "examples" / "example-template" / "Makefile"
+    template = repository / "ExampleRuns" / "example-template" / "Makefile"
     destination = workflow_destination(workflow.name)
     if destination.exists():
         raise WorkflowError(f"Destination already exists: {destination}")
