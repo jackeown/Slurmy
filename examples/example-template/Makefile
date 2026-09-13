@@ -39,7 +39,10 @@ CPU_LIMIT ?= 60
 WALL_LIMIT ?= 70
 MEMORY_LIMIT ?= 2GiB
 # Resources requested for each Slurm array task.
+# Use N-core to reserve exactly that many cores. Use 1-CPU or 2-CPU together
+# with CORES_PER_CPU to reserve every core on complete physical CPU sockets.
 CPU_REQUEST ?= 1-core
+CORES_PER_CPU ?=
 MEMORY_REQUEST ?= 2300MiB
 # "no" reserves the requested CPUs and memory while allowing other jobs to use
 # the rest of the node. "yes" requests every assigned node exclusively.
@@ -91,6 +94,7 @@ all: build
 		--wc-limit '$(WALL_LIMIT)' \
 		--mem-limit '$(MEMORY_LIMIT)' \
 		--cpu-request '$(CPU_REQUEST)' \
+		$(if $(CORES_PER_CPU),--cores-per-cpu '$(CORES_PER_CPU)') \
 		$(if $(filter yes,$(EXCLUSIVE_NODES)),--exclusive-nodes) \
 		--memory-request '$(MEMORY_REQUEST)' \
 		--runsolver '$(RUNSOLVER)' \

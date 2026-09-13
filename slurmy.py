@@ -23,7 +23,7 @@ import textwrap
 from typing import Any, Sequence
 
 
-VERSION = "0.4.2"
+VERSION = "0.5.0"
 DEFAULT_REMOTE_HOST = os.environ.get("SLURMY_HOST", "datalab")
 DEFAULT_BATCH_SIZE = 50
 DEFAULT_MAX_PARALLEL = 100
@@ -36,9 +36,7 @@ PROBLEM_PLACEHOLDER_RE = re.compile(r"\{\{problem(?:=([^{}]+))?\}\}")
 ANY_PLACEHOLDER_RE = re.compile(r"\{\{([^{}]+)\}\}")
 
 CPU_REQUESTS = {
-    "2cpu": 64,
     "64core": 64,
-    "1cpu": 32,
     "32core": 32,
     "16core": 16,
     "8core": 8,
@@ -112,10 +110,28 @@ def bytes_to_mb_ceil(value: int) -> int:
     return math.ceil(value / 1_000_000)
 
 
-def parse_cpu_request(value: str) -> int:
+def parse_cpu_request(
+    value: str, cores_per_cpu: int | None
+) -> tuple[int, int | None]:
+    """Return allocated cores and, for physical-CPU requests, socket count."""
+
     normalized = re.sub(r"[-_\s]", "", value).lower()
+    cpu_match = re.fullmatch(r"([12])cpu", normalized)
+    if cpu_match:
+        if cores_per_cpu is None:
+            raise SlurmyError(
+                "--cores-per-cpu is required when --cpu-request is 1-CPU or 2-CPU"
+            )
+        if cores_per_cpu <= 0:
+            raise SlurmyError("--cores-per-cpu must be greater than zero")
+        cpu_count = int(cpu_match.group(1))
+        return cpu_count * cores_per_cpu, cpu_count
+    if cores_per_cpu is not None:
+        raise SlurmyError(
+            "--cores-per-cpu is used only with --cpu-request 1-CPU or 2-CPU"
+        )
     try:
-        return CPU_REQUESTS[normalized]
+        return CPU_REQUESTS[normalized], None
     except KeyError as exc:
         choices = "2-CPU, 1-CPU, 64-core, 32-core, 16-core, 8-core, 4-core, 1-core"
         raise SlurmyError(f"--cpu-request must be one of: {choices}") from exc
@@ -369,6 +385,20 @@ def validate_sbatch_options(values: Sequence[str]) -> list[str]:
                 "Slurmy does not allow --oversubscribe because array tasks must "
                 "not ask to share their allocated CPUs"
             )
+        managed_topology = (
+            "--cpus-per-task",
+            "--sockets-per-node",
+            "--cores-per-socket",
+            "--threads-per-core",
+        )
+        if any(
+            value == option or value.startswith(option + "=")
+            for option in managed_topology
+        ):
+            raise SlurmyError(
+                f"Slurmy manages {value.split('=', 1)[0]} through --cpu-request; "
+                "it cannot be an --sbatch-option"
+            )
         result.append(value)
     return result
 
@@ -378,6 +408,8 @@ def build_slurm_script(
     task_count: int,
     batch_size: int,
     cpu_count: int,
+    physical_cpu_count: int | None,
+    cores_per_cpu: int | None,
     memory_request_mib: int,
     worker_seconds: int,
     cpu_limit: int,
@@ -388,7 +420,19 @@ def build_slurm_script(
     exclusive_nodes: bool,
     sbatch_options: Sequence[str],
 ) -> bytes:
-    managed_options = ["--exclusive"] if exclusive_nodes else []
+    managed_options = ["--threads-per-core=1"]
+    if physical_cpu_count is not None:
+        if cores_per_cpu is None:  # Defensive: prepare_submission validates this.
+            raise SlurmyError("physical CPU allocation lacks a cores-per-CPU value")
+        managed_options.extend(
+            (
+                f"--sockets-per-node={physical_cpu_count}",
+                f"--cores-per-socket={cores_per_cpu}",
+                "--distribution=block:block",
+            )
+        )
+    if exclusive_nodes:
+        managed_options.append("--exclusive")
     directives = "\n".join(
         f"#SBATCH {option}" for option in (*managed_options, *sbatch_options)
     )
@@ -677,7 +721,9 @@ def prepare_submission(args: argparse.Namespace) -> dict[str, Any]:
     memory_request_bytes = parse_memory_bytes(
         args.memory_request, "--memory-request"
     )
-    cpu_count = parse_cpu_request(args.cpu_request)
+    cpu_count, physical_cpu_count = parse_cpu_request(
+        args.cpu_request, args.cores_per_cpu
+    )
     if args.batch_size <= 0:
         raise SlurmyError("--batch-size must be greater than zero")
     if args.max_parallel <= 0:
@@ -713,6 +759,19 @@ def prepare_submission(args: argparse.Namespace) -> dict[str, Any]:
     mem_limit_mib = bytes_to_mib_ceil(mem_limit_bytes)
     memory_request_mib = bytes_to_mib_ceil(memory_request_bytes)
     sbatch_options = validate_sbatch_options(args.sbatch_option)
+    if physical_cpu_count is not None:
+        for option in sbatch_options:
+            if (
+                option == "--hint"
+                or option.startswith("--hint=")
+                or option == "--distribution"
+                or option.startswith("--distribution=")
+            ):
+                raise SlurmyError(
+                    f"{option.split('=', 1)[0]} cannot be an --sbatch-option "
+                    "with a physical CPU request because it could override "
+                    "Slurmy's socket allocation"
+                )
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", args.job_name):
         raise SlurmyError("--job-name may contain only letters, digits, _, ., and -")
 
@@ -732,7 +791,10 @@ def prepare_submission(args: argparse.Namespace) -> dict[str, Any]:
             "memory_runner_mib": mem_limit_mib,
         },
         "request": {
+            "cpu_input": args.cpu_request,
             "cpus_per_task": cpu_count,
+            "physical_cpus": physical_cpu_count,
+            "cores_per_physical_cpu": args.cores_per_cpu,
             "exclusive_nodes": args.exclusive_nodes,
             "memory_input": args.memory_request,
             "memory_slurm_mib": memory_request_mib,
@@ -752,6 +814,8 @@ def prepare_submission(args: argparse.Namespace) -> dict[str, Any]:
         task_count=len(tasks),
         batch_size=args.batch_size,
         cpu_count=cpu_count,
+        physical_cpu_count=physical_cpu_count,
+        cores_per_cpu=args.cores_per_cpu,
         memory_request_mib=memory_request_mib,
         worker_seconds=worker_seconds,
         cpu_limit=cpu_limit,
@@ -790,6 +854,9 @@ def build_submit_script(
     node_sharing_display = (
         "exclusive nodes" if args.exclusive_nodes else "share unused node resources"
     )
+    cpu_allocation_display = args.cpu_request
+    if args.cores_per_cpu is not None:
+        cpu_allocation_display += f" ({args.cores_per_cpu} cores per physical CPU)"
     script = rf"""
         #!/usr/bin/env bash
         # Generated by Slurmy {VERSION}; run this script on the laptop.
@@ -818,6 +885,7 @@ def build_submit_script(
         #   Solver calls:         {task_count}
         #   Slurm array batches:  {batch_count}
         #   Max parallel batches: {max_parallel}
+        #   CPU allocation:       {cpu_allocation_display}
         #   Node allocation:      {node_sharing_display}
         #
         # Usage: execute this script with no arguments.
@@ -906,7 +974,9 @@ def build_remote_prepare_script() -> str:
     )
 
 
-def build_remote_submit_script(*, batch_count: int, max_parallel: int) -> str:
+def build_remote_submit_script(
+    *, batch_count: int, max_parallel: int, exclusive_nodes: bool
+) -> str:
     script = rf"""
         #!/usr/bin/env bash
         # Generated by Slurmy. Installs the uploaded files and submits Slurm arrays.
@@ -920,6 +990,53 @@ def build_remote_submit_script(*, batch_count: int, max_parallel: int) -> str:
         tar -xzf "$INCOMING_DIR/job-files.tar.gz" -C "$JOB_DIR"
         tar -xzf "$INCOMING_DIR/inputs.tar.gz" -C "$JOB_DIR/rootfs"
         chmod 0755 "$JOB_DIR/slurm_job.sh"
+
+        # Refuse configurations that cannot honor Slurmy's isolation promise.
+        # Core-granularity selection prevents another job from receiving a
+        # sibling hardware thread on one of this job's allocated cores.
+        REQUIRE_CORE_GRANULARITY={0 if exclusive_nodes else 1}
+        if (( REQUIRE_CORE_GRANULARITY )); then
+            SELECT_PARAMETERS=$(scontrol show config |
+                awk -F= '$1 ~ /^[[:space:]]*SelectTypeParameters[[:space:]]*$/ {{ gsub(/[[:space:]]/, "", $2); print toupper($2); exit }}')
+            case "$SELECT_PARAMETERS" in
+                *CR_CORE*|*CR_SOCKET*) ;;
+                *)
+                    echo "Slurmy: this cluster allocates below core granularity ($SELECT_PARAMETERS); exclusive physical cores cannot be guaranteed" >&2
+                    exit 1
+                    ;;
+            esac
+        fi
+
+        # A partition configured with forced oversubscription takes precedence
+        # over job options, so neither core nor node exclusivity is guaranteed.
+        PARTITIONS=$(awk '
+            $1 == "#SBATCH" && $2 ~ /^--partition=/ {{ sub(/^--partition=/, "", $2); value=$2 }}
+            $1 == "#SBATCH" && $2 == "--partition" {{ value=$3 }}
+            END {{ print value }}
+        ' "$JOB_DIR/slurm_job.sh")
+        if [[ -z "$PARTITIONS" ]]; then
+            PARTITIONS=$(scontrol show partition -o | awk '
+                {{ name=""; is_default=0
+                   for (i=1; i<=NF; i++) {{
+                       if ($i ~ /^PartitionName=/) {{ sub(/^PartitionName=/, "", $i); name=$i }}
+                       if ($i == "Default=YES") is_default=1
+                   }}
+                   if (is_default) {{ print name; exit }}
+                }}
+            ')
+        fi
+        [[ -n "$PARTITIONS" ]] || {{ echo "Slurmy: cannot determine the Slurm partition for isolation validation" >&2; exit 1; }}
+        IFS=, read -r -a PARTITION_NAMES <<< "$PARTITIONS"
+        for partition in "${{PARTITION_NAMES[@]}}"; do
+            PARTITION_INFO=$(scontrol show partition -o "$partition")
+            OVER_SUBSCRIBE=$(awk '
+                {{ for (i=1; i<=NF; i++) if ($i ~ /^OverSubscribe=/) {{ sub(/^OverSubscribe=/, "", $i); print toupper($i); exit }} }}
+            ' <<< "$PARTITION_INFO")
+            if [[ "$OVER_SUBSCRIBE" == FORCE* ]]; then
+                echo "Slurmy: partition $partition forces oversubscription; exclusive cores or nodes cannot be guaranteed" >&2
+                exit 1
+            fi
+        done
 
         RUNSOLVER="$JOB_DIR/runsolver"
         if [[ ! -x "$RUNSOLVER" ]]; then
@@ -1009,6 +1126,7 @@ def generate_submission(args: argparse.Namespace, output: Path) -> tuple[Path, P
             build_remote_submit_script(
                 batch_count=prepared["batch_count"],
                 max_parallel=prepared["max_parallel"],
+                exclusive_nodes=args.exclusive_nodes,
             ),
             encoding="utf-8",
         )
@@ -1054,6 +1172,15 @@ def generator_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wc-limit", required=True, metavar="SECONDS")
     parser.add_argument("--mem-limit", required=True, metavar="MEMORY")
     parser.add_argument("--cpu-request", required=True, metavar="CPUS")
+    parser.add_argument(
+        "--cores-per-cpu",
+        type=int,
+        metavar="CORES",
+        help=(
+            "physical cores in each CPU socket; required for 1-CPU and 2-CPU "
+            "requests and invalid for core requests"
+        ),
+    )
     parser.add_argument(
         "--exclusive-nodes",
         action="store_true",

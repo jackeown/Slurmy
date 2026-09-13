@@ -37,7 +37,8 @@ The generator supplies no defaults and asks one question at a time. It can
 create a remote build recipe and solver description, use existing description
 files, or create a description for an existing solver root. It validates each
 input path before advancing, then asks for the per-call limits, Slurm resource
-requests, and array layout. The final review shows the build settings and every
+requests—including separate core, physical-CPU/socket, and whole-node
+isolation—and array layout. The final review shows the build settings and every
 resolved input location before **Create workflow** writes anything. It creates
 `GENERATED/example-NAME/` without overwriting existing work.
 

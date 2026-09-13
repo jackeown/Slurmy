@@ -30,6 +30,12 @@ start from this `examples/example-generator/` directory—even if the applicatio
 is launched elsewhere. The generator converts them to absolute paths before
 showing the review screen or generating files.
 
+The resource questions distinguish all three isolation levels. An `N-core`
+request reserves only those physical cores. A `1-CPU` or `2-CPU` request also
+asks for the number of cores per physical CPU, then reserves and packs complete
+Slurm sockets. Whole-node exclusivity is a separate yes/no question, so it can
+be enabled only when no other job may share the assigned node.
+
 The application creates `examples/GENERATED/example-NAME/` using
 `example-template/`. It writes no files until generation and never overwrites
 an existing directory. Keeping generated workflows under `GENERATED/` makes

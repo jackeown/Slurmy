@@ -281,7 +281,7 @@ slurmy_args=(
   --cpu-limit 60                                 # Maximum CPU seconds for each solver call.
   --wc-limit 70                                  # Maximum elapsed seconds for each solver call.
   --mem-limit 2GiB                               # Memory limit enforced on each solver call.
-  --cpu-request 1-core                           # Slurm CPUs requested for each array element.
+  --cpu-request 1-core                           # Reserve one physical core for each array element.
   # --exclusive-nodes                           # Optional: reserve every node assigned to an array element.
   --memory-request 2300MiB                       # Slurm memory request; leave room above mem-limit.
   --problems 'problems/easy/**/*.p'              # Add every file matched by this quoted glob.
@@ -628,16 +628,35 @@ process-tree limits.
   runsolver.
 - `--cpu-request` and `--memory-request` request resources for each Slurm array
   element.
-- By default, Slurmy never requests oversubscription: an array element receives
-  its allocated CPUs, while other jobs may use the node's remaining resources.
-  Add `--exclusive-nodes` only when each array element must reserve every node
-  assigned to it. Slurm partition policy ultimately controls resource sharing.
+- Slurmy never requests oversubscription and uses one hardware thread per
+  allocated physical core.
 - `--memory-request` must be at least `--mem-limit` and should leave a little
   room for Bash and runsolver.
 
 Memory values accept `MB`, `MiB`, `GB`, `GiB`, `TB`, or `TiB`. With no unit,
-`MB` is assumed. CPU requests include `1-core`, `4-core`, `8-core`, `16-core`,
-`32-core`, and `64-core`.
+`MB` is assumed.
+
+Choose the CPU isolation level with these distinct forms:
+
+| Requested isolation | Slurmy arguments | What remains available to other jobs |
+|---|---|---|
+| Individual cores | `--cpu-request 4-core` | Every other core and resource on the node |
+| Complete physical CPU/socket | `--cpu-request 1-CPU --cores-per-cpu 32` | Other sockets and unrequested resources on the node |
+| Complete node | `--cpu-request 4-core --exclusive-nodes` | Nothing on the assigned node, except memory beyond the job's request is not allocated to the job |
+
+Core requests include `1-core`, `4-core`, `8-core`, `16-core`, `32-core`, and
+`64-core`. Complete-CPU requests are `1-CPU` and `2-CPU`; they require
+`--cores-per-cpu` because physical CPU/socket sizes differ among clusters.
+Slurmy requests that number of complete sockets, requests every core in them,
+and packs the allocation by socket. On `datalab`'s `CPU-amd` partition, each
+physical CPU currently has 32 cores.
+
+`--exclusive-nodes` is separate from the CPU request: it emits Slurm's
+`--exclusive` directive, which prevents another job from sharing any assigned
+node. Before submission, the generated remote helper checks the cluster's CPU
+allocation granularity and the selected partition's oversubscription policy. It
+stops with an explanation instead of submitting when Slurm cannot guarantee the
+requested core or node isolation.
 
 Extra `sbatch` options can be repeated. Use the joined form because the value
 starts with `--`:

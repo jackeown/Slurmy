@@ -34,7 +34,16 @@ SIMPLE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 MEMORY_RE = re.compile(
     r"^[1-9][0-9]*(?:MB|MiB|GB|GiB|TB|TiB|M|G|T)?$", re.IGNORECASE
 )
-CPU_REQUESTS = {"1-core", "4-core", "8-core", "16-core", "32-core", "64-core"}
+CPU_REQUESTS = {
+    "1-core",
+    "4-core",
+    "8-core",
+    "16-core",
+    "32-core",
+    "64-core",
+    "1-CPU",
+    "2-CPU",
+}
 PROBLEM_PLACEHOLDER_RE = re.compile(r"\{\{problem(?:=[^{}]+)?\}\}")
 
 
@@ -63,6 +72,7 @@ class Workflow:
     wall_limit: int
     memory_limit: str
     cpu_request: str
+    cores_per_cpu: int | None
     exclusive_nodes: bool
     memory_request: str
     batch_size: int
@@ -216,9 +226,17 @@ FINAL_QUESTIONS = (
     ),
     Question(
         "cpu_request",
-        "How many CPUs should each Slurm array task request?",
-        "This is the allocation for one array task, which runs its calls sequentially.",
-        "Choose one of: 1-core, 4-core, 8-core, 16-core, 32-core, 64-core",
+        "What CPU hardware should each Slurm array task reserve?",
+        "A core request reserves only that many cores. A 1-CPU or 2-CPU request "
+        "reserves every core on that many complete physical processors/sockets.",
+        "Choose one of: 1-core, 4-core, 8-core, 16-core, 32-core, 64-core, 1-CPU, 2-CPU",
+    ),
+    Question(
+        "cores_per_cpu",
+        "How many physical cores are in each CPU socket?",
+        "This determines how many cores Slurmy must allocate to reserve complete "
+        "physical CPUs. It is required for 1-CPU and 2-CPU requests only.",
+        "Enter a positive whole number for a CPU request; enter exactly: none for a core request",
     ),
     Question(
         "exclusive_nodes",
@@ -415,6 +433,7 @@ def workflow_makefile(workflow: Workflow) -> str:
             f"WALL_LIMIT := {workflow.wall_limit}",
             f"MEMORY_LIMIT := {workflow.memory_limit}",
             f"CPU_REQUEST := {workflow.cpu_request}",
+            f"CORES_PER_CPU := {workflow.cores_per_cpu or ''}",
             f"EXCLUSIVE_NODES := {'yes' if workflow.exclusive_nodes else 'no'}",
             f"MEMORY_REQUEST := {workflow.memory_request}",
             f"BATCH_SIZE := {workflow.batch_size}",
@@ -715,6 +734,15 @@ class ExampleGeneratorApp(App[None]):
             if value not in CPU_REQUESTS:
                 raise WorkflowError("Choose one of: " + ", ".join(sorted(CPU_REQUESTS)))
             return value, "Accepted."
+        if question.key == "cores_per_cpu":
+            physical_cpu_request = self.answers.get("cpu_request", "").endswith("-CPU")
+            if not physical_cpu_request:
+                if value.lower() != "none":
+                    raise WorkflowError(
+                        "Enter exactly: none, because the selected request uses cores."
+                    )
+                return None, "No physical CPU topology is needed."
+            return positive_integer(value, question.title), "Accepted."
         raise WorkflowError(f"No validator exists for {question.key}.")
 
     def save_current_answer(self) -> bool:
@@ -816,6 +844,7 @@ class ExampleGeneratorApp(App[None]):
             wall_limit=self.answers["wall_limit"],
             memory_limit=self.answers["memory_limit"],
             cpu_request=self.answers["cpu_request"],
+            cores_per_cpu=self.answers["cores_per_cpu"],
             exclusive_nodes=self.answers["exclusive_nodes"],
             memory_request=self.answers["memory_request"],
             batch_size=self.answers["batch_size"],
@@ -874,6 +903,11 @@ class ExampleGeneratorApp(App[None]):
                     *(f"  {escape(pattern)}" for pattern in workflow.problem_globs),
                     f"Limits: {workflow.cpu_limit}s CPU · {workflow.wall_limit}s wall · {workflow.memory_limit}",
                     f"Allocation: {workflow.cpu_request} · {workflow.memory_request}",
+                    *(
+                        [f"Physical CPU topology: {workflow.cores_per_cpu} cores/CPU"]
+                        if workflow.cores_per_cpu
+                        else []
+                    ),
                     (
                         "Node sharing: entire assigned node reserved"
                         if workflow.exclusive_nodes
