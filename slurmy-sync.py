@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import csv
 from datetime import datetime
 import json
 import os
@@ -19,7 +20,7 @@ import time
 from typing import Any, Sequence
 
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 DEFAULT_HOST = os.environ.get("SLURMY_HOST", "datalab")
 DEFAULT_INTERVAL = 5.0
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -150,6 +151,8 @@ def rsync_job(host: str, job_id: str, destination: Path, timeout: float) -> int:
         "--exclude=/results/.*.tmp",
         "--include=/metadata.json",
         "--include=/manifest.jsonl",
+        "--include=/submission.csv",
+        # Read-only compatibility with jobs created before CSV output.
         "--include=/submission.tsv",
         "--include=/batches/",
         "--include=/batches/***",
@@ -205,6 +208,7 @@ def as_float(value: Any) -> float | None:
 def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
     records: dict[int, dict[str, Any]] = {}
     results_dir = destination / "results"
+    # Load legacy TSV first so a CSV record wins if both formats are present.
     for path in sorted(results_dir.glob("*.tsv")):
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
@@ -212,6 +216,27 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
             continue
         for line in lines:
             fields = line.split("\t")
+            if len(fields) < 15 or not fields[0].isdigit():
+                continue
+            task_id = int(fields[0])
+            records[task_id] = {
+                "task_id": task_id,
+                "complete": fields[1].lower() == "true",
+                "status": fields[2] or "unknown",
+                "return_code": fields[3],
+                "wall_seconds": as_float(fields[4]),
+                "cpu_seconds": as_float(fields[5]),
+                "max_memory_kib": as_float(fields[10]),
+                "task_key": fields[13],
+                "archive": fields[14],
+            }
+    for path in sorted(results_dir.glob("*.csv")):
+        try:
+            with path.open(encoding="utf-8", newline="") as source:
+                rows = list(csv.reader(source))
+        except (OSError, UnicodeError, csv.Error):
+            continue
+        for fields in rows:
             if len(fields) < 15 or not fields[0].isdigit():
                 continue
             task_id = int(fields[0])
@@ -327,10 +352,16 @@ def collect_szs_statuses(
 
 def progress_counts(destination: Path) -> dict[str, int]:
     counts: Counter[str] = Counter()
-    for path in (destination / "progress").glob("*.tsv"):
+    progress_dir = destination / "progress"
+    for path in (*progress_dir.glob("*.tsv"), *progress_dir.glob("*.csv")):
         try:
-            first = path.read_text(encoding="utf-8").split("\t", 1)[0].strip()
-        except OSError:
+            if path.suffix == ".csv":
+                with path.open(encoding="utf-8", newline="") as source:
+                    fields = next(csv.reader(source), [])
+                first = fields[0].strip() if fields else ""
+            else:
+                first = path.read_text(encoding="utf-8").split("\t", 1)[0].strip()
+        except (OSError, UnicodeError, csv.Error):
             continue
         if first:
             counts[first] += 1

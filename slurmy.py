@@ -23,7 +23,7 @@ import textwrap
 from typing import Any, Sequence
 
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 DEFAULT_REMOTE_HOST = os.environ.get("SLURMY_HOST", "datalab")
 DEFAULT_BATCH_SIZE = 50
 DEFAULT_MAX_PARALLEL = 100
@@ -492,33 +492,56 @@ def build_slurm_script(
             awk -F= -v name="$name" '$1 == name {{ print $2; exit }}' "$file" 2>/dev/null || true
         }}
 
+        # Write RFC 4180-compatible CSV by quoting every field and doubling any
+        # embedded quote. Quoted fields also preserve commas and whitespace.
+        csv_field() {{
+            local value=${{1-}}
+            value=${{value//\"/\"\"}}
+            printf '"%s"' "$value"
+        }}
+
+        csv_row() {{
+            local separator= value
+            for value in "$@"; do
+                printf '%s' "$separator"
+                csv_field "$value"
+                separator=,
+            done
+            printf '\n'
+        }}
+
         is_complete() {{
             local task_id=$1 status_file=$2
             [[ -f "$status_file" ]] &&
-                awk -F '\t' -v id="$task_id" '$1 == id && $2 == "true" {{ found=1 }} END {{ exit !found }}' "$status_file"
+                awk -F, -v id="\"$task_id\"" '$1 == id && $2 == "\"true\"" {{ found=1 }} END {{ exit !found }}' "$status_file"
         }}
 
         RESULTS_DIR="$JOB_DIR/results"
-        STATUS_FILE=$(printf '%s/batch_%06d.tsv' "$RESULTS_DIR" "$BATCH_ID")
+        STATUS_FILE=$(printf '%s/batch_%06d.csv' "$RESULTS_DIR" "$BATCH_ID")
+        if [[ ! -f "$STATUS_FILE" ]]; then
+            csv_row task_id complete status return_code wall_seconds cpu_seconds \
+                user_seconds system_seconds cpu_usage_percent \
+                max_virtual_memory_kib max_memory_kib timed_out memory_out \
+                task_key archive > "$STATUS_FILE"
+        fi
 
         # Publish a tiny, atomically replaced progress record for this batch.
         # slurmy-monitor.py uses it to show the current task and live percentage.
         PROGRESS_DIR="$JOB_DIR/progress"
-        PROGRESS_FILE=$(printf '%s/batch_%06d.tsv' "$PROGRESS_DIR" "$BATCH_ID")
+        PROGRESS_FILE=$(printf '%s/batch_%06d.csv' "$PROGRESS_DIR" "$BATCH_ID")
         mkdir -p "$PROGRESS_DIR"
         write_progress() {{
             local state=$1 task_id=${{2:-}} started_epoch=${{3:-}} finished=${{4:-0}}
             local temporary="$PROGRESS_FILE.$$.tmp"
-            printf '%s\t%s\t%s\t%s\t%s\n' \
-                "$state" "$task_id" "$started_epoch" "$(date +%s)" "$finished" \
-                > "$temporary"
+            csv_row "$state" "$task_id" "$started_epoch" "$(date +%s)" \
+                "$finished" > "$temporary"
             mv "$temporary" "$PROGRESS_FILE"
         }}
         write_progress starting "" "" 0
 
         SCRATCH_PARENT=${{SLURM_TMPDIR:-${{TMPDIR:-/tmp}}}}
         ATTEMPT_DIR=$(mktemp -d "$SCRATCH_PARENT/slurmy-batch-${{BATCH_ID}}.XXXXXXXX")
-        RECORDS_FILE="$ATTEMPT_DIR/records.tsv"
+        RECORDS_FILE="$ATTEMPT_DIR/records.csv"
         cleanup() {{
             local exit_code=$?
             rm -rf -- "$ATTEMPT_DIR"
@@ -634,11 +657,12 @@ def build_slurm_script(
                 status=error
             fi
 
-            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            csv_row \
                 "$TASK_ID" "$complete" "$status" "$return_code" \
                 "${{wall:-}}" "${{cpu:-}}" "${{user:-}}" "${{system:-}}" \
                 "${{cpu_usage:-}}" "${{max_vm:-}}" "${{max_memory:-}}" \
-                "${{timeout:-false}}" "${{memout:-false}}" "$TASK_KEY" >> "$RECORDS_FILE"
+                "${{timeout:-false}}" "${{memout:-false}}" "$TASK_KEY" \
+                >> "$RECORDS_FILE"
             completed_this_attempt=$((completed_this_attempt + 1))
             write_progress saving "$TASK_ID" "$task_started_epoch" "$completed_this_attempt"
         done
@@ -646,10 +670,12 @@ def build_slurm_script(
         if (( completed_this_attempt > 0 )); then
             stamp=$(date +%s)
             archive=$(printf 'batch_%06d_%s_%s.tar.gz' "$BATCH_ID" "${{SLURM_JOB_ID:-local}}" "$stamp")
-            tar -czf "$RESULTS_DIR/.$archive.tmp" --exclude=records.tsv -C "$ATTEMPT_DIR" .
+            tar -czf "$RESULTS_DIR/.$archive.tmp" --exclude=records.csv -C "$ATTEMPT_DIR" .
             mv "$RESULTS_DIR/.$archive.tmp" "$RESULTS_DIR/$archive"
             while IFS= read -r record; do
-                printf '%s\t%s\n' "$record" "$archive" >> "$STATUS_FILE"
+                printf '%s,' "$record" >> "$STATUS_FILE"
+                csv_field "$archive" >> "$STATUS_FILE"
+                printf '\n' >> "$STATUS_FILE"
             done < "$RECORDS_FILE"
         fi
 
@@ -1063,9 +1089,22 @@ def build_remote_submit_script(
 
         # Preserve the array ID and its global batch offset for the dashboard.
         # This also makes submissions larger than Slurm's MaxArraySize traceable.
-        SUBMISSION_FILE="$JOB_DIR/submission.tsv"
-        printf 'slurm_job_id\toffset\tarray_size\tsubmitted_epoch\n' \
-            > "$SUBMISSION_FILE"
+        SUBMISSION_FILE="$JOB_DIR/submission.csv"
+        csv_field() {{
+            local value=${{1-}}
+            value=${{value//\"/\"\"}}
+            printf '"%s"' "$value"
+        }}
+        csv_row() {{
+            local separator= value
+            for value in "$@"; do
+                printf '%s' "$separator"
+                csv_field "$value"
+                separator=,
+            done
+            printf '\n'
+        }}
+        csv_row slurm_job_id offset array_size submitted_epoch > "$SUBMISSION_FILE"
         OFFSET=0
         PREVIOUS_JOB=
         SLURM_IDS=()
@@ -1082,8 +1121,7 @@ def build_remote_submit_script(
             SUBMITTED=$("${{SUBMIT[@]}}" slurm_job.sh)
             SLURM_IDS+=("$SUBMITTED")
             PREVIOUS_JOB=${{SUBMITTED%%;*}}
-            printf '%s\t%s\t%s\t%s\n' \
-                "$PREVIOUS_JOB" "$OFFSET" "$SLICE_SIZE" "$(date +%s)" \
+            csv_row "$PREVIOUS_JOB" "$OFFSET" "$SLICE_SIZE" "$(date +%s)" \
                 >> "$SUBMISSION_FILE"
             OFFSET=$((OFFSET + SLICE_SIZE))
         done

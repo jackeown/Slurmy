@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import base64
+import csv
 from dataclasses import dataclass, field
 from datetime import datetime
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -46,7 +48,7 @@ except ModuleNotFoundError as exc:
     raise
 
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 DEFAULT_HOST = os.environ.get("SLURMY_HOST", "datalab")
 NORMAL_TASK_RESULTS = {"ok", "time-limit", "memory-limit"}
 SLURM_ERROR_STATES = {
@@ -106,9 +108,47 @@ for directory in "${job_dirs[@]}"; do
         printf '\0'
     fi
 
-    # New jobs use batch_*; the second pattern keeps older Slurmy jobs readable.
+    csv_results=("$directory"/results/batch_*.csv)
+    # Keep TSV and pre-batch JSONL jobs readable in the historical dashboard.
     tsv_results=("$directory"/results/batch_*.tsv "$directory"/results/chunk_*.tsv)
-    if (( ${#tsv_results[@]} )); then
+    if (( ${#csv_results[@]} )); then
+        printf 'SUMMARY\0%s\0' "$job"
+        # Slurmy quotes every CSV field. The summary uses only numeric and enum
+        # columns, which cannot themselves contain commas.
+        awk -F, '
+            function value(field) {
+                if (field ~ /^".*"$/) {
+                    sub(/^"/, "", field); sub(/"$/, "", field)
+                    gsub(/""/, "\"", field)
+                }
+                return field
+            }
+            NF >= 3 && value($1) ~ /^[0-9]+$/ {
+                id = value($1)
+                complete[id] = value($2)
+                result_status[id] = value($3)
+                wall[id] = value($5)
+            }
+            END {
+                for (id in result_status) {
+                    if (complete[id] == "true") {
+                        completed++
+                        count[result_status[id]]++
+                        if (wall[id] ~ /^[0-9]+([.][0-9]+)?$/) {
+                            wall_sum += wall[id]
+                            if (wall[id] > wall_max) wall_max = wall[id]
+                        }
+                    } else {
+                        unresolved[result_status[id]]++
+                    }
+                }
+                printf "completed\t%d\nwall_sum\t%.9f\nwall_max\t%.9f\n", completed, wall_sum, wall_max
+                for (status in count) printf "status\t%s\t%d\n", status, count[status]
+                for (status in unresolved) printf "unresolved\t%s\t%d\n", status, unresolved[status]
+            }
+        ' "${csv_results[@]}"
+        printf '\0'
+    elif (( ${#tsv_results[@]} )); then
         printf 'SUMMARY\0%s\0' "$job"
         awk -F '\t' '
             NF >= 3 && $1 ~ /^[0-9]+$/ {
@@ -144,18 +184,30 @@ for directory in "${job_dirs[@]}"; do
         fi
     fi
 
-    progress_files=("$directory"/progress/batch_*.tsv "$directory"/progress/chunk_*.tsv)
-    if (( ${#progress_files[@]} )); then
-        printf 'PROGRESS\0%s\0' "$job"
-        for progress_file in "${progress_files[@]}"; do
+    csv_progress=("$directory"/progress/batch_*.csv)
+    tsv_progress=("$directory"/progress/batch_*.tsv "$directory"/progress/chunk_*.tsv)
+    if (( ${#csv_progress[@]} )); then
+        printf 'PROGRESS_CSV\0%s\0' "$job"
+        for progress_file in "${csv_progress[@]}"; do
+            printf '"%s",' "${progress_file##*/}"
+            cat "$progress_file"
+        done
+        printf '\0'
+    elif (( ${#tsv_progress[@]} )); then
+        printf 'PROGRESS_TSV\0%s\0' "$job"
+        for progress_file in "${tsv_progress[@]}"; do
             printf '%s\t' "${progress_file##*/}"
             cat "$progress_file"
         done
         printf '\0'
     fi
 
-    if [[ -f "$directory/submission.tsv" ]]; then
-        printf 'SUBMISSION\0%s\0' "$job"
+    if [[ -f "$directory/submission.csv" ]]; then
+        printf 'SUBMISSION_CSV\0%s\0' "$job"
+        cat "$directory/submission.csv"
+        printf '\0'
+    elif [[ -f "$directory/submission.tsv" ]]; then
+        printf 'SUBMISSION_TSV\0%s\0' "$job"
         cat "$directory/submission.tsv"
         printf '\0'
     fi
@@ -165,7 +217,11 @@ for directory in "${job_dirs[@]}"; do
     fi
 
     if [[ "$job" == "$DETAIL" ]]; then
-        if (( ${#tsv_results[@]} )); then
+        if (( ${#csv_results[@]} )); then
+            printf 'RESULTS_CSV\0%s\0' "$job"
+            cat "${csv_results[@]}"
+            printf '\0'
+        elif (( ${#tsv_results[@]} )); then
             printf 'RESULTS_TSV\0%s\0' "$job"
             cat "${tsv_results[@]}"
             printf '\0'
@@ -496,8 +552,11 @@ PROTOCOL_ARITY = {
     "METADATA": 2,
     "SUMMARY": 2,
     "LEGACY_RESULTS": 2,
-    "PROGRESS": 2,
-    "SUBMISSION": 2,
+    "PROGRESS_CSV": 2,
+    "PROGRESS_TSV": 2,
+    "SUBMISSION_CSV": 2,
+    "SUBMISSION_TSV": 2,
+    "RESULTS_CSV": 2,
     "RESULTS_TSV": 2,
     "RESULTS_JSONL": 2,
     "MANIFEST": 2,
@@ -533,10 +592,9 @@ def as_float(value: Any) -> float | None:
         return None
 
 
-def parse_tsv_results(payload: str) -> dict[int, ResultRecord]:
+def parse_result_rows(rows: Any) -> dict[int, ResultRecord]:
     results: dict[int, ResultRecord] = {}
-    for line in payload.splitlines():
-        fields = line.split("\t")
+    for fields in rows:
         if len(fields) < 15 or not fields[0].isdigit():
             continue
         task_id = int(fields[0])
@@ -552,6 +610,14 @@ def parse_tsv_results(payload: str) -> dict[int, ResultRecord]:
             archive=fields[14],
         )
     return results
+
+
+def parse_csv_results(payload: str) -> dict[int, ResultRecord]:
+    return parse_result_rows(csv.reader(io.StringIO(payload)))
+
+
+def parse_tsv_results(payload: str) -> dict[int, ResultRecord]:
+    return parse_result_rows(line.split("\t") for line in payload.splitlines())
 
 
 def parse_jsonl_results(payload: str) -> dict[int, ResultRecord]:
@@ -657,12 +723,13 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
     pending_metadata: dict[str, str] = {}
     summaries: dict[str, str] = {}
     legacy_overviews: dict[str, str] = {}
+    detail_csv: dict[str, str] = {}
     detail_tsv: dict[str, str] = {}
     detail_jsonl: dict[str, str] = {}
     manifests: dict[str, str] = {}
     taskdefs: dict[str, list[list[str]]] = {}
-    progress_payloads: dict[str, str] = {}
-    submissions: dict[str, str] = {}
+    progress_payloads: dict[str, tuple[str, str]] = {}
+    submissions: dict[str, tuple[str, str]] = {}
     logs: dict[str, dict[str, str]] = {}
     queue_payload = ""
     accounting_payload = ""
@@ -685,10 +752,12 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
             summaries[fields[0]] = fields[1]
         elif kind == "LEGACY_RESULTS":
             legacy_overviews[fields[0]] = fields[1]
-        elif kind == "PROGRESS":
-            progress_payloads[fields[0]] = fields[1]
-        elif kind == "SUBMISSION":
-            submissions[fields[0]] = fields[1]
+        elif kind in {"PROGRESS_CSV", "PROGRESS_TSV"}:
+            progress_payloads[fields[0]] = (kind, fields[1])
+        elif kind in {"SUBMISSION_CSV", "SUBMISSION_TSV"}:
+            submissions[fields[0]] = (kind, fields[1])
+        elif kind == "RESULTS_CSV":
+            detail_csv[fields[0]] = fields[1]
         elif kind == "RESULTS_TSV":
             detail_tsv[fields[0]] = fields[1]
         elif kind == "RESULTS_JSONL":
@@ -714,11 +783,16 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
         elif job_id in legacy_overviews:
             summarize_results(job, parse_jsonl_results(legacy_overviews[job_id]))
 
-        for line in progress_payloads.get(job_id, "").splitlines():
-            fields = line.split("\t")
+        progress_kind, progress_payload = progress_payloads.get(job_id, ("", ""))
+        progress_rows = (
+            csv.reader(io.StringIO(progress_payload))
+            if progress_kind == "PROGRESS_CSV"
+            else (line.split("\t") for line in progress_payload.splitlines())
+        )
+        for fields in progress_rows:
             if len(fields) < 5:
                 continue
-            match = re.search(r"(?:batch|chunk)_(\d+)\.tsv$", fields[0])
+            match = re.search(r"(?:batch|chunk)_(\d+)\.(?:csv|tsv)$", fields[0])
             if not match:
                 continue
             job.progress[int(match.group(1))] = BatchProgress(
@@ -730,13 +804,19 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
                 finished_count=int(fields[5]) if len(fields) > 5 and fields[5].isdigit() else 0,
             )
 
-        for line in submissions.get(job_id, "").splitlines()[1:]:
-            fields = line.split("\t")
+        submission_kind, submission_payload = submissions.get(job_id, ("", ""))
+        submission_rows = (
+            list(csv.reader(io.StringIO(submission_payload)))
+            if submission_kind == "SUBMISSION_CSV"
+            else [line.split("\t") for line in submission_payload.splitlines()]
+        )
+        for fields in submission_rows[1:]:
             if len(fields) >= 2 and fields[1].isdigit():
                 job.submission_offsets[fields[0]] = int(fields[1])
 
         if job_id == detail_job:
             results = parse_tsv_results(detail_tsv.get(job_id, ""))
+            results.update(parse_csv_results(detail_csv.get(job_id, "")))
             results.update(parse_jsonl_results(detail_jsonl.get(job_id, "")))
             job.results = results
             if results:

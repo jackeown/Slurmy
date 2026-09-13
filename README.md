@@ -684,7 +684,7 @@ The remote directory contains:
 ```text
 $HOME/Slurmy/<job-id>/
   metadata.json
-  submission.tsv
+  submission.csv
   batches/
   progress/
   rootfs/
@@ -695,14 +695,14 @@ $HOME/Slurmy/<job-id>/
 
 `logs/` contains Slurm output. `results/` contains:
 
-- one tab-separated summary per batch;
+- one CSV summary per batch, with a header row and properly quoted fields;
 - one compressed archive per batch attempt containing solver output,
   runsolver watcher data, variables, and controller output.
 
-`submission.tsv` records the submitted Slurm array IDs and their batch ranges.
+`submission.csv` records the submitted Slurm array IDs and their batch ranges.
 While a job is active, `progress/` records the task each array element is
-currently running and how many calls it has finished. These small files drive
-the live dashboard and remain readable without it.
+currently running and how many calls it has finished in CSV files. These small
+files drive the live dashboard and remain readable without it.
 
 The summary column names are listed in `metadata.json` under
 `result_columns`. Important statuses are `ok`, `error`, `time-limit`,
