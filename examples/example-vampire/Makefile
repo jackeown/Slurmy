@@ -4,7 +4,10 @@ SHELL := /usr/bin/env bash
 REPO_ROOT := ../..
 include $(REPO_ROOT)/building-dependencies/slurmy-build.mk
 
-.PHONY: all build clean distclean monitor submit
+# Leave empty to sync the newest job, or pass SLURMY_ID=name_timestamp_pid.
+SLURMY_ID ?=
+
+.PHONY: all build clean distclean monitor submit sync
 
 VAMPIRE := $(abspath bin/vampire)
 VAMPIRE_STAMP := $(abspath bin/.vampire-built-on-$(SLURMY_BUILD_TAG))
@@ -64,7 +67,12 @@ submit:
 	@printf '\033[1;34m🚀 Transferring the prepared files to %s and submitting the array...\033[0m\n\n' '$(SLURMY_HOST)'
 	@SLURMY_HOST='$(SLURMY_HOST)' ./submit.sh
 	@printf '\n\033[1;32m✅ Submitted successfully.\033[0m\n'
-	@printf '\033[1;36m👉 Next: run "make monitor" to watch its progress.\033[0m\n'
+	@printf '\033[1;36m👉 Next: run "make monitor" or "make sync".\033[0m\n'
+
+sync:
+	@printf '\033[1;34m🔄 Syncing the selected (or latest) Slurmy job from %s...\033[0m\n' '$(SLURMY_HOST)'
+	@cd '$(REPO_ROOT)' && python ./slurmy-sync.py $(SLURMY_ID) --host '$(SLURMY_HOST)' --follow --interval 2
+	@printf '\n\033[1;32m✅ Results are synchronized under %s.\033[0m\n' '$(abspath $(REPO_ROOT)/slurmy-results)'
 
 monitor:
 	@printf '\033[1;34m📊 Opening the Slurmy dashboard for %s...\033[0m\n\n' '$(SLURMY_HOST)'

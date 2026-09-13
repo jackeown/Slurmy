@@ -49,7 +49,14 @@ Afterward, inspect `workflow.mk` and run `make` inside the new directory:
 ```bash
 cd ../GENERATED/example-NAME
 make
+make submit
+make sync
 ```
+
+`make sync` follows the newest Slurmy job and incrementally downloads its
+results. Run it from the generated workflow or directly from this generator
+directory. To select a particular run, use
+`make sync SLURMY_ID=name_timestamp_pid`.
 
 If the contents of an external build-context directory change after a
 successful build, run `make distclean` before `make` to rebuild them on the

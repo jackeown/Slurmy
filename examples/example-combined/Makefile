@@ -4,6 +4,9 @@ SHELL := /usr/bin/env bash
 REPO_ROOT := ../..
 include $(REPO_ROOT)/building-dependencies/slurmy-build.mk
 
+# Leave empty to sync the newest job, or pass SLURMY_ID=name_timestamp_pid.
+SLURMY_ID ?=
+
 .PHONY: all build clean distclean monitor submit sync
 
 all: build

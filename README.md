@@ -151,6 +151,7 @@ cd ../GENERATED/example-NAME
 make
 make submit
 make monitor
+make sync     # Or use this to download results incrementally.
 ```
 
 See the [example-generator documentation](examples/example-generator/README.md)
