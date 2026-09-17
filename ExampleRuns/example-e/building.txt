@@ -1,0 +1,4 @@
+bin
+build.sh
+../../building-dependencies/runsolver
+../../building-dependencies/runsolver/build.sh

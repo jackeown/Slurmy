@@ -1,12 +1,8 @@
-# Your Slurmy runs
+# 🧭 Your experiments
 
-This directory contains the workflow generator and the personal workflows it
-creates:
+Run `make -C YourRuns/example-generator` from the repository root for guided setup.
+The [generator](example-generator/README.md) writes workflows under
+[GENERATED](GENERATED/); generated experiment files are ignored by Git.
 
-- [`example-generator/`](example-generator/) asks one question at a time and
-  constructs a complete experiment workflow.
-- [`GENERATED/`](GENERATED/) contains those generated workflows. Individual
-  workflow directories are machine-specific and ignored by Git.
-
-Maintained, reproducible prover examples live separately under
-[`ExampleRuns/`](../ExampleRuns/).
+You can also copy [the template](../ExampleRuns/example-template/README.md) there,
+setting its Makefile's `REPO_ROOT := ../../..`.

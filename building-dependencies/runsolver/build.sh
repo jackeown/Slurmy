@@ -5,6 +5,9 @@ set -euo pipefail
 : "${SLURMY_BUILD_WORK:?slurmy-build.py must set SLURMY_BUILD_WORK}"
 : "${SLURMY_BUILD_OUTPUT:?slurmy-build.py must set SLURMY_BUILD_OUTPUT}"
 
+SLURMY_BUILD_WORK=$(mktemp -d "${TMPDIR:-/tmp}/slurmy-runsolver-build.XXXXXXXX")
+trap 'rm -rf -- "$SLURMY_BUILD_WORK"' EXIT
+
 VERSION=3.4.1
 SHA256=6fb8c8c849e09593b509a9df1aaddb94b8187f65bb217ff707c8252fddd79e2f
 URL="https://www.cril.univ-artois.fr/~roussel/runsolver/runsolver-${VERSION}.tar.bz2"

@@ -127,6 +127,8 @@ def build_job_script(args: argparse.Namespace, *, has_context: bool) -> str:
         "#SBATCH --output=build.log",
         "#SBATCH --error=build.log",
         f"#SBATCH --cpus-per-task={args.cpus_per_task}",
+        "#SBATCH --nodes=1",
+        "#SBATCH --ntasks=1",
         f"#SBATCH --mem={args.memory}",
         f"#SBATCH --time={args.time}",
         *(f"#SBATCH {option}" for option in args.sbatch_option),

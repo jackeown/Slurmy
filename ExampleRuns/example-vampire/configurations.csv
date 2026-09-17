@@ -1,0 +1,2 @@
+command,solver_directory,wc_limit,cpu_limit,mem_limit,cores,cpus,exclusive_cpu,exclusive_node
+./vampire --mode casc --cores {{cores}} --time_limit {{cpu_limit}} {{problem}},bin,6,3,1GiB,1,1,false,false

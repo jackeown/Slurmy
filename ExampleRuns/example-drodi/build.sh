@@ -5,6 +5,9 @@ set -euo pipefail
 : "${SLURMY_BUILD_WORK:?slurmy-build.py must set SLURMY_BUILD_WORK}"
 : "${SLURMY_BUILD_OUTPUT:?slurmy-build.py must set SLURMY_BUILD_OUTPUT}"
 
+SLURMY_BUILD_WORK=$(mktemp -d "${TMPDIR:-/tmp}/slurmy-drodi-build.XXXXXXXX")
+trap 'rm -rf -- "$SLURMY_BUILD_WORK"' EXIT
+
 VERSION=4.1.1
 URL="https://tptp.org/CASC/J13/SystemSources/Drodi---${VERSION}.tgz"
 SHA256=4967b522235df03e2b3e5a35e5284aa742cbfd6875b0f0a0c904ee8e0d3220ce

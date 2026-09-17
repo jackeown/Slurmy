@@ -1,21 +1,29 @@
-# Building dependencies on the cluster
+# 🔨 Remote dependency builds
 
-This directory keeps the machinery and recipes for software that must be built
-for the cluster's architecture:
+`slurmy-build.py` is the shared local driver for running a Bash build recipe in
+a Slurm job and downloading its outputs. `runsolver/build.sh` is the bundled
+runsolver source-build recipe. The three-file workflow automatically reuses
+this driver for non-empty recipe lines in `building.txt`.
 
-```text
-building-dependencies/
-  slurmy-build.py       Submit any Bash build recipe as a Slurm job.
-  slurmy-build.mk       Shared Make rules used by the example workflows.
-  runsolver/
-    build.sh            Remote runsolver recipe.
-    runsolver           Downloaded cluster-built binary; ignored by Git.
+For standalone builds or custom build allocations:
+
+```bash
+python building-dependencies/slurmy-build.py \
+    --name my-solver \
+    --context /path/to/sources \
+    --recipe /path/to/build.sh \
+    --output /path/to/downloaded-artifacts \
+    --artifact bin/my-solver \
+    --cpus-per-task 4 --memory 4GiB --time 00:30:00 \
+    --sbatch-option=--partition=CPU-amd
 ```
 
-`slurmy-build.py` stages a recipe on the SSH host, runs it on a compute node,
-validates its declared artifacts, and downloads its output with `rsync`. See the
-[main README](../README.md) for the command-line example and the environment
-available to recipes.
+`--host` overrides `SLURMY_HOST` (default `datalab`).
+Recipes receive `SLURMY_BUILD_WORK`, the unpacked source directory, and
+`SLURMY_BUILD_OUTPUT`, where standalone recipes must put downloadable outputs.
+Generated three-file workflows wrap recipes so both variables point to the
+copied resource tree, then fetch that resulting tree back to the declared root.
 
-The example Makefiles include `slurmy-build.mk`, so normal users can simply run
-`make`; they do not need to call the builder directly.
+The driver verifies the named artifacts before downloading with rsync.
+Remote build directories and logs remain under `~/Slurmy-builds/` for inspection.
+This tool does not execute the downloaded binaries on your computer.

@@ -1,4 +1,5 @@
 __pycache__/
+/.slurmy-web/
 *.py[cod]
 /.venv/
 /submit.sh
@@ -6,7 +7,13 @@ __pycache__/
 /building-dependencies/runsolver/runsolver
 /building-dependencies/runsolver/.built-on-*
 /ExampleRuns/example-*/source/
-/ExampleRuns/example-*/bin/
+/ExampleRuns/example-*/bin/*
+!/ExampleRuns/example-*/bin/.gitkeep
 /ExampleRuns/example-*/submit.sh
 /ExampleRuns/example-*/submit.sh.files/
+/ExampleRuns/example-vampire/jobpairs.csv
+/ExampleRuns/example-e/jobpairs.csv
+/ExampleRuns/example-drodi/jobpairs.csv
+/ExampleRuns/example-combined/jobpairs.csv
+.slurmy-built
 /YourRuns/GENERATED/example-*/

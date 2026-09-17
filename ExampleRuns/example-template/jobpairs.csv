@@ -1,0 +1,2 @@
+command,solver_directory,problem,wc_limit,cpu_limit,mem_limit,cores,cpus,exclusive_cpu,exclusive_node
+./my-solver {{problem}},bin,problems/example.p,70,60,2GiB,1,1,false,false

@@ -1,73 +1,37 @@
-# Interactive Slurmy example generator
-
-Launch the Textual workflow generator from this directory:
+# 🧭 Web experiment builder
 
 ```bash
-make
+make -C YourRuns/example-generator
+# or: make -C YourRuns/example-generator monitor
 ```
 
-The generator asks one question at a time and supplies no default answers. After
-collecting the workflow identity and cluster, it asks whether the solver needs
-to be built on the cluster.
+Both commands start the shared local Flask app if needed and open its builder
+page in your browser. There is no separate terminal dashboard.
 
-- **Remote build:** optionally select an existing local source directory, enter
-  the Bash build and installation steps, name the executable those steps place
-  below `$SLURMY_BUILD_OUTPUT`, describe its invocation, and choose the build
-  job's CPUs, memory, and time. The generated `build.sh` runs through Slurmy's
-  shared build system in a separate Slurm job when you run `make`.
-- **No build:** choose an existing solver-description file or create one for an
-  existing solver installation.
-  - **Existing description:** enter one path or glob per line. Every matched
-    description must be readable, name an existing solver root on its first
-    line, and contain at least one invocation.
-  - **Create a description:** enter an existing solver root, followed by one or
-    more invocation lines. Every invocation must contain `{{problem}}` or
-    `{{problem=path}}`.
+The five steps cover the workflow name and cluster settings, solver/problem
+calls, optional remote builds, the resource limiter, and a validated preview.
+Settings start blank: choose them explicitly.
 
-Problem globs are also validated immediately, and every glob must match at
-least one existing regular file. Relative solver and problem paths always
-start from this `YourRuns/example-generator/` directory—even if the application
-is launched elsewhere. The generator converts them to absolute paths before
-showing the review screen or generating files.
+Use an existing jobpairs CSV, import a configurations CSV, or enter configurations
+in the form and select problem globs. The union of the globs is crossed with each
+configuration. Include all per-call limits, core/socket counts, and both
+exclusivity choices. Resource roots can be packaged as-is, built by an existing
+Bash script, or built using commands entered in the form.
 
-The resource questions distinguish all three isolation levels. An `N-core`
-request reserves only those physical cores. A `1-CPU` or `2-CPU` request also
-asks for the number of cores per physical CPU, then reserves and packs complete
-Slurm sockets. Whole-node exclusivity is a separate yes/no question, so it can
-be enabled only when no other job may share the assigned node.
+Path fields are checked when you leave them; a full preview validates the
+specification before saving. Relative paths you enter resolve from
+`YourRuns/example-generator/`. Paths inside imported files resolve from those
+files. Absolute paths are saved, and source/problem files stay where they are.
 
-The application creates `YourRuns/GENERATED/example-NAME/` using
-`ExampleRuns/example-template/`. It writes no files until generation and never
-overwrites an existing directory. Keeping generated workflows under `GENERATED/` makes
-them easy to distinguish from the maintained examples. Solver roots and
-problems can live anywhere on the local filesystem: the generated workflow
-records their absolute locations but does not copy them. `workflow.mk` points
-to `solver-paths.txt` and
-`problem-globs.txt`, which contain those absolute locations. When you create a
-description interactively, the generated `solver.solver` also contains the
-absolute solver-root path. A remote-build workflow instead contains `build.sh`,
-`solver.solver`, and, when applicable, `build-context.txt`; its source context
-is uploaded when the build begins. The usual submission packaging transfers
-the required solver and problem files later.
+Saving creates `YourRuns/GENERATED/example-NAME/` with the three input files,
+a Makefile, and any newly entered build recipes. It does not build or submit.
+From the resulting experiment page, inspect the inputs, prepare scripts, and
+explicitly confirm building/submission. Progress appears in the operation log.
 
-Afterward, inspect `workflow.mk` and run `make` inside the new directory:
+The same workflow still supports `make`, `make submit`, `make monitor`,
+`make sync`, `make stop`, and `make clean`. All-pairs workflows retain
+their configurations and globs; move the old jobpairs.csv aside before using
+`make pairs`.
 
-```bash
-cd ../GENERATED/example-NAME
-make
-make submit
-make sync
-make stop
-```
-
-`make sync` follows the newest Slurmy job and incrementally downloads its
-results. Run it from the generated workflow or directly from this generator
-directory. To select a particular run, use
-`make sync SLURMY_ID=name_timestamp_pid`.
-
-`make stop` shows your active Slurm jobs on the configured host and asks which
-one to cancel.
-
-If the contents of an external build-context directory change after a
-successful build, run `make distclean` before `make` to rebuild them on the
-cluster.
+See the [main README](../../README.md) for installation, server lifecycle,
+localhost-only security, and command-line alternatives.

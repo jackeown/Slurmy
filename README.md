@@ -1,714 +1,428 @@
 <div align="center">
-  <img src="logo.svg" alt="Slurmy logo" width="240"><br>
+  <img src="logo.svg" alt="Slurmy logo" width="240">
 
 # Slurmy
 
 </div>
 
-Run reproducible, resource-limited theorem-prover experiments on a Slurm
-cluster.
+Run resource-limited theorem-prover experiments on a Slurm cluster. Specify
+each solver–problem call explicitly, or generate all combinations as a convenience.
+Build on the cluster, inspect the generated shell scripts, monitor progress,
+and synchronize results.
 
-Slurmy turns local solver descriptions and problem files into an inspectable
-Slurm job-array submission. It copies everything the experiment needs to the
-cluster, measures and limits each solver call with `runsolver`, and provides
-separate tools for live monitoring and incremental result synchronization.
+1. Prepare `jobpairs.csv`, `building.txt`, and `resource_limiter_template.txt`.
+2. Run `slurmy.py` to generate a readable `submit.sh` and its helper files.
+3. Run `submit.sh`: build dependencies on compute nodes, download them for
+   packaging, transfer the experiment, and submit its batches.
+4. Open the local web app to monitor, inspect output, and manage the experiment.
 
+Python runs on your computer. The cluster runs Bash, Slurm commands, and your
+cluster-built executables. See [ExampleRuns](ExampleRuns/README.md) for ready-made
+Vampire, E, and Drodi workflows, or use the
+[web experiment builder](YourRuns/example-generator/README.md).
 
-## Usage
-
-1. Describe one or more solver command lines and select the problem files.
-2. Run `slurmy.py` locally to generate `submit.sh` and `submit.sh.files/`.
-3. Inspect and run `submit.sh` to copy the experiment and submit a Slurm array.
-4. Follow the job with `slurmy-monitor.py`, download results with
-   `slurmy-sync.py`, or cancel it with `slurmy-cancel.py`.
-
-Python runs only on the local machine. Compute nodes run the generated Bash
-scripts, Slurm commands, and the included `runsolver` binary directly.
-
-
----
+```bash
+python -m pip install -r requirements.txt
+python slurmy-web.py  # Starts the local app if needed and opens your browser.
+```
 
 <details>
-<summary><strong>🚀 Quick start</strong></summary>
+<summary><strong>🚀 Requirements and setup</strong></summary>
 
 <blockquote>
 
-<details>
-<summary><strong>✅ Requirements and dependencies</strong></summary>
-
-On the local machine:
-
-- Python 3.9+, Bash, `make`, `ssh`, `scp`, `rsync`, and tar (GNU or BSD)
-- Non-interactive SSH access to the cluster
-
-Use Linux, macOS (Intel or Apple Silicon, including M4), or Windows through
-WSL. The laptop and cluster can have different CPU architectures: the example
-Makefiles build provers and `runsolver` in Slurm jobs, download them for
-packaging, and execute them only on the cluster. Custom solver installations
-must likewise be built for the cluster.
-
-**macOS:** with [Homebrew](https://brew.sh/) installed, run:
+Locally: Python 3.9+, Bash, make, SSH/SCP, rsync, and GNU or BSD tar.
+Linux and macOS (including Apple Silicon) work with the same interface; use
+WSL on Windows. Native Windows shells are not supported.
 
 ```bash
-brew install python rsync
-```
-
-If `make` is missing, install Apple's command-line tools with
-`xcode-select --install`. Enter `bash` in Terminal before following the shell
-examples below; this also allows pasting their comments into macOS Terminal.
-
-The built-in Bash and tar are sufficient; no GNU tar installation is needed.
-Use Homebrew's Python to create the environment below.
-
-**Linux (Ubuntu/Debian):** install any missing prerequisites:
-
-```bash
-sudo apt install python3 python3-venv make openssh-client rsync tar git
-```
-
-**Windows:** install [WSL with Ubuntu](https://learn.microsoft.com/en-us/windows/wsl/install)
-using `wsl --install` in an administrator PowerShell, then follow the Linux
-setup inside Ubuntu. Run all Slurmy commands there, keep the checkout under
-your Linux home directory (such as `~/Slurmy`), and configure SSH inside WSL.
-Native PowerShell and Windows Python are not supported.
-
-On the cluster:
-
-- Slurm, Bash, `rsync`, GNU `tar`, `awk`, `sed`, and `base64`
-
-Building all three included prover examples additionally requires `git`,
-`curl`, `sha256sum`, `make`, C and C++ compilers, and CMake 3.14 or newer on
-the cluster compute nodes.
-
-`datalab` is the default SSH host. It can be an alias in `~/.ssh/config`:
-
-```sshconfig
-Host datalab
-    HostName cluster.datalab.tuwien.ac.at
-    User your-account
-    IdentityFile ~/.ssh/your-key
-```
-
-The submission generator, build, monitor, sync, and cancel scripts accept
-`--host HOST`. You can instead set `SLURMY_HOST` once for the shell; an
-explicit `--host` always wins:
-
-```bash
-export SLURMY_HOST=another-cluster
-```
-
-Connect to the cluster VPN if needed, then verify access with
-`ssh datalab 'command -v sbatch'` (substitute your host alias). Complete any
-first-connection host-key and authentication setup before running the examples.
-The interactive example generator asks for the host explicitly.
-
-`slurmy.py`, `building-dependencies/slurmy-build.py`, `slurmy-sync.py`, and
-`slurmy-cancel.py` use only the Python standard library. The
-`slurmy-monitor.py` dashboard and interactive example generator additionally
-need Textual, which is installed through `requirements.txt`:
-
-```bash
-# Optional if your existing environment already provides a suitable `python`.
-python3 -m venv .venv
+# Optional: isolate Python dependencies in a virtual environment.
+python -m venv .venv
 source .venv/bin/activate
-
 python -m pip install -r requirements.txt
 ```
 
-The Makefiles use `python` from your PATH. Activating the environment above
-provides that command on macOS and Linux without changing the system Python.
+The scripts and Makefiles use whichever `python` is on your PATH.
+On macOS, `brew install python rsync` supplies those tools; if make is missing,
+install Apple's command-line tools with `xcode-select --install`.
+Use Bash for the shell examples. The built-in macOS Bash and tar suffice;
+no GNU tar replacement or local C++ compiler is needed.
 
-</details>
-
-<details>
-<summary><strong>🧭 Generate your own workflow interactively</strong></summary>
-
-Run the example generator when you want a guided alternative to writing a
-Makefile and solver description by hand:
+Configure non-interactive SSH access, then choose a partition:
 
 ```bash
-cd YourRuns/example-generator
-make
+export SLURMY_HOST=datalab       # SSH config alias; datalab is the default.
+export SLURMY_PARTITION=CPU-amd  # Selects the cluster's CPU-amd set of machines.
+ssh "$SLURMY_HOST" hostname
 ```
 
-It asks one question at a time with no default answers. It can create a remote
-build recipe like the Vampire and E examples, use existing solver-description
-files, or create a description for an existing solver root. For a remote build,
-you enter an optional source directory, the Bash build steps, the executable
-produced below `$SLURMY_BUILD_OUTPUT`, its invocation, and the Slurm resources
-for compilation. Solver, source, and problem paths are validated as they are
-entered. Relative paths start from `YourRuns/example-generator/` and are
-converted to absolute paths in the generated workflow.
+The core three-file interface uses these environment variables.
+Monitor, sync, cancel, and the standalone builder also accept `--host`, which
+overrides `SLURMY_HOST`. Example Makefiles accept the same variables.
 
-The result is written to `YourRuns/GENERATED/example-NAME/`. A remote-build
-workflow downloads its cluster-built executable into that directory's `bin/`;
-a workflow using existing inputs keeps absolute references to them. The normal
-submission step packages the resulting solver and selected benchmarks. Review
-the generated settings, then use the standard targets:
+The cluster must provide Linux, Bash 4+, Slurm, tar, rsync, GNU `timeout`,
+and util-linux (`lscpu`, `taskset`, `setsid`).
+The scheduler currently requires a homogeneous partition, core-based allocation
+(`CR_CORE` or `CR_CORE_MEMORY`), and `task/cgroup` with
+`ConstrainCores=yes`. Forced core-sharing partitions are rejected.
+These are administrator settings, not laptop prerequisites.
 
-```bash
-cd ../GENERATED/example-NAME
-make
-make submit
-make monitor
-make sync     # Or use this to download results incrementally.
-make stop     # Select an active Slurm job to cancel.
-```
-
-See the [example-generator documentation](YourRuns/example-generator/README.md)
-for the exact validation and path behavior.
-
-</details>
-
-<details>
-<summary><strong>🧪 Run an included example</strong></summary>
-
-The Vampire example provides the shortest complete path from source code to a
-submitted experiment:
-
-```bash
-cd ExampleRuns/example-vampire
-make
-make submit
-make monitor
-```
-
-`make` submits Slurm build jobs for Vampire and `runsolver`, downloads their
-cluster-built binaries, then generates the submission files. `make submit`
-transfers them to `datalab` and returns once Slurm accepts the array. `make
-monitor` opens the interactive dashboard.
-
-See [Prover examples](ExampleRuns/README.md) for the E, Drodi, and combined
-three-prover examples, the reusable workflow template, and the available
-Makefile targets.
-
-</details>
-
-<details>
-<summary><strong>🛑 Cancel a job</strong></summary>
-
-Run the cancel tool without an ID to list your active jobs and select one:
-
-```bash
-./slurmy-cancel.py
-```
-
-The list groups a job array under its base Slurm ID. Selecting that ID cancels
-the entire array. To cancel immediately without the selection prompt, supply a
-Slurm ID directly; an array-element ID cancels only that element:
-
-```bash
-./slurmy-cancel.py 123456
-./slurmy-cancel.py 123456_7
-```
-
-Use `--host HOST` or `SLURMY_HOST` as with the other tools. Every example also
-provides `make stop`, which opens the same selection prompt for its configured
-host.
-
-</details>
+Build recipes additionally need their normal build tools on compute nodes
+(e.g. Git, CMake, make, GCC/G++, curl, and source-download access).
+Binaries are built and run on the cluster; the laptop architecture may differ.
 
 </blockquote>
-
 </details>
 
 <details>
-<summary><strong>🛠️ Create your own submission</strong></summary>
+<summary><strong>📝 Create your own submission</strong></summary>
 
 <blockquote>
 
-<details>
-<summary><strong>1. 🔧 Build runsolver on the cluster</strong></summary>
-
-Run the runsolver recipe as a Slurm job, validate its output, and download the
-binary for inclusion in generated submission files:
+The core interface does not infer solver–problem combinations or choose a
+working directory from a build recipe. Every CSV row describes exactly one call.
 
 ```bash
-python ./building-dependencies/slurmy-build.py \
-  --name runsolver \
-  --recipe ./building-dependencies/runsolver/build.sh \
-  --output ./building-dependencies/runsolver \
-  --artifact runsolver \
-  --sbatch-option=--partition=CPU-amd
+python /path/to/Slurmy/slurmy.py jobpairs.csv building.txt resource_limiter_template.txt --deg_par 4
+# --deg_par: maximum number of jobpairs running simultaneously within EACH batch.
+
+bash ./submit.sh  # Build remotely, fetch artifacts, package inputs, and submit.
 ```
 
-This creates `building-dependencies/runsolver/runsolver` using the compute-node
-architecture. Slurmy copies that binary to `submit.sh.files/runsolver`. The
-included example Makefiles run this build automatically.
-
-</details>
+Generated files appear beside `jobpairs.csv`. Generation does not connect to
+the cluster. Existing submission files are not overwritten.
 
 <details>
-<summary><strong>2. 📝 Describe the solver</strong></summary>
-
-Create `solver.solver`. The comments shown here are valid description-file
-comments and are ignored by Slurmy:
-
-```text
-./solver-root
-# The first line above is the directory to package. Relative paths start from
-# the directory containing this description file. Commands run from the
-# packaged copy of that directory on the cluster.
-#
-# Every later non-empty, non-comment line is a complete solver configuration.
-# Supported variables in those command lines are:
-#   {{problem}}                    one call for every problem selected by every --problems glob
-#   {{problem=benchmarks/test.p}}  one call for only this file; paths are relative to solver.solver
-#   {{cpu-limit}}                  CPU limit in seconds
-#   {{wc-limit}}                   wall-clock limit in seconds
-#   {{mem-limit}}                  memory limit in decimal megabytes
-#
-# This configuration runs once for every selected problem:
-./bin/my-solver --strategy default --cpu-limit {{cpu-limit}} --wall-limit {{wc-limit}} --memory-limit-mb {{mem-limit}} {{problem}}
-# A second configuration produces another call for every selected problem:
-./bin/my-solver --strategy fallback --cpu-limit {{cpu-limit}} {{problem}}
-# A specific problem produces only this one call and does not expand the globs:
-./bin/my-solver --check-only {{problem=benchmarks/smoke-test.p}}
-#
-# Each command must use either generic or specific problem variables, not both.
-# Commands are trusted shell input, so use only descriptions you trust.
-# Use one description per solver root and repeat --solver to add more solvers.
-```
-
-</details>
-
-<details>
-<summary><strong>3. ⚙️ Generate the submission files</strong></summary>
-
-```bash
-slurmy_args=(
-  --host "${SLURMY_HOST:-datalab}"                # SSH host used to submit and later inspect the experiment.
-  --cpu-limit 60                                 # Maximum CPU seconds for each solver call.
-  --wc-limit 70                                  # Maximum elapsed seconds for each solver call.
-  --mem-limit 2GiB                               # Memory limit enforced on each solver call.
-  --cpu-request 1-core                           # Reserve one physical core for each array element.
-  # --exclusive-nodes                           # Optional: reserve every node assigned to an array element.
-  --memory-request 2300MiB                       # Slurm memory request; leave room above mem-limit.
-  --problems 'problems/easy/**/*.p'              # Add every file matched by this quoted glob.
-  --problems 'problems/hard/**/*.p'              # Add these matches too; duplicate paths are removed.
-  --solver solver.solver                         # Solver root and command-line configurations.
-  --runsolver building-dependencies/runsolver/runsolver  # Cluster-built runsolver binary to package.
-  --batch-size 20                                # Solver calls run sequentially in each array element.
-  --max-parallel 100                             # Maximum number of Slurm array elements allowed to run simultaneously.
-  --sbatch-option=--partition=CPU-amd            # Tell Slurm to use machines in the CPU-amd partition.
-  --output submit.sh                             # Creates submit.sh and submit.sh.files/.
-)
-./slurmy.py "${slurmy_args[@]}"                      # Generate files locally; do not submit yet.
-```
-
-All `--problems` occurrences contribute to one problem set. Every glob must
-match at least one regular file, and files matched more than once appear only
-once. Generating the submission does not contact the cluster. It creates:
-
-```text
-submit.sh                         # Laptop script that packages, copies, and submits the job.
-submit.sh.files/                  # Companion directory required by submit.sh.
-  archive-paths.txt               # Laptop solver and problem paths to package.
-  metadata.json                   # Limits, requests, task counts, and result columns.
-  remote_prepare.sh               # Creates the remote job directory over SSH.
-  remote_submit.sh                # Extracts uploaded files and invokes sbatch over SSH.
-  runsolver                       # Local runsolver binary copied to the cluster.
-  slurm_job.sh                    # Slurm compute-node script that runs each batch.
-  batches/                        # Generated task data, divided by array element.
-    batch_000000.sh               # Solver commands for the first array element.
-    batch_000001.sh               # Solver commands for the second array element.
-```
-
-All generated scripts and task commands are readable. There are no encoded
-payloads or remote programs hidden inside SSH command strings. Keep
-`submit.sh` and `submit.sh.files/` together.
-
-The generated `submit.sh` documents its fixed configuration, companion files,
-and each packaging and submission stage directly in comments.
-
-</details>
-
-<details>
-<summary><strong>4. 🚀 Inspect and submit</strong></summary>
-
-The most useful files to inspect are:
-
-```bash
-less submit.sh
-less submit.sh.files/slurm_job.sh
-less submit.sh.files/batches/batch_000000.sh
-less submit.sh.files/metadata.json
-```
-
-Submit with:
-
-```bash
-./submit.sh
-```
-
-The script prints the Slurm job ID and remote directory. It submits the work
-but does not wait for it to finish.
-
-```text
-Slurmy job ID: alice_1786464000_12345
-Slurm job ID(s): 123456
-Remote directory: /home/alice/Slurmy/alice_1786464000_12345
-```
-
-A Slurmy ID contains the remote username, submission time in Unix seconds, and
-the laptop submission script's process ID. The process ID keeps simultaneous
-submissions made during the same second from choosing the same remote path.
-
-Monitor it normally with Slurm:
-
-```bash
-ssh datalab squeue -j 123456
-ssh datalab sacct -j 123456
-```
-
-</details>
-
-</blockquote>
-
-</details>
-
-<details>
-<summary><strong>📊 Monitor and retrieve jobs</strong></summary>
+<summary><strong>📋 jobpairs.csv — explicit calls</strong></summary>
 
 <blockquote>
 
-<details>
-<summary><strong>👀 Monitor jobs</strong></summary>
-
-Open the interactive dashboard on your laptop:
-
-```bash
-./slurmy-monitor.py
+```csv
+command,solver_directory,problem,wc_limit,cpu_limit,mem_limit,cores,cpus,exclusive_cpu,exclusive_node
+./solver --time {{cpu_limit}} {{problem}},resources/solver-a,problems/easy.p,70,60,2GiB,1,1,false,false
+./solver --threads {{cores}} {{problem}},resources/solver-b,problems/hard.p,130,120,4GiB,4,1,true,false
+./solver fixed-input.p,resources/solver-a,resources/solver-a/fixed-input.p,70,60,2GiB,1,1,false,true
 ```
 
-It discovers every current and past Slurmy job under `$HOME/Slurmy/` on `datalab`
-and refreshes automatically. The six tabs provide:
-
-- **Jobs:** all submissions, their state, completion percentage, task counts,
-  execution errors, elapsed time, and submission time;
-- **Tasks:** every solver call, including its system, benchmark, live state,
-  wall time, CPU time, peak memory, and exit code;
-- **Output:** the selected task's combined solver stdout/stderr, runsolver
-  controller output, watcher report, and recorded variables;
-- **Slurm:** live array placement and pending reasons together with historical
-  accounting records;
-- **Logs:** the latest portion of each Slurm array log;
-- **Details:** limits, resource requests, status totals, remote location, and
-  the complete job metadata.
-
-Select a row with the arrow keys or mouse and press Enter to open its tasks.
-On a saved task, press Enter or `O` to inspect its output. Use `1` through `6`
-to change tabs, `R` to refresh immediately, and `Q` to quit. Use another SSH
-host or a slower refresh interval when needed:
-
-```bash
-./slurmy-monitor.py --host another-cluster --refresh 15
-```
-
-The system name is inferred from the executable in the solver command—for
-example, `./vampire` is shown as `vampire`. Time and memory values automatically
-choose readable units, such as milliseconds for short calls and bytes rather
-than `0 KiB` for values smaller than one KiB.
-
-The dashboard is read-only. It runs `ssh`, `squeue`, and `sacct`, and reads
-small metadata, progress, result-summary, and log files. It does not transfer
-solver inputs or whole result archives. When you open a task's output, the
-needed files are extracted from its archive on the cluster and only those files
-are sent to the dashboard. Each displayed file is limited to 1 MiB; for a
-larger file, the first and last 512 KiB are shown. A job remains in the
-dashboard as long as its remote `$HOME/Slurmy/<job-id>/` directory remains
-available.
-
-`time-limit` and `memory-limit` are normal solver results and are not counted as
-execution errors. An execution error means that Slurmy could not run or record
-work normally—for example, a solver launch error, corrupt task data, an interrupted
-worker, a failed Slurm task, or a node failure. Select an affected task and
-press `O` to inspect its output. Scheduler-level errors are shown in the
-**Slurm** and **Logs** tabs.
-
-The dashboard distinguishes a solver `time-limit` from Slurm's `TIMEOUT`
-state. The former is expected; the latter means Slurm stopped an array task
-before Slurmy saved all of its results, so it is an execution error.
-
-</details>
-
-<details>
-<summary><strong>📥 Sync results</strong></summary>
-
-Download the latest Slurmy job from `datalab`:
-
-```bash
-./slurmy-sync.py
-```
-
-The command performs one incremental sync and exits. Unchanged files are not
-transferred again. By default, files are stored under
-`slurmy-results/<Slurmy-ID>/`. Supply an ID to sync a particular job or choose an
-exact local directory:
-
-```bash
-./slurmy-sync.py john.keown_1787570882
-./slurmy-sync.py john.keown_1787570882 --output ~/results/vampire-run
-```
-
-Use follow mode while a job is running:
-
-```bash
-./slurmy-sync.py john.keown_1787570882 --follow --interval 5
-```
-
-Each pass downloads only the remote job's metadata and batch definitions,
-progress records, Slurm logs, result summaries, and finalized result archives.
-Solver inputs and executable runtime files are not downloaded. Follow mode
-stops once every planned solver call has a complete result; pressing Ctrl-C
-earlier keeps everything already downloaded.
-
-Every pass atomically replaces `sync-metadata.json` in the local job directory.
-It reports completion and solving separately, along with execution-status and
-SZS-status counts, aggregate CPU/wall/memory measurements, archive counts,
-bytes downloaded, and the time of the latest sync. For example:
-
-```bash
-watch -n 1 cat slurmy-results/john.keown_1787570882/sync-metadata.json
-```
-
-`percent_complete` measures calls with final runsolver records.
-`percent_solved` measures calls whose archived solver output contains a solved
-SZS status such as `Theorem`, `Unsatisfiable`, `Satisfiable`, or
-`CounterSatisfiable`. A solver without SZS status lines can still be 100%
-complete while reporting 0% solved.
-
-</details>
-
-</blockquote>
-
-</details>
-
-<details>
-<summary><strong>🧠 Advanced usage</strong></summary>
-
-<blockquote>
-
-<details>
-<summary><strong>🏗️ Building software on the cluster</strong></summary>
-
-`building-dependencies/slurmy-build.py` is the shared remote-build mechanism
-used for runsolver, Vampire, E, and Drodi. It copies a Bash recipe to the SSH
-host, submits the recipe with `sbatch`, waits for its final state, checks every
-declared artifact, and uses `rsync` to download the output. Compilation never
-runs on the SSH head node or on the laptop.
-
-A recipe runs on one compute node with these directories available:
-
-```bash
-$SLURMY_BUILD_ROOT    # Persistent directory containing the recipe and build log.
-$SLURMY_BUILD_WORK    # Empty working directory for sources and intermediate files.
-$SLURMY_BUILD_OUTPUT  # Put every artifact that should be downloaded here.
-```
-
-For example, a recipe that builds a local source tree can be submitted with a
-build context:
-
-```bash
-python ./building-dependencies/slurmy-build.py \
-  --host "${SLURMY_HOST:-datalab}" \
-  --name my-solver \
-  --recipe ./build-my-solver.sh \
-  --context ./my-solver-source \
-  --output ./solver-root/bin \
-  --artifact my-solver \
-  --cpus-per-task 8 \
-  --memory 8GiB \
-  --time 00:30:00 \
-  --sbatch-option=--partition=CPU-amd
-```
-
-The optional context is unpacked into `$SLURMY_BUILD_WORK`. A recipe may also
-clone or download its source directly, as the included recipes do. Remote build
-directories and logs remain under `$HOME/Slurmy-builds/` for diagnosis.
-
-</details>
-
-<details>
-<summary><strong>📁 Structuring larger submissions</strong></summary>
-
-Treat the solver root named on the first line of a solver description as a
-self-contained directory. Put every solver-side file needed on the cluster
-under that root: executables, scripts, libraries, configuration files, and
-other data. For example:
-
-```text
-experiment/
-  solver.solver
-  solver-root/
-    bin/my-solver
-    configs/competition.toml
-    libraries/
-    problems/
-      axioms/
-      batch-a/problem.p
-```
-
-The corresponding `experiment/solver.solver` can use paths relative to the
-solver root:
-
-```text
-./solver-root
-./bin/my-solver --config configs/competition.toml {{problem}}
-```
-
-The first line is resolved relative to the solver description file, and that
-whole directory is packaged recursively. On each compute node, Slurmy changes to
-the packaged copy of that directory before running the command. Consequently,
-relative command paths such as `./bin/my-solver`, `configs/competition.toml`,
-and `libraries/` continue to work without alteration.
-
-Slurmy preserves each input's absolute laptop path underneath a private `rootfs`
-inside the remote job directory. For a job named `alice_1786464000_12345`, the
-mapping looks like this:
-
-| Laptop path | Path used on the cluster |
+| Column | Meaning for this single call |
 | --- | --- |
-| `/home/alice/work/experiment/solver-root` | `$HOME/Slurmy/alice_1786464000_12345/rootfs/home/alice/work/experiment/solver-root` |
-| `/home/alice/work/experiment/solver-root/problems/batch-a/problem.p` | `$HOME/Slurmy/alice_1786464000_12345/rootfs/home/alice/work/experiment/solver-root/problems/batch-a/problem.p` |
+| `command` | Bash command, with or without placeholders. |
+| `solver_directory` | Existing local directory whose cluster copy is the working directory. |
+| `problem` | Existing local problem file, also used to identify the benchmark. |
+| `wc_limit` | Wall-clock seconds. |
+| `cpu_limit` | CPU seconds summed over the call's processes and cores. |
+| `mem_limit` | Memory: positive integer with MB, MiB, GB, GiB, TB, or TiB; a bare integer means MB. |
+| `cores` | Maximum physical cores the call can execute on; hardware threads are not additional cores. |
+| `cpus` | Maximum physical CPU sockets those cores may span. With `exclusive_cpu`, this many whole sockets are reserved. |
+| `exclusive_cpu` | Reserve whole CPU sockets for this call. |
+| `exclusive_node` | Reserve an entire node for this call, with no other Slurmy calls in its batch. |
 
-Problem globs passed to `--problems` are resolved from the directory in which
-`slurmy.py` is run. A path in `{{problem=/path/to/problem}}` is instead resolved
-relative to the solver description file when it is not absolute. Selected
-problem files are packaged, and every problem placeholder in a generated task
-is replaced with its full path inside the remote `rootfs`.
+All numeric limits must be positive integers. Exclusivity values are `true`
+or `false`, case-insensitive; empty or omitted exclusivity columns mean false.
+All other columns are required. Use ordinary CSV quoting for commas, quotes, or
+newlines inside a command; CSV does not support comment lines.
 
-Slurmy does not inspect arbitrary command arguments or configuration files for
-more laptop paths. A literal path such as `/home/alice/tools/config.toml` in a
-solver command remains unchanged and will normally be absent on the compute
-node. Keep such resources under the solver root and refer to them relatively.
-Similarly, selecting one problem file does not automatically discover files
-that it includes. Put the complete problem and axiom tree under the solver root
-when problems have such dependencies; the recursive packaging of the root will
-then include them.
+Solver-command placeholders: `{{problem}}`, `{{wc_limit}}`,
+`{{cpu_limit}}`, `{{mem_limit}}` (decimal MB, rounded up),
+`{{mem_limit_mib}}` (MiB, rounded up), `{{cores}}`, and `{{cpus}}`.
+Path placeholders are already shell-quoted: leave them bare in the template.
+Commands may instead spell everything out; the CSV limits still determine
+limiter and Slurm allocations. Ensure hard-coded solver limits agree with them.
 
-The solver description file itself is read while generating the submission and
-does not need to exist on the cluster. `archive-paths.txt` records the local
-paths that `submit.sh` packages later, so do not move or delete the solver root
-or selected problems between generating and running `submit.sh`. For multiple
-independent solver layouts, make one description file per root and repeat
-`--solver`.
-
+</blockquote>
 </details>
 
 <details>
-<summary><strong>🧩 How jobs are divided</strong></summary>
+<summary><strong>🔨 building.txt — resources and remote recipes</strong></summary>
 
-Slurmy expands every solver command over the selected problems. `--batch-size`
-controls how many calls one array element runs sequentially. `--max-parallel`
-limits how many array elements from this submission may be running at the same
-time. It does not limit how many run in total. For example, with 1,000 batches
-and `--max-parallel 100`, all 1,000 batches remain scheduled, but at most 100 can
-be running simultaneously. Slurm may run fewer when cluster resources are busy.
-The limit is not a machine count: Slurm may place multiple batches on one
-machine when that machine has enough requested CPU and memory.
+<blockquote>
 
-For 1,000 calls with `--batch-size 20 --max-parallel 10`:
+Each resource takes exactly two lines: its existing local root directory,
+then a Bash build-script path. A blank second line means “package as-is.”
 
 ```text
-50 array elements
-20 sequential solver calls per element
-at most 10 elements running at once
+resources/solver-a
+recipes/build-solver-a.sh
+resources/solver-b
+
+resources/runsolver
+recipes/build-runsolver.sh
 ```
 
-Each individual call still gets its own runsolver CPU, wall-clock, memory, and
-process-tree limits.
+Paths resolve relative to `building.txt`. List the limiter's root here too.
+Keep the blank recipe line even for the final resource. Empty resource roots
+are allowed when a recipe clones the sources remotely.
 
+Each non-empty recipe runs in a separate Slurm build job, in a disposable copy
+of its resource root. `SLURMY_BUILD_WORK` points to that copy;
+`SLURMY_BUILD_OUTPUT` points to the same directory for these generated recipes.
+Build in place or install outputs there, preserving the layout expected by your
+commands. For example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+cmake -S "$SLURMY_BUILD_WORK" -B "$SLURMY_BUILD_WORK/build"
+cmake --build "$SLURMY_BUILD_WORK/build" --parallel "${SLURM_CPUS_PER_TASK:-1}"
+```
+
+The resulting tree is downloaded back into its declared local root (merging
+and replacing matching files), then packaged for the experiment. Use dedicated
+resource directories: downloaded build outputs may overwrite files there.
+Recipes run again on each submission; no build cache is implied.
+
+Build jobs currently use the shared builder's defaults: 4 cores, 4 GiB, and
+30 minutes, on the selected partition. These are separate from experiment
+limits. For unusual build requirements, use
+[the standalone builder](building-dependencies/README.md), then leave the
+resource's recipe line blank.
+
+</blockquote>
 </details>
 
 <details>
-<summary><strong>🎛️ Limits and requests</strong></summary>
+<summary><strong>⏱️ resource_limiter_template.txt — wrap each command</strong></summary>
 
-- `--cpu-limit`, `--wc-limit`, and `--mem-limit` limit each solver call through
-  runsolver.
-- `--cpu-request` and `--memory-request` request resources for each Slurm array
-  element.
-- Slurmy never requests oversubscription and uses one hardware thread per
-  allocated physical core.
-- `--memory-request` must be at least `--mem-limit` and should leave a little
-  room for Bash and runsolver.
+<blockquote>
 
-Memory values accept `MB`, `MiB`, `GB`, `GiB`, `TB`, or `TiB`. With no unit,
-`MB` is assumed.
+The first word is the limiter executable's local path, relative to this file.
+It must lie inside a declared resource root; it may be absent initially if that
+root has a build recipe.
 
-Choose the CPU isolation level with these distinct forms:
-
-| Requested isolation | Slurmy arguments | What remains available to other jobs |
-|---|---|---|
-| Individual cores | `--cpu-request 4-core` | Every other core and resource on the node |
-| Complete physical CPU/socket | `--cpu-request 1-CPU --cores-per-cpu 32` | Other sockets and unrequested resources on the node |
-| Complete node | `--cpu-request 4-core --exclusive-nodes` | Nothing on the assigned node, except memory beyond the job's request is not allocated to the job |
-
-Core requests include `1-core`, `4-core`, `8-core`, `16-core`, `32-core`, and
-`64-core`. Complete-CPU requests are `1-CPU` and `2-CPU`; they require
-`--cores-per-cpu` because physical CPU/socket sizes differ among clusters.
-Slurmy requests that number of complete sockets, requests every core in them,
-and packs the allocation by socket. On `datalab`'s `CPU-amd` partition, each
-physical CPU currently has 32 cores.
-
-`--exclusive-nodes` is separate from the CPU request: it emits Slurm's
-`--exclusive` directive, which prevents another job from sharing any assigned
-node. Before submission, the generated remote helper checks the cluster's CPU
-allocation granularity and the selected partition's oversubscription policy. It
-stops with an explanation instead of submitting when Slurm cannot guarantee the
-requested core or node isolation.
-
-Extra `sbatch` options can be repeated. Use the joined form because the value
-starts with `--`:
-
-```bash
---sbatch-option=--partition=CPU-amd
---sbatch-option=--account=my-project
---sbatch-option=--qos=normal
+```text
+resources/runsolver/runsolver --cpu-limit {{cpu_limit}} --wall-clock-limit {{wc_limit}} --rss-swap-limit {{mem_limit_mib}} --watcher-data {{watcher_log}} --var {{var_file}} --solver-data {{solver_log}} {{solver_command}}
 ```
 
-Use `--host HOST` or `SLURMY_HOST` when the cluster SSH name is not `datalab`. Run
-`./slurmy.py --help` for every option.
+All solver placeholders are available, plus `{{solver_command}}`,
+`{{watcher_log}}`, `{{var_file}}`, `{{solver_log}}`, and
+`{{controller_log}}`. Leave these bare too. `{{solver_command}}` is a
+shell invocation of the generated solver script, not a quoted command string.
 
+The template must enforce the per-call time and memory limits. A separate
+wall-clock watchdog catches a broken limiter after 25 seconds of grace.
+Runsolver's optional watcher/variable files provide solver CPU/memory metrics and identify normal time and memory
+limits; those outcomes are not infrastructure issues. Other limiters can be
+invoked, but their tool-specific exit codes and output formats are not
+automatically interpreted as runsolver results.
+
+</blockquote>
+</details>
+
+<details>
+<summary><strong>📂 Paths and working directories</strong></summary>
+
+<blockquote>
+
+Relative paths in each input file resolve from that file's directory.
+Every solver runs from the cluster copy of its explicit `solver_directory`.
+No matching resource root is guessed.
+
+Packaging includes the complete solver directories, every declared resource
+root, and each problem file. Their absolute local layout is mirrored under
+`~/Slurmy/JOB_ID/rootfs/` on the cluster, so relative references between packaged
+directories continue to work. Input symlinks are dereferenced during packaging.
+
+`{{problem}}` and the limiter executable are translated to their cluster paths.
+Absolute paths appearing as complete shell words in solver commands are
+translated when they refer to packaged resources or listed problems. Paths
+embedded inside arguments such as `--file=/local/path`, configuration files,
+or shell-generated strings are **not** rewritten. Prefer relative paths inside
+your solver directory and `{{problem}}` for the selected input.
+
+A problem's containing directory is not automatically included. If a benchmark
+includes other files (e.g. TPTP axioms), list their shared root in
+`building.txt` with a blank recipe. Package needed scripts, data, shared
+libraries, and interpreter environments similarly; a laptop's Python environment
+or system libraries are not copied automatically.
+
+Commands and build recipes are trusted executable code. Review them before
+submitting. Avoid choosing an unnecessarily broad resource root.
+
+</blockquote>
+</details>
+
+<details>
+<summary><strong>🔀 Convenience: every configuration × every problem</strong></summary>
+
+<blockquote>
+
+Create `configurations.csv` with the same columns as `jobpairs.csv`, except
+`problem`. Then:
+
+```bash
+python /path/to/Slurmy/slurmy-pairs.py \
+    --configurations configurations.csv \
+    --problems 'problems/easy/*.p' 'problems/hard/**/*.p' \
+    --output jobpairs.csv
+```
+
+All files from **all** globs are combined and duplicate paths removed.
+Each configuration is paired with every selected problem. Quote globs so Python
+expands them; an unmatched glob is an error. Repeat `--configurations` for more
+configuration tables. CLI globs resolve from your current directory; alternatively
+use `--problem-globs-file` with one glob per line, relative to that file.
+The output is properly escaped CSV with absolute directory/problem paths.
+
+For arbitrary pairings or per-problem limits, edit or generate `jobpairs.csv`
+directly. The core never expands it into additional calls.
+
+</blockquote>
 </details>
 
 </blockquote>
-
 </details>
 
 <details>
-<summary><strong>📂 Results</strong></summary>
+<summary><strong>🧮 Batching and resource guarantees</strong></summary>
 
-The remote directory contains:
+<blockquote>
 
-```text
-$HOME/Slurmy/<job-id>/
-  metadata.json
-  submission.csv
-  batches/
-  progress/
-  rootfs/
-  logs/
-  results/
-  slurm_job.sh
+A **jobpair** is one solver call. A **batch** is one concurrent wave of calls
+on one node. A **Slurmy job** is the whole submission, which can contain many
+Slurm jobs/array tasks.
+
+`--deg_par 4` permits at most four calls simultaneously **in each batch**.
+It does not limit how many batches Slurm runs across the cluster.
+Input order is preserved when forming groups; socket-exclusive and ordinary
+calls are separated. Node-exclusive calls always get singleton batches.
+Groups are split further if the partition's cores, sockets, or memory cannot
+hold them; a call too large for one node is rejected.
+
+For a batch containing P calls:
+
+| Resource | Slurm reservation |
+| --- | --- |
+| Wall time | 60 seconds + sum of each call's wall limit + 30 seconds per call, rounded up to minutes. |
+| Memory | P × (largest call memory, rounded up to MiB + 128 MiB). |
+| Ordinary cores | P × largest call core count. |
+| Socket-exclusive cores | P × largest call socket count × physical cores per socket. |
+| Node exclusivity | `--exclusive`, always for a single call. |
+
+The time sum is deliberately conservative even though calls execute concurrently.
+Slurm has no equivalent per-batch CPU-time cap here: the solver/limiter enforces
+each call's CPU limit. Affinity restricts execution to the requested number of
+physical cores; Slurmy also sets `OMP_NUM_THREADS`, but solver-specific thread
+options remain your responsibility.
+
+Before starting any call, the batch checks its Linux CPU allocation and assigns
+disjoint physical cores. Socket-exclusive batches request the full core count
+per socket and enough sockets for their calls, then verify complete
+sockets, including sibling hardware threads, dedicated to each call.
+If Slurm returns an unsuitable or fragmented placement, the batch fails with
+a diagnostic **before running any solver**. It does not silently weaken isolation
+or automatically retry. The current scheduler supports homogeneous partitions
+only; different architectures/topologies should use separate submissions.
+
+Exclusivity excludes other scheduled workloads, not operating-system services.
+Each batch is currently submitted as a one-element Slurm array, allowing different
+resource requests without reserving the largest request for every batch.
+`allocations.csv` records the actual batches and reservations after hardware-based
+splitting.
+
+</blockquote>
+</details>
+
+<details>
+<summary><strong>🌐 Local web app: create, monitor, and manage experiments</strong></summary>
+
+<blockquote>
+
+```bash
+python slurmy-web.py                  # Open job history; reuse an existing server.
+python slurmy-web.py --new            # Open the guided experiment builder.
+python slurmy-web.py --directory ExampleRuns/example-vampire
+python slurmy-web.py --job JOB_ID     # Open a particular submitted experiment.
+python slurmy-web.py --stop           # Stop only the local app, not Slurm jobs.
 ```
 
-`logs/` contains Slurm output. `results/` contains:
+`make monitor` in an example opens that experiment's page. In
+`YourRuns/example-generator`, both `make` and `make monitor` open the builder.
+Repeated invocations reuse the same server. New submissions record their local
+workflow directory so their jobs appear on the corresponding experiment page;
+older jobs without this field remain in the full job history.
 
-- one CSV summary per batch, with a header row and properly quoted fields;
-- one compressed archive per batch attempt containing solver output,
-  runsolver watcher data, variables, and controller output.
+The app has job history, searchable/paginated calls, saved solver output,
+Slurm allocations and cancellation, scheduler logs, and local experiment pages.
+The guided builder supports explicit jobpair CSVs, imported configuration CSVs,
+or interactive solver configurations crossed with problem globs; optional
+remote build scripts/commands and limiter templates are included. Path fields
+are checked when you leave them. Preview validates the complete specification
+before saving it under `YourRuns/GENERATED`.
 
-`submission.csv` records the submitted Slurm array IDs and their batch ranges.
-While a job is active, `progress/` records the task each array element is
-currently running and how many calls it has finished in CSV files. These small
-files drive the live dashboard and remain readable without it.
+Saving creates files only. **Prepare scripts** runs `make all`; **Build & submit**
+runs `make submit` after confirmation, with an operation log in the page.
+Only trusted local Makefiles/commands should be run. A job's **Sync results**
+button downloads current results once; **Cancel** confirms the selected active
+Slurm job ID. The terminal tools are still available for scripting:
 
-The summary column names are listed in `metadata.json` under
-`result_columns`. Important statuses are `ok`, `error`, `time-limit`,
-`memory-limit`, `interrupted`, and `worker-error`.
+```bash
+python slurmy-sync.py --follow        # Incrementally sync the newest job.
+python slurmy-sync.py JOB_ID          # Sync a particular job once.
+python slurmy-cancel.py               # Choose from active jobs.
+python slurmy-cancel.py SLURM_JOB_ID   # Cancel this Slurm ID non-interactively.
+```
 
-Completed calls are skipped if an array element is rerun. Inputs are copied
-under `rootfs/` with their original absolute paths mirrored there.
+The web monitor shows per-call progress and elapsed times; select a completed call to
+inspect archived solver, watcher, and controller output. Percent complete counts
+finished calls, including ordinary resource-limit outcomes—it is not a prediction
+of how far a running proof search has progressed. Solver output can establish
+whether a completed call actually proved the benchmark.
 
+The app uses Flask with Waitress and listens **only on 127.0.0.1**, normally
+port 8765. It has no accounts or multi-user isolation: do not expose it through
+a proxy, public tunnel, or shared server. It can read local paths and run trusted
+workflow commands with your permissions. Cross-site requests and unprotected
+state-changing requests are rejected. No JavaScript build tools, CDN, or database
+are required; Textual/Rich are no longer dependencies.
+
+`--host` / `SLURMY_HOST` selects the SSH alias, not the web bind address.
+Use `--port` / `SLURMY_WEB_PORT` for a different local port, `--no-browser` to
+print the URL, or `--serve` to run in the foreground. The server stays running
+after a browser tab closes. Restart it after updating the code or dependencies.
+Server and operation logs are stored in the ignored `.slurmy-web/` directory;
+operation tracking is in memory, so let builds/submissions finish before stopping
+the app. `--stop` refuses while a web-launched operation is running.
+
+On Windows, run the app and tools inside WSL and open the printed localhost URL
+in your Windows browser if automatic opening is unavailable. The app must run on
+the machine whose local file paths you enter. The legacy `slurmy-monitor.py` and
+generator script now open the same web app instead of separate terminal UIs.
+
+Sync uses rsync to avoid downloading unchanged archives. It writes local results
+and regularly refreshed metadata under `slurmy-results/JOB_ID/`; see
+`slurmy-sync.py --help` for destination and refresh options. Existing historical
+results remain readable, including older formats.
+
+Remote experiments live under `~/Slurmy/USER_TIMESTAMP_PID/`; remote builds
+use `~/Slurmy-builds/`. Failures remain available for inspection. Submission is
+not transactional: if a later sbatch fails, earlier accepted batches remain
+submitted and can be cancelled with the cancellation tool.
+
+```text
+submit.sh                         # Local entry point: build, package, transfer, submit.
+submit.sh.files/
+  remote_prepare.sh               # Creates this experiment's remote directory.
+  remote_submit.sh                # Checks topology, plans allocations, calls sbatch.
+  batch.sh                        # Checks physical-core placement; launches calls.
+  call.sh                         # Runs the limiter; captures and publishes results.
+  timed_call.sh                   # Measures elapsed/CPU time using Bash's timer.
+  csv.sh                          # CSV escaping shared by remote helpers.
+  calls/                          # Per-call solver/limiter scripts and configuration.
+  plans/                          # Proposed batches before hardware-based splitting.
+  builds/                         # Shared build driver and generated recipe wrappers.
+  archive-paths.txt                # NUL-delimited local paths to package.
+  metadata.json                   # Counts, format version, and scheduling policy.
+  manifest.jsonl                  # Full per-call definitions for inspection/monitoring.
+```
+
+On the cluster, `batches/`, `allocations.csv`, `submission.csv`,
+`progress/`, `logs/`, and `results/` are added. Each call publishes a CSV result
+and a compressed output archive independently, so completed calls can be synced
+while other calls are still running.
+
+This three-file interface replaces the earlier `.solver`/many-flags interface.
+Regenerate old submission scripts; do not submit them expecting the new behavior.
+In example workflows, `make clean` removes only generated submission files.
+
+</blockquote>
 </details>

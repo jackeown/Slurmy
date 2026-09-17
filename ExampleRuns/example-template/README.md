@@ -1,39 +1,26 @@
-# Slurmy workflow template
+# 📝 Experiment template
 
-Copy this directory to `YourRuns/example-NAME`, then edit the workflow-variable
-block in `Makefile`, `solver.solver`, and `build.sh`. Alternatively, launch the
-guided generator in `YourRuns/example-generator/`; it creates configured
-workflows under `YourRuns/GENERATED/`.
+Copy this folder within ExampleRuns, or into YourRuns/GENERATED (then change
+`REPO_ROOT` in the Makefile to `../../..`).
 
-For an experiment using solver descriptions and problems that already exist
-elsewhere, put their absolute locations in newline-delimited `solver-paths.txt`
-and `problem-globs.txt` files, then set `SOLVER_PATHS_FILE` and
-`PROBLEM_GLOBS_FILE`. The Makefile references them in place; `submit.sh`
-packages them only when the experiment is submitted.
+1. Put your solver executable and supporting files in `bin/`, or change `solver_directory` and
+   the resource root in the input files to existing directories elsewhere.
+2. Edit `jobpairs.csv`: one command/problem per row, with all per-call limits
+   and exclusivity choices.
+3. Edit `building.txt`: the solver's blank recipe line currently means no build.
+   Replace it with a build-script path if the executable needs remote compilation.
+4. Review the runsolver invocation in `resource_limiter_template.txt`.
+5. Set `DEG_PAR` in the Makefile, then `make` and `make submit`.
 
-For the self-contained build-recipe mode, put benchmark files below
-`problems/`. `build.sh` runs on a Slurm compute node and must install the
-declared `SOLVER_ARTIFACT` below `$SLURMY_BUILD_OUTPUT`. Set `BUILD_CONTEXT` to
-send an existing local source directory whose contents will be extracted below
-`$SLURMY_BUILD_WORK`. In either mode, run:
+The placeholder `./my-solver` is deliberately not a supplied executable.
+Runsolver is built remotely using the shared recipe.
+Paths may point outside this folder; relative CSV paths resolve beside the CSV.
 
-```bash
-make          # Build the solver and runsolver on the cluster, then generate submit.sh.
-make submit   # Transfer the experiment and submit its Slurm array.
-make monitor  # Inspect current and historical jobs interactively.
-make sync     # Incrementally download the selected or latest job.
-make stop     # Select an active Slurm job to cancel.
-```
+Shared targets: `all` (prepare), `build`, `submit`, `monitor`, `sync`,
+`stop`, and `clean`. Host and partition are configurable through
+`SLURMY_HOST` and `SLURMY_PARTITION`. After changing inputs or degree, run
+`make clean` before regenerating.
 
-Use `SLURMY_HOST=another-cluster make` to override the default `datalab` SSH
-host. Keep `EXCLUSIVE_NODES=no` to reserve only each task's requested cores or
-physical CPU sockets and memory while leaving the rest of its node available. Set
-`EXCLUSIVE_NODES=yes` only when every array task must reserve its assigned node
-exclusively.
-
-`CPU_REQUEST=4-core` reserves four cores. To reserve complete physical CPU
-sockets instead, use `CPU_REQUEST=1-CPU` or `CPU_REQUEST=2-CPU` and set
-`CORES_PER_CPU` to the physical core count of one socket (32 on `CPU-amd` at
-the time this template was written). Slurmy then requests and packs every core
-of those sockets. `make build`, `make clean`, and `make distclean` are also
-available.
+For all combinations, create a configurations table without the problem column
+and use [slurmy-pairs.py](../../slurmy-pairs.py). For guided setup, use the
+[web experiment builder](../../YourRuns/example-generator/README.md).

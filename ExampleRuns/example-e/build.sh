@@ -5,6 +5,9 @@ set -euo pipefail
 : "${SLURMY_BUILD_WORK:?slurmy-build.py must set SLURMY_BUILD_WORK}"
 : "${SLURMY_BUILD_OUTPUT:?slurmy-build.py must set SLURMY_BUILD_OUTPUT}"
 
+SLURMY_BUILD_WORK=$(mktemp -d "${TMPDIR:-/tmp}/slurmy-e-build.XXXXXXXX")
+trap 'rm -rf -- "$SLURMY_BUILD_WORK"' EXIT
+
 git clone --depth 1 https://github.com/eprover/eprover.git \
     "$SLURMY_BUILD_WORK/source"
 cd -- "$SLURMY_BUILD_WORK/source"

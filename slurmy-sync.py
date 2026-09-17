@@ -150,6 +150,7 @@ def rsync_job(host: str, job_id: str, destination: Path, timeout: float) -> int:
         remote_shell,
         "--exclude=/results/.*.tmp",
         "--include=/metadata.json",
+        "--include=/allocations.csv",
         "--include=/manifest.jsonl",
         "--include=/submission.csv",
         # Read-only compatibility with jobs created before CSV output.

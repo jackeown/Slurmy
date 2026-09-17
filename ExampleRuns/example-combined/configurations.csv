@@ -1,0 +1,4 @@
+command,solver_directory,wc_limit,cpu_limit,mem_limit,cores,cpus,exclusive_cpu,exclusive_node
+./vampire --mode casc --cores {{cores}} --time_limit {{cpu_limit}} {{problem}},../example-vampire/bin,6,3,1GiB,1,1,false,false
+./eprover --auto --cpu-limit={{cpu_limit}} {{problem}},../example-e/bin,6,3,1GiB,1,1,false,false
+./drodi '-cores({{cores}})' '-timeout({{cpu_limit}})' {{problem}},../example-drodi/bin,6,3,1GiB,1,1,false,false

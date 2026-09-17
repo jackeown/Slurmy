@@ -1,0 +1,6 @@
+{% extends 'base.html' %}
+{% block title %}Experiments{% endblock %}
+{% block content %}
+<div class="heading"><div><p class="eyebrow">LOCAL DEFINITIONS</p><h1>Your experiments</h1><p class="muted">Inspect, prepare, and submit workflows. Your input files stay on your computer.</p></div><a class="button" href="{{ url_for('new', host=host) }}">＋ New experiment</a></div>
+<div class="experiment-grid">{% for item in experiments %}<a class="panel experiment-card" href="{{ url_for('experiment', directory=item.directory, host=host) }}"><span class="tag">{{ 'EXAMPLE' if item.example else 'YOUR WORKFLOW' }}</span><h2>{{ item.name }}</h2><p class="muted path">{{ item.directory }}</p><span class="card-link">Open experiment →</span></a>{% else %}<p>No local experiments yet. Create one to get started.</p>{% endfor %}</div>
+{% endblock %}

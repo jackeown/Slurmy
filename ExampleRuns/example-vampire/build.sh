@@ -5,6 +5,9 @@ set -euo pipefail
 : "${SLURMY_BUILD_WORK:?slurmy-build.py must set SLURMY_BUILD_WORK}"
 : "${SLURMY_BUILD_OUTPUT:?slurmy-build.py must set SLURMY_BUILD_OUTPUT}"
 
+SLURMY_BUILD_WORK=$(mktemp -d "${TMPDIR:-/tmp}/slurmy-vampire-build.XXXXXXXX")
+trap 'rm -rf -- "$SLURMY_BUILD_WORK"' EXIT
+
 git clone --depth 1 --recurse-submodules --shallow-submodules \
     https://github.com/vprover/vampire.git "$SLURMY_BUILD_WORK/source"
 cmake -S "$SLURMY_BUILD_WORK/source" -B "$SLURMY_BUILD_WORK/source/build" \

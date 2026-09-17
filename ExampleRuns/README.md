@@ -1,186 +1,54 @@
-# 🧪 Slurmy prover examples
+# 🧪 Example experiments
 
-These examples build real theorem provers in Slurm jobs, download the resulting
-cluster-native binaries, generate readable Slurmy submission files, and provide
-Makefile targets for submitting and monitoring experiments.
+Each workflow uses the same three-file interface documented in the
+[main README](../README.md). Builds happen on Slurm compute nodes, not your laptop.
 
-For installation, custom solver descriptions, and the full command reference,
-see the [main Slurmy documentation](../README.md).
-
-<details>
-<summary><strong>📚 Available examples</strong></summary>
-
-| Directory | What `make` obtains and builds |
+| Folder | Experiment |
 | --- | --- |
-| [`example-vampire`](example-vampire/) | The latest Vampire source from its [official Git repository](https://github.com/vprover/vampire), including its submodules; built as a CMake release binary |
-| [`example-e`](example-e/) | The latest E source from its [official Git repository](https://github.com/eprover/eprover); configured and rebuilt as a first-order prover |
-| [`example-drodi`](example-drodi/) | Drodi 4.1.1 from its [official CASC-J13 source archive](https://tptp.org/CASC/J13/SystemSources/Drodi---4.1.1.tgz); the archive is checked against the SHA-256 recorded in its build recipe |
-| [`example-combined`](example-combined/) | All three provers in one submission, run on five easy and five hard problems with a three-second CPU limit per call |
-| [`example-template`](example-template/) | A documented, reusable Makefile workflow whose variables cover remote building, solver limits, problem globs, array layout, submission, monitoring, and synchronization |
+| [example-vampire](example-vampire/) | Latest Vampire, built from source. |
+| [example-e](example-e/) | E, built from source. |
+| [example-drodi](example-drodi/) | Drodi, built from source. |
+| [example-combined](example-combined/) | All three configurations × ten shared problems. |
+| [example-template](example-template/README.md) | Minimal starting point for your own solver. |
 
-</details>
+## 🚀 Run an example
 
-<details>
-<summary><strong>🧭 Create your own workflow</strong></summary>
-
-<blockquote>
-
-From the repository root, launch the interactive generator:
-
-```bash
-cd YourRuns/example-generator
-make
-```
-
-The generator supplies no defaults and asks one question at a time. It can
-create a remote build recipe and solver description, use existing description
-files, or create a description for an existing solver root. It validates each
-input path before advancing, then asks for the per-call limits, Slurm resource
-requests—including separate core, physical-CPU/socket, and whole-node
-isolation—and array layout. The final review shows the build settings and every
-resolved input location before **Create workflow** writes anything. It creates
-`YourRuns/GENERATED/example-NAME/` without overwriting existing work.
-
-Existing solver descriptions, solver roots, source contexts, and problems do
-not need to be below `ExampleRuns/`, `YourRuns/`, or the generator directory.
-Relative paths are interpreted from `YourRuns/example-generator/`, then
-converted to absolute paths. The generated workflow stores those paths in its
-description and path-list files. A remote build downloads its executable into the generated
-workflow's `bin/`; the normal `submit.sh` packaging then transfers the solver
-and problems when the experiment is submitted.
-
-If you prefer to work directly, copy `ExampleRuns/example-template/` to a new
-directory such as `YourRuns/example-NAME/`. Its Makefile begins with one
-documented variable block. Edit that block together with
-`build.sh` and `solver.solver`, add files under `problems/`, then use the same
-commands as every included example:
-
-```bash
-make
-make submit
-make monitor   # Or: make sync
-```
-
-Generated workflows keep their choices in the short `workflow.mk` file and
-reuse the template Makefile unchanged. This separates experiment settings from
-the common packaging, submission, monitoring, and synchronization logic.
-
-</blockquote>
-
-</details>
-
-<details>
-<summary><strong>🚀 Single-prover workflow</strong></summary>
-
-<blockquote>
-
-Each single-prover example contains the same three real TPTP problems and a
-Makefile and remote build recipe. The examples do not contain checked-in prover
-binaries or source trees. On the first run, `make` submits Slurm build jobs for
-the prover and `runsolver`, downloads their artifacts, and calls `slurmy.py` to
-create `submit.sh` and `submit.sh.files/`.
-
-From the repository root, build, inspect, and submit Vampire with:
-
-```bash
-cd ExampleRuns/example-vampire
-make
-less submit.sh
-less submit.sh.files/slurm_job.sh
-less submit.sh.files/batches/batch_000000.sh
-make submit
-make monitor
-```
-
-Use `ExampleRuns/example-e` or `ExampleRuns/example-drodi` in the first command to
-run the corresponding example.
-
-<details>
-<summary><strong>🛠️ Makefile targets</strong></summary>
-
-The single-prover Makefiles provide the same targets:
-
-| Command | Effect |
-| --- | --- |
-| `make` or `make all` | Build the prover and `runsolver` on a compute node if needed, download them, then generate the submission files |
-| `make build` | Run the remote builds without generating a submission |
-| `make submit` | Run the generated `submit.sh` and return after Slurm accepts the job array |
-| `make monitor` | Open the Slurmy dashboard for `datalab` |
-| `make sync` | Follow the newest job and incrementally download its results; set `SLURMY_ID=...` to choose one |
-| `make stop` | Show active Slurm jobs and cancel the one you select |
-| `make clean` | Remove only `submit.sh` and `submit.sh.files/` |
-| `make distclean` | Also remove old local source data and the downloaded prover binary |
-
-</details>
-
-<details>
-<summary><strong>✅ Expected results</strong></summary>
-
-Connect to the TU Wien VPN before building or submitting if `datalab` is not
-reachable directly. Each single-prover example submits two array elements to
-`CPU-amd`. Vampire and E should quickly report the following expected statuses;
-Drodi also proves the first two within the example limit but may time out on
-the satisfiable problem:
-
-```text
-PUZ001+1.p  Theorem
-ALG002-1.p  Unsatisfiable
-ALG299-1.p  Satisfiable
-```
-
-</details>
-
-</blockquote>
-
-</details>
-
-<details>
-<summary><strong>🔬 Combined example</strong></summary>
-
-The combined example exercises multiple solver descriptions in one Slurmy job.
-Its `problems/easy/` directory contains five low-rated TPTP problems, while
-`problems/hard/` contains five problems taken from the locally curated hard
-benchmark set. All ten are self-contained FOF or CNF files with no external
-axiom includes.
-
-```text
-easy: ALG002-1, PUZ001+1, PUZ002-1, PUZ003-1, PUZ004-1
-hard: MPT0554+1, MPT1048+1, MPT1388+1, MPT1787+1, MPT1887+1
-```
-
-Running `make` builds the three single-prover examples and generates 30 calls:
-each of Vampire, E, and Drodi on every problem. The calls are divided among six
-Slurm array tasks, with a three-second CPU limit and six-second wall-clock
-limit per prover call.
-
-From the repository root:
+After completing the main README's setup:
 
 ```bash
 cd ExampleRuns/example-combined
-make
-make submit
-make sync
+make                          # Generate jobpairs.csv and inspectable submit scripts.
+make submit                   # Build all dependencies remotely, then submit.
+make monitor                  # Start/reuse the local web app and open this experiment.
+make sync                     # Continuously download the latest experiment's results.
+make stop                     # Select an active job to cancel.
 ```
 
-`make sync` follows the latest remote Slurmy job until it completes and stores
-the incrementally downloaded results under `slurmy-results/` at the repository
-root. To avoid relying on which remote job is newest, pass the Slurmy ID printed
-by `make submit` explicitly:
+Use `SLURMY_HOST=your-alias SLURMY_PARTITION=your-partition make submit`
+to override the example defaults (`datalab`, `CPU-amd`).
+`make DEG_PAR=2` changes within-batch concurrency at generation time.
+After changing inputs, recipes, or degree, run `make clean` before `make`.
 
-```bash
-make sync SLURMY_ID=alice_1786464000_12345
-```
+## 📁 What to edit
 
-Use `make monitor` instead when you want to watch the same run interactively.
-`make distclean` removes the generated submission and downloaded binaries
-shared with the three single-prover examples.
+- `configurations.csv`: solver commands, limits, and core/socket/node choices.
+- `building.txt`: resource roots and build recipes, including runsolver.
+- `resource_limiter_template.txt`: limiter invocation.
+- `Makefile`: problem globs and degree of parallelism.
 
-All Makefile targets use `datalab` by default. Override it consistently with
-the environment or a Make variable, for example `SLURMY_HOST=my-cluster make`.
+The prover examples use 3-second CPU limits and 6-second wall limits.
+The combined example selects five easy and five hard problems under
+[problems](example-combined/problems/). Its resources reference the individual prover folders.
+The union of all selected globs is crossed with every configuration.
 
-The expected three-second test pattern is that every prover solves the easy
-set, while the hard set produces a mixture of solutions and ordinary time
-limits. Exact hard-problem results can change when the Makefiles fetch newer
-Vampire or E revisions.
+Each prover's cluster-built executable is downloaded into its `bin/` directory.
+That directory is packaged for submission and used as the solver's working
+directory. Source checkout and compilation happen in temporary directories on
+the cluster; no separate local `resource/` directory is needed.
 
-</details>
+`make` does not compile or submit. `make build` explicitly builds and downloads
+resources; `make submit` builds them again before packaging.
+`make clean` removes only `submit.sh` and `submit.sh.files/`, retaining inputs
+and downloaded binaries. In the four prover examples, `make pairs-clean`
+also removes the generated `jobpairs.csv`, so edits to configurations or problem
+selection can be expanded again.

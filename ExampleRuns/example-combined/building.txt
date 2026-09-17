@@ -1,0 +1,8 @@
+../example-vampire/bin
+../example-vampire/build.sh
+../example-e/bin
+../example-e/build.sh
+../example-drodi/bin
+../example-drodi/build.sh
+../../building-dependencies/runsolver
+../../building-dependencies/runsolver/build.sh
