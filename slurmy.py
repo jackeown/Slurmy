@@ -225,7 +225,25 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int) ->
             write_script(call / "solver.sh", "#!/usr/bin/env bash\n" +
                          "# Capture the prover's stderr separately from its stdout.\n" +
                          "( " + task["remote_command"] + " ) 2> \"$SOLVER_STDERR_LOG\"\n")
-            write_script(call / "limiter.sh", "#!/usr/bin/env bash\n" + task["limiter_command"] + "\n")
+            # Executable bits can be lost when resource trees cross filesystems
+            # (notably when workflows are prepared on macOS and staged on Linux).
+            # Repair the known limiter binary on the cluster immediately before
+            # invocation; if the filesystem is mounted noexec, the subsequent
+            # execution still fails with a useful diagnostic in controller.log.
+            limiter_exec = remote_path(limiter_path)
+            chmod_error = shlex.quote(f"Cannot make resource limiter executable: {limiter_path}")
+            not_exec_error = shlex.quote(
+                f"Resource limiter is not executable (possibly a noexec filesystem): {limiter_path}"
+            )
+            limiter_script = (
+                "#!/usr/bin/env bash\n"
+                f"if [[ ! -x {limiter_exec} ]]; then\n"
+                f"  chmod u+x -- {limiter_exec} || {{ printf '%s\\n' {chmod_error} >&2; exit 126; }}\n"
+                "fi\n"
+                f"[[ -x {limiter_exec} ]] || {{ printf '%s\\n' {not_exec_error} >&2; exit 126; }}\n"
+                + task["limiter_command"] + "\n"
+            )
+            write_script(call / "limiter.sh", limiter_script)
             config = "".join(key.upper() + "=" + shlex.quote(str(value)) + "\n" for key, value in {
                 "task_id": task["task_id"], "task_key": task["task_key"], "batch_id": task["batch_id"],
                 "cores": task["cores"], "cpus": task["cpus"], "wc_limit": task["wc_limit"],
