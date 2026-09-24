@@ -37,11 +37,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', default=os.environ.get('SLURMY_HOST', 'datalab'), help='SSH alias, not a web bind address')
     parser.add_argument('--port', type=int, default=int(os.environ.get('SLURMY_WEB_PORT', '8765')))
-    parser.add_argument('--directory', type=Path, help='open this local experiment')
+    parser.add_argument('--directory', type=Path, help='open this local workflow')
     parser.add_argument('--job', help='open a particular submitted Slurmy job')
-    parser.add_argument('--new', action='store_true', help='open the experiment builder')
-    parser.add_argument('--serve', action='store_true', help='run in the foreground')
-    parser.add_argument('--no-browser', action='store_true', help='start/reuse the server and print the URL only')
+    parser.add_argument('--new', action='store_true', help='open the workflow builder')
+    parser.add_argument('--serve', action='store_true', help='run in the foreground (the default)')
+    parser.add_argument('--background', action='store_true', help='start/reuse the server and return to the shell')
+    parser.add_argument('--no-browser', action='store_true', help='do not open a browser')
     parser.add_argument('--stop', action='store_true', help='stop the local server, leaving Slurm jobs alone')
     args = parser.parse_args(argv)
     if not 1024 <= args.port <= 65535:
@@ -52,7 +53,19 @@ def main(argv=None):
         if importlib.util.find_spec(module) is None:
             parser.error(f'Install web dependencies: {sys.executable} -m pip install -r {REPO / "requirements.txt"}')
     url = f'http://127.0.0.1:{args.port}'
-    if args.serve:
+    def target_url():
+        query = {'host': args.host}
+        path = '/'
+        if args.new:
+            path = '/new'
+        elif args.job:
+            path = '/jobs/' + urllib.parse.quote(args.job, safe='')
+        elif args.directory:
+            path = '/workflow'
+            query['directory'] = str(args.directory.resolve())
+        return url + path + '?' + urllib.parse.urlencode(query)
+
+    if (args.serve or not args.background) and not args.stop and not health(url):
         from waitress import create_server
         from . import create_app
         app = create_app()
@@ -64,7 +77,11 @@ def main(argv=None):
             # Only this owned server process is stopped; Slurm jobs are untouched.
             os.kill(os.getpid(), signal.SIGTERM)
         app.config['SHUTDOWN'] = shutdown
+        target = target_url()
         print(f'Slurmy is listening at {url}', flush=True)
+        print(target, flush=True)
+        if not args.no_browser and not webbrowser.open(target):
+            print('Open the URL above in your browser.', flush=True)
         try:
             server.run()
         except KeyboardInterrupt:
@@ -105,16 +122,7 @@ def main(argv=None):
             time.sleep(0.15)
         else:
             raise RuntimeError(f'Timed out starting the app. See {state / "server.log"}.')
-    query = {'host': args.host}
-    path = '/'
-    if args.new:
-        path = '/new'
-    elif args.job:
-        path = '/jobs/' + urllib.parse.quote(args.job, safe='')
-    elif args.directory:
-        path = '/experiment'
-        query['directory'] = str(args.directory.resolve())
-    target = url + path + '?' + urllib.parse.urlencode(query)
+    target = target_url()
     print(target)
     if not args.no_browser and not webbrowser.open(target):
         print('Open the URL above in your browser.')

@@ -1,9 +1,9 @@
-# 🧪 Example experiments
+# 🧪 Example workflows
 
 Each workflow uses the same three-file interface documented in the
 [main README](../README.md). Builds happen on Slurm compute nodes, not your laptop.
 
-| Folder | Experiment |
+| Folder | Workflow |
 | --- | --- |
 | [example-vampire](example-vampire/) | Latest Vampire, built from source. |
 | [example-e](example-e/) | E, built from source. |
@@ -19,15 +19,16 @@ After completing the main README's setup:
 cd ExampleRuns/example-combined
 make                          # Generate jobpairs.csv and inspectable submit scripts.
 make submit                   # Build all dependencies remotely, then submit.
-make monitor                  # Start/reuse the local web app and open this experiment.
-make sync                     # Continuously download the latest experiment's results.
+make monitor                  # Start/reuse the local web app and open this workflow.
+make sync                     # Continuously download the latest job's results.
 make stop                     # Select an active job to cancel.
 ```
 
 Use `SLURMY_HOST=your-alias SLURMY_PARTITION=your-partition make submit`
 to override the example defaults (`datalab`, `CPU-amd`).
 `make DEG_PAR=2` changes within-batch concurrency at generation time.
-After changing inputs, recipes, or degree, run `make clean` before `make`.
+After changing inputs, recipes, or degree, run `make`; Slurmy refreshes the
+generated submission files automatically.
 
 ## 📁 What to edit
 

@@ -19,46 +19,101 @@ function badge(state){const value=state.toLowerCase();let cls='';if(/error|fail|
 function text(id, value){const node=$(id);if(node)node.textContent=value;}
 function button(label, action, cls='secondary'){const node=el('button',label,cls);node.type='button';node.addEventListener('click',action);return node;}
 function tableRow(cells){const tr=el('tr');for(const cell of cells){const td=el('td');td.append(cell instanceof Node?cell:document.createTextNode(cell??'—'));tr.append(td);}return tr;}
-function showTab(name){document.querySelectorAll('[data-tab]').forEach(n=>n.setAttribute('aria-selected',String(n.dataset.tab===name)));document.querySelectorAll('[data-panel]').forEach(n=>n.hidden=n.dataset.panel!==name);}
-document.querySelectorAll('[data-tab]').forEach(n=>n.addEventListener('click',()=>showTab(n.dataset.tab)));
+function sortableValue(value){
+ const text=value.trim().replace(/[,%]/g,'');
+ const number=Number(text);
+ return text!==''&&!Number.isNaN(number)?number:text.toLocaleLowerCase();
+}
+function initTableSorting(){
+ document.querySelectorAll('table').forEach(table=>{
+  table.querySelectorAll('thead th').forEach((th,index)=>{
+   if(th.querySelector('.sort-button'))return;
+   const label=th.textContent.trim()||`Column ${index+1}`;
+   th.textContent='';
+   const control=el('button',`${label} ↕`,'sort-button secondary');
+   control.type='button';control.title=`Sort by ${label}`;control.setAttribute('aria-label',`Sort by ${label}`);
+   control.dataset.direction='none';
+   control.addEventListener('click',()=>{
+    const direction=control.dataset.direction==='asc'?'desc':'asc';
+    table.querySelectorAll('thead .sort-button').forEach(button=>{button.dataset.direction='none';button.textContent=`${button.dataset.label} ↕`;button.removeAttribute('aria-sort');});
+    control.dataset.label=label;control.dataset.direction=direction;control.textContent=`${label} ${direction==='asc'?'↑':'↓'}`;control.setAttribute('aria-sort',direction);
+    const body=table.tBodies[0];if(!body)return;
+    [...body.rows].sort((a,b)=>{const av=sortableValue(a.cells[index]?.textContent||'');const bv=sortableValue(b.cells[index]?.textContent||'');if(av===bv)return 0;const result=av>bv?1:-1;return direction==='asc'?result:-result;}).forEach(row=>body.append(row));
+   });
+   control.dataset.label=label;th.append(control);
+  });
+ });
+}
+function initCollapsibles(){
+ const elements=[...document.querySelectorAll('section, .panel')].filter((node,index,list)=>list.indexOf(node)===index&&!node.closest('template'));
+ elements.forEach(section=>{
+  if(section.dataset.collapsibleReady)return;
+  const header=section.querySelector(':scope > .section-heading, :scope > h2, :scope > h3, :scope > div:first-child');
+  if(!header)return;
+  section.dataset.collapsibleReady='true';header.classList.add('collapse-header');
+  const control=el('button','Collapse','collapse-button secondary');control.type='button';control.setAttribute('aria-expanded','true');
+  control.addEventListener('click',()=>{const collapsed=section.classList.toggle('collapsed');control.textContent=collapsed?'Expand':'Collapse';control.setAttribute('aria-expanded',String(!collapsed));});
+  header.append(control);
+ });
+}
+initTableSorting();
+initCollapsibles();
+const themeToggle=$('#theme-toggle');
+function setTheme(theme){document.documentElement.dataset.theme=theme;themeToggle?.setAttribute('aria-pressed',String(theme==='dark'));const label=themeToggle?.querySelector('span:last-child');if(label)label.textContent=theme==='dark'?'Light mode':'Dark mode';}
+setTheme(document.documentElement.dataset.theme||'light');
+themeToggle?.addEventListener('click',()=>{const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';localStorage.setItem('slurmy-theme',theme);setTheme(theme);});
 $('#host-form')?.addEventListener('submit',event=>{event.preventDefault();const url=new URL(location.href);url.searchParams.set('host',$('#host').value);location.href=url;});
 
 let operationTimer;
+function lockWorkflowActions(locked){if(page!=='workflow')return;for(const id of ['prepare','submit']){const control=$('#'+id);if(control)control.disabled=locked;}}
 async function watchOperation(id){
   clearTimeout(operationTimer);$('#operation').hidden=false;sessionStorage.setItem('slurmy-operation',id);
   try{
     const op=await api('/api/operations/'+encodeURIComponent(id));text('#operation-title',`${op.label} · ${op.state}`);text('#operation-log',op.log||'Starting…');
     const match=op.log.match(/Slurmy job ID: ([A-Za-z0-9._-]+)/);
     $('#submitted-link')?.remove();
-    if(match){const node=link('View submitted job →','/jobs/'+encodeURIComponent(match[1])+'?'+params({}));node.id='submitted-link';$('#operation').append(node);}
-    if(op.state==='running')operationTimer=setTimeout(()=>watchOperation(id),1500);
-    else{sessionStorage.removeItem('slurmy-operation');await refresh();}
-  }catch(error){text('#operation-log',error.message);sessionStorage.removeItem('slurmy-operation');}
+    if(match){announceJob(match[1]);renderJobs();const node=link('View submitted job →','/jobs/'+encodeURIComponent(match[1])+'?'+params({}));node.id='submitted-link';$('#operation').append(node);refresh();}
+    if(op.state==='running'){lockWorkflowActions(true);operationTimer=setTimeout(()=>watchOperation(id),1500);}
+    else{lockWorkflowActions(false);sessionStorage.removeItem('slurmy-operation');await refresh();}
+  }catch(error){lockWorkflowActions(false);text('#operation-log',error.message);sessionStorage.removeItem('slurmy-operation');}
 }
 $('#dismiss-operation')?.addEventListener('click',()=>{$('#operation').hidden=true;clearTimeout(operationTimer);sessionStorage.removeItem('slurmy-operation');});
-async function startOperation(url,data){try{const op=await api(url,data);watchOperation(op.id);}catch(error){notice(error.message);}}
+async function startOperation(url,data){try{const op=await api(url,data);lockWorkflowActions(true);watchOperation(op.id);}catch(error){notice(error.message);}}
 const runningOperation=sessionStorage.getItem('slurmy-operation');if(runningOperation)watchOperation(runningOperation);
 
-let jobs=[], taskPage=0, jobData=null, selectedOutput=null;
+let jobs=[], taskPage=0, jobData=null, selectedOutput=null, hasLoadedRemote=false, refreshInFlight=false, staleTimer=null, lastLoadedAt=null;
+function pendingJobs(){try{return JSON.parse(sessionStorage.getItem('slurmy-pending-jobs')||'[]').filter(job=>job.host===host&&Date.now()-job.created<3600000);}catch{return [];}}
+function savePendingJobs(value){sessionStorage.setItem('slurmy-pending-jobs',JSON.stringify(value));}
+function announceJob(id){const known=pendingJobs();if(!known.some(job=>job.id===id))known.push({id,host,directory:document.body.dataset.directory||'',name:document.querySelector('h1')?.textContent||'Slurmy',state:'SUBMITTED',total:0,completed:0,percent:0,issues:0,created:Date.now()});savePendingJobs(known);}
+function remoteState(state){const panel=$('#remote-data');if(!panel)return;panel.classList.remove('loading','refreshing','stale');if(state)panel.classList.add(state);panel.setAttribute('aria-busy',String(state==='loading'||state==='refreshing'));}
+function loadingRow(body,columns,message,failed=false){body.replaceChildren();const row=el('tr');row.className=failed?'loading-row failed-row':'loading-row';const cell=el('td');cell.colSpan=columns;if(!failed)cell.append(el('span','', 'spinner'));cell.append(document.createTextNode(' '+message));row.append(cell);body.append(row);}
+function beginRefresh(){clearTimeout(staleTimer);remoteState(hasLoadedRemote?'refreshing':'loading');const refresh=$('#refresh');if(refresh){refresh.disabled=true;refresh.textContent='↻ Refreshing…';}if(hasLoadedRemote)text('#connection',`Refreshing data from ${host}… Previously loaded data remains visible.`);}
+function finishRefresh(){remoteState('');const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Refresh';}}
+function scheduleStaleWarning(){clearTimeout(staleTimer);lastLoadedAt=new Date();staleTimer=setTimeout(()=>{if(hasLoadedRemote&&!refreshInFlight){remoteState('stale');text('#connection',`Data may be stale · last successful refresh ${lastLoadedAt.toLocaleTimeString()} · automatic refresh is delayed`);}},25000);}
 function renderJobs(){
  const query=$('#job-filter')?.value.toLowerCase()||'';
- const filtered=jobs.filter(j=>`${j.id} ${j.name} ${j.state}`.toLowerCase().includes(query));
+ const remoteIds=new Set(jobs.map(job=>job.id));
+ const pending=pendingJobs().filter(job=>!remoteIds.has(job.id)&&(!document.body.dataset.directory||job.directory===document.body.dataset.directory));
+ if(pending.length)savePendingJobs(pending);
+ const visible=[...pending,...jobs];
+ const filtered=visible.filter(j=>`${j.id} ${j.name} ${j.state}`.toLowerCase().includes(query));
  const body=$('#jobs-body');body.replaceChildren();
  for(const job of filtered){
-  const title=link(job.id,'/jobs/'+encodeURIComponent(job.id)+'?'+params({}));title.className='job-link';title.append(el('small',job.name));
-  const progress=el('div');progress.append(el('span',`${job.completed} / ${job.total} · ${job.percent.toFixed(1)}%`,'progress-label'));const bar=el('progress');bar.max=100;bar.value=job.percent;bar.setAttribute('aria-label',`${job.percent.toFixed(1)} percent complete`);progress.append(bar);
+  const title=job.provisional?el('div',job.id,'job-link'):link(job.id,'/jobs/'+encodeURIComponent(job.id)+'?'+params({}));title.className='job-link';title.append(el('small',job.name));
+  const progress=el('div');if(job.total){progress.append(el('span',`${job.completed} / ${job.total} · ${job.percent.toFixed(1)}%`,'progress-label'));const bar=el('progress');bar.max=100;bar.value=job.percent;bar.setAttribute('aria-label',`${job.percent.toFixed(1)} percent complete`);progress.append(bar);}else progress.append(el('span','Awaiting cluster metadata…','progress-label'));
   body.append(tableRow([title,badge(job.state),progress,job.issues?el('strong',job.issues,'error'):'—',new Date(job.created*1000).toLocaleString()]));
  }
  $('#empty').hidden=filtered.length!==0;
- text('#stat-total',jobs.length);text('#stat-active',jobs.filter(j=>['RUNNING','PENDING','SUBMITTED'].includes(j.state)).length);text('#stat-done',jobs.reduce((a,j)=>a+j.completed,0).toLocaleString());text('#stat-issues',jobs.reduce((a,j)=>a+j.issues,0));
+ text('#stat-total',visible.length);text('#stat-active',visible.filter(j=>['RUNNING','PENDING','SUBMITTED'].includes(j.state)).length);text('#stat-done',visible.reduce((a,j)=>a+j.completed,0).toLocaleString());text('#stat-issues',visible.reduce((a,j)=>a+j.issues,0));
 }
 async function fetchJobs(){const directory=document.body.dataset.directory;const data=await api('/api/jobs?'+params(directory?{directory}:{}));jobs=data.jobs;renderJobs();text('#connection',`Connected to ${host} · refreshed ${new Date(data.updated*1000).toLocaleTimeString()} · refreshes every 10 seconds`);}
 async function openOutput(task){
- showTab('output');text('#output-title',`Call ${task.id} · ${task.system}`);text('#command',`${task.command}\nWorking directory: ${task.directory}`);$('#command').hidden=false;text('#output-info',task.problem);text('#output-text','Loading saved output…');selectedOutput=null;
+ const panel=$('#call-output');panel.hidden=false;text('#output-title',`Call ${task.id} · ${task.system}`);text('#command',`${task.command}\nWorking directory: ${task.directory}`);$('#command').hidden=false;text('#output-info',task.problem);text('#output-text','Loading saved output…');selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
  try{const data=await api(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/output/${task.id}?`+params({}));selectedOutput=data;renderOutput();}catch(error){text('#output-text',error.message);}
 }
 function renderOutput(){if(!selectedOutput)return;const stream=selectedOutput.streams[$('#stream').value];text('#output-text',stream?.content||'(This output stream is empty or was not captured.)');text('#output-info',`${stream?memory(stream.size):'0 B'}${stream?.truncated?' · Truncated: beginning and end shown':''} · Saved output for call ${selectedOutput.task_id}`);}
 $('#stream')?.addEventListener('change',renderOutput);
+$('#close-output')?.addEventListener('click',()=>{$('#call-output').hidden=true;selectedOutput=null;});
 async function fetchJob(){
  const jobId=document.body.dataset.job;
  const data=await api(`/api/jobs/${encodeURIComponent(jobId)}?`+params({page:taskPage,q:$('#task-filter').value}));jobData=data;
@@ -68,16 +123,32 @@ async function fetchJob(){
  for(const task of data.tasks){const problem=el('span',task.problem.split('/').pop());problem.title=task.problem;tasks.append(tableRow([String(task.id),task.system||'—',problem,badge(task.state),duration(task.cpu),duration(task.wall),memory(task.memory),task.output?button('Inspect →',()=>openOutput(task)):'Not saved yet']));}
  if(!data.tasks.length)tasks.append(tableRow(['No matching calls.','','','','','','','']));
  text('#page-label',`${data.matched} matching calls · page ${taskPage+1} of ${Math.max(1,Math.ceil(data.matched/100))}`);$('#previous').disabled=taskPage===0;$('#next').disabled=(taskPage+1)*100>=data.matched;
- const slurm=$('#slurm-body');slurm.replaceChildren();
- for(const record of data.slurm){const cancel=record.source==='queue'?button('Cancel',()=>{if(confirm(`Cancel Slurm job ${record.array_job_id}? Its active calls will be stopped.`))startOperation(`/api/jobs/${encodeURIComponent(jobId)}/action?`+params({}),{action:'cancel',slurm_id:record.array_job_id});},'danger'):'';slurm.append(tableRow([record.display_id,badge(record.state),record.elapsed,record.location,record.source,cancel]));}
- const logs=$('#logs');logs.replaceChildren();for(const [name,content] of Object.entries(data.logs)){const details=el('details');details.append(el('summary',name),el('pre',content));logs.append(details);}if(!Object.keys(data.logs).length)logs.append(el('p','No scheduler logs available yet.','muted'));text('#metadata',JSON.stringify(data.metadata,null,2));
 }
-async function refresh(){try{if(page==='jobs'||page==='experiment')await fetchJobs();else if(page==='job')await fetchJob();}catch(error){text('#connection',`Could not refresh: ${error.message}. Check your SSH access or VPN. Previously loaded data is retained.`);}}
+async function refresh(){
+ if(refreshInFlight)return;refreshInFlight=true;beginRefresh();
+ try{if(page==='jobs'||page==='workflow')await fetchJobs();else if(page==='job')await fetchJob();hasLoadedRemote=true;finishRefresh();scheduleStaleWarning();}
+ catch(error){remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check your SSH access or VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),8,'Calls could not be loaded. Use Refresh to try again.',true);else loadingRow($('#jobs-body'),5,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
+ finally{refreshInFlight=false;}
+}
 $('#refresh')?.addEventListener('click',refresh);
-$('#job-filter')?.addEventListener('input',renderJobs);
+$('#job-filter')?.addEventListener('input',()=>{if(hasLoadedRemote)renderJobs();});
 let searchTimer;$('#task-filter')?.addEventListener('input',()=>{taskPage=0;clearTimeout(searchTimer);searchTimer=setTimeout(refresh,300);});
 $('#previous')?.addEventListener('click',()=>{taskPage--;refresh();});$('#next')?.addEventListener('click',()=>{taskPage++;refresh();});
 $('#sync')?.addEventListener('click',()=>startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'sync'}));
-$('#prepare')?.addEventListener('click',()=>startOperation('/api/experiment/action?'+params({directory:document.body.dataset.directory}),{action:'all'}));
-$('#submit')?.addEventListener('click',()=>{if(confirm('Build resources on the cluster and submit this experiment? Build outputs may replace files in the declared resource directories.'))startOperation('/api/experiment/action?'+params({directory:document.body.dataset.directory}),{action:'submit'});});
-async function poll(){await refresh();setTimeout(poll,10000);}if(['jobs','job','experiment'].includes(page))poll();
+$('#prepare')?.addEventListener('click',()=>startOperation('/api/workflow/action?'+params({directory:document.body.dataset.directory}),{action:'all'}));
+$('#submit')?.addEventListener('click',()=>{if(confirm('Dispatch a new Slurm job? Slurmy will prepare the submission, build declared resources on the cluster, and submit its batch jobs. Build outputs may replace files in declared resource directories.'))startOperation('/api/workflow/action?'+params({directory:document.body.dataset.directory}),{action:'submit'});});
+$('#duplicate')?.addEventListener('click',async()=>{
+ const suggested=(document.querySelector('h1')?.textContent||'workflow')+'-copy';
+ const name=prompt('Name the workflow copy (lowercase letters, numbers, and hyphens):',suggested);
+ if(name===null)return;
+ try{const data=await api('/api/workflows/duplicate?'+params({directory:document.body.dataset.directory}),{name:name.trim()});location.href='/workflow?'+params({directory:data.directory});}
+ catch(error){notice(error.message);}
+});
+$('#delete-workflow')?.addEventListener('click',async()=>{
+ const name=document.querySelector('h1')?.textContent||'';
+ const confirmation=prompt(`Delete “${name}”?\n\nIts submitted jobs will remain in Job history. The workflow will be moved to the local recovery archive.\n\nType the workflow name to confirm:`,'');
+ if(confirmation===null)return;
+ try{await api('/api/workflows/delete?'+params({directory:document.body.dataset.directory}),{name:confirmation});location.href='/workflows?'+params({deleted:name});}
+ catch(error){notice(error.message);}
+});
+async function poll(){await refresh();setTimeout(poll,10000);}if(['jobs','job','workflow'].includes(page))poll();

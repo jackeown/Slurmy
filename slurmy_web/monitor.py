@@ -460,7 +460,8 @@ class JobSnapshot:
                 for record in self.slurm
             )
         )
-        return task_issues + int(unresolved_slurm_failure)
+        setup_incomplete = not self.metadata and not self.submission_offsets and not self.slurm
+        return task_issues + int(unresolved_slurm_failure) + int(setup_incomplete)
 
     @property
     def percent(self) -> float:
@@ -494,6 +495,8 @@ class JobSnapshot:
 
     @property
     def state(self) -> str:
+        if not self.metadata and not self.submission_offsets and not self.slurm:
+            return "SETUP INCOMPLETE"
         active_states = {record.state.upper() for record in self.active_records}
         if "RUNNING" in active_states or "COMPLETING" in active_states:
             return "RUNNING"

@@ -5,7 +5,8 @@
 
 </div>
 
-Run resource-limited theorem-prover experiments on a Slurm cluster. Specify
+Run resource-limited theorem-prover jobs on a Slurm cluster. Define a reusable
+workflow, then specify
 each solver–problem call explicitly, or generate all combinations as a convenience.
 Build on the cluster, inspect the generated shell scripts, monitor progress,
 and synchronize results.
@@ -13,17 +14,17 @@ and synchronize results.
 1. Prepare `jobpairs.csv`, `building.txt`, and `resource_limiter_template.txt`.
 2. Run `slurmy.py` to generate a readable `submit.sh` and its helper files.
 3. Run `submit.sh`: build dependencies on compute nodes, download them for
-   packaging, transfer the experiment, and submit its batches.
-4. Open the local web app to monitor, inspect output, and manage the experiment.
+   packaging, transfer the job, and submit its batches.
+4. Open the local web app to monitor the job and inspect each call's output.
 
 Python runs on your computer. The cluster runs Bash, Slurm commands, and your
 cluster-built executables. See [ExampleRuns](ExampleRuns/README.md) for ready-made
 Vampire, E, and Drodi workflows, or use the
-[web experiment builder](YourRuns/example-generator/README.md).
+[web workflow builder](YourRuns/example-generator/README.md).
 
 ```bash
 python -m pip install -r requirements.txt
-python slurmy-web.py  # Starts the local app if needed and opens your browser.
+python slurmy-web.py  # Opens the browser and stays attached; press Ctrl-C to stop it.
 ```
 
 <details>
@@ -167,12 +168,12 @@ cmake --build "$SLURMY_BUILD_WORK/build" --parallel "${SLURM_CPUS_PER_TASK:-1}"
 ```
 
 The resulting tree is downloaded back into its declared local root (merging
-and replacing matching files), then packaged for the experiment. Use dedicated
+and replacing matching files), then packaged for the submitted job. Use dedicated
 resource directories: downloaded build outputs may overwrite files there.
 Recipes run again on each submission; no build cache is implied.
 
 Build jobs currently use the shared builder's defaults: 4 cores, 4 GiB, and
-30 minutes, on the selected partition. These are separate from experiment
+30 minutes, on the selected partition. These are separate from per-call
 limits. For unusual build requirements, use
 [the standalone builder](building-dependencies/README.md), then leave the
 resource's recipe line blank.
@@ -323,34 +324,46 @@ splitting.
 </details>
 
 <details>
-<summary><strong>🌐 Local web app: create, monitor, and manage experiments</strong></summary>
+<summary><strong>🌐 Local web app: create workflows and monitor jobs</strong></summary>
 
 <blockquote>
 
 ```bash
-python slurmy-web.py                  # Open job history; reuse an existing server.
-python slurmy-web.py --new            # Open the guided experiment builder.
+python slurmy-web.py                  # Run in the foreground; Ctrl-C stops this server.
+python slurmy-web.py --new            # Run in the foreground and open the builder.
 python slurmy-web.py --directory ExampleRuns/example-vampire
-python slurmy-web.py --job JOB_ID     # Open a particular submitted experiment.
-python slurmy-web.py --stop           # Stop only the local app, not Slurm jobs.
+python slurmy-web.py --job JOB_ID     # Run in the foreground and open a job.
+python slurmy-web.py --background     # Start/reuse the app and return to the shell.
+python slurmy-web.py --stop           # Stop a background app; Slurm jobs continue.
 ```
 
-`make monitor` in an example opens that experiment's page. In
+`make monitor` in an example opens that workflow's page in the background. In
 `YourRuns/example-generator`, both `make` and `make monitor` open the builder.
 Repeated invocations reuse the same server. New submissions record their local
-workflow directory so their jobs appear on the corresponding experiment page;
+workflow directory so their jobs appear on the corresponding workflow page;
 older jobs without this field remain in the full job history.
 
-The app has job history, searchable/paginated calls, saved solver output,
-Slurm allocations and cancellation, scheduler logs, and local experiment pages.
+The app has job history, searchable/paginated calls, saved per-call output,
+and local workflow pages.
 The guided builder supports explicit jobpair CSVs, imported configuration CSVs,
 or interactive solver configurations crossed with problem globs; optional
 remote build scripts/commands and limiter templates are included. Path fields
 are checked when you leave them. Preview validates the complete specification
-before saving it under `YourRuns/GENERATED`.
+before saving it under `YourRuns/GENERATED`. Workflow names are used directly
+as folder names; Slurmy does not add a prefix. Path fields include a local file browser; it
+selects existing paths on the computer running Slurmy and does not upload their contents.
+Any workflow can be duplicated into an independent user workflow. **Edit settings** reopens the
+guided builder with the workflow's choices prefilled, so you can change call construction,
+problem selection, resource builds, limits, and limiter configuration without editing generated
+files. You can also rename the workflow; Slurmy moves its folder while keeping jobs submitted
+under earlier names linked to it. Deleting a user workflow requires typing its name and moves it
+to `YourRuns/.deleted-workflows` for recovery; submitted jobs remain in Job history. Examples
+remain read-only and cannot be deleted.
 
-Saving creates files only. **Prepare scripts** runs `make all`; **Build & submit**
-runs `make submit` after confirmation, with an operation log in the page.
+Saving creates files only. **Prepare Slurm submission** validates the workflow and creates or
+refreshes the files that will be transferred to the cluster without submitting them. **Dispatch
+new Slurm job** prepares the submission, remotely builds its declared resources, and submits the
+resulting batch jobs to Slurm.
 Only trusted local Makefiles/commands should be run. A job's **Sync results**
 button downloads current results once; **Cancel** confirms the selected active
 Slurm job ID. The terminal tools are still available for scripting:
@@ -377,8 +390,10 @@ are required; Textual/Rich are no longer dependencies.
 
 `--host` / `SLURMY_HOST` selects the SSH alias, not the web bind address.
 Use `--port` / `SLURMY_WEB_PORT` for a different local port, `--no-browser` to
-print the URL, or `--serve` to run in the foreground. The server stays running
-after a browser tab closes. Restart it after updating the code or dependencies.
+run in the foreground without opening a browser, or `--background` to return to
+the shell. `--serve` is retained as an explicit alias for the foreground mode.
+The server stays running after a browser tab closes. Restart it after updating the
+code or dependencies.
 Server and operation logs are stored in the ignored `.slurmy-web/` directory;
 operation tracking is in memory, so let builds/submissions finish before stopping
 the app. `--stop` refuses while a web-launched operation is running.
@@ -393,7 +408,7 @@ and regularly refreshed metadata under `slurmy-results/JOB_ID/`; see
 `slurmy-sync.py --help` for destination and refresh options. Existing historical
 results remain readable, including older formats.
 
-Remote experiments live under `~/Slurmy/USER_TIMESTAMP_PID/`; remote builds
+Remote jobs live under `~/Slurmy/USER_TIMESTAMP_PID/`; remote builds
 use `~/Slurmy-builds/`. Failures remain available for inspection. Submission is
 not transactional: if a later sbatch fails, earlier accepted batches remain
 submitted and can be cancelled with the cancellation tool.
@@ -401,7 +416,7 @@ submitted and can be cancelled with the cancellation tool.
 ```text
 submit.sh                         # Local entry point: build, package, transfer, submit.
 submit.sh.files/
-  remote_prepare.sh               # Creates this experiment's remote directory.
+  remote_prepare.sh               # Creates this job's remote directory.
   remote_submit.sh                # Checks topology, plans allocations, calls sbatch.
   batch.sh                        # Checks physical-core placement; launches calls.
   call.sh                         # Runs the limiter; captures and publishes results.

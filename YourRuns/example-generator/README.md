@@ -1,4 +1,4 @@
-# 🧭 Web experiment builder
+# 🧭 Web workflow builder
 
 ```bash
 make -C YourRuns/example-generator
@@ -10,7 +10,7 @@ page in your browser. There is no separate terminal dashboard.
 
 The five steps cover the workflow name and cluster settings, solver/problem
 calls, optional remote builds, the resource limiter, and a validated preview.
-Settings start blank: choose them explicitly.
+Suggested values are prefilled and editable; paths are validated before use.
 
 Use an existing jobpairs CSV, import a configurations CSV, or enter configurations
 in the form and select problem globs. The union of the globs is crossed with each
@@ -23,15 +23,14 @@ specification before saving. Relative paths you enter resolve from
 `YourRuns/example-generator/`. Paths inside imported files resolve from those
 files. Absolute paths are saved, and source/problem files stay where they are.
 
-Saving creates `YourRuns/GENERATED/example-NAME/` with the three input files,
+Saving creates `YourRuns/GENERATED/NAME/` with the three input files,
 a Makefile, and any newly entered build recipes. It does not build or submit.
-From the resulting experiment page, inspect the inputs, prepare scripts, and
+From the resulting workflow page, inspect the inputs, prepare scripts, and
 explicitly confirm building/submission. Progress appears in the operation log.
 
 The same workflow still supports `make`, `make submit`, `make monitor`,
 `make sync`, `make stop`, and `make clean`. All-pairs workflows retain
-their configurations and globs; move the old jobpairs.csv aside before using
-`make pairs`.
+their configurations and globs; changed inputs regenerate jobpairs automatically.
 
 See the [main README](../../README.md) for installation, server lifecycle,
 localhost-only security, and command-line alternatives.

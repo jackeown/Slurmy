@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Compatibility shortcut: open the web experiment builder."""
+"""Compatibility shortcut: open the web workflow builder."""
 from pathlib import Path
 import sys
 

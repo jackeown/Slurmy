@@ -11,8 +11,9 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 
-from flask import Flask, abort, jsonify, render_template, request, session, send_file
+from flask import Flask, abort, jsonify, redirect, render_template, request, session, send_file, url_for
 from werkzeug.exceptions import HTTPException
 
 from .monitor import RemoteCollector
@@ -29,10 +30,14 @@ def safe_job(value):
 
 
 def summary(job):
-    return dict(id=job.job_id, name=job.job_name, state=job.state,
+    workflow_directory = job.metadata.get('workflow_directory', '')
+    workflow_name = Path(workflow_directory).name if workflow_directory else ''
+    if workflow_name.startswith('example-') and Path(workflow_directory).parent == workflows.GENERATED:
+        workflow_name = workflow_name.removeprefix('example-')
+    return dict(id=job.job_id, name=workflow_name or job.job_name, state=job.state,
                 total=job.task_count, completed=job.effective_completed,
                 percent=job.percent, issues=job.issue_count, created=job.created_epoch,
-                directory=job.metadata.get('workflow_directory', ''),
+                directory=workflow_directory,
                 statuses=job.status_counts)
 
 
@@ -69,7 +74,7 @@ def create_app():
     app.config.update(SECRET_KEY=secrets.token_hex(32), MAX_CONTENT_LENGTH=2 * 1024 * 1024,
                       SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
                       TRUSTED_HOSTS=['127.0.0.1', 'localhost'])
-    cache, locks, operations = {}, {}, {}
+    cache, locks, operations, announced_jobs = {}, {}, {}, {}
     guard = threading.Lock()
 
     @app.before_request
@@ -156,28 +161,54 @@ def create_app():
     def job_page(job_id):
         return page('job.html', job_id=safe_job(job_id))
 
-    @app.get('/experiments')
-    def experiments():
-        entries = []
-        for root in (REPO / 'ExampleRuns', workflows.GENERATED):
+    @app.get('/workflows')
+    def workflow_list():
+        def created_label(path):
+            try:
+                value = json.loads((path / '.slurmy-workflow.json').read_text()).get('_created_at')
+                epoch = float(value) if value is not None else path.stat().st_ctime
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                epoch = path.stat().st_ctime
+            return datetime.fromtimestamp(epoch).astimezone().strftime('%Y-%m-%d %H:%M')
+        def entries(root):
             if not root.exists():
-                continue
-            for path in sorted(root.iterdir()):
-                if path.is_dir() and (path / 'Makefile').is_file():
-                    entries.append(dict(name=path.name, directory=str(path.resolve()), example=root.name == 'ExampleRuns'))
-        return page('experiments.html', experiments=entries)
+                return []
+            return [dict(name=(path.name.removeprefix('example-') if root == workflows.GENERATED else path.name),
+                         directory=str(path.resolve()), created=created_label(path)) for path in sorted(root.iterdir())
+                    if path.is_dir() and (path / 'Makefile').is_file()]
+        return page('experiments.html', user_workflows=entries(workflows.GENERATED),
+                    example_workflows=entries(REPO / 'ExampleRuns'))
 
-    @app.get('/experiment')
-    def experiment():
+    @app.get('/experiments')
+    def legacy_experiments():
+        return redirect(url_for('workflow_list', host=host()))
+
+    @app.get('/workflow')
+    def workflow():
         path = directory()
         files = {name: (path / name).read_text() for name in
                  ('jobpairs.csv', 'configurations.csv', 'building.txt', 'resource_limiter_template.txt', 'Makefile') if (path / name).is_file()}
-        return page('experiment.html', directory=str(path), name=path.name, files=files,
+        name = path.name.removeprefix('example-') if path.parent == workflows.GENERATED else path.name
+        created = datetime.fromtimestamp(path.stat().st_ctime).astimezone().strftime('%Y-%m-%d %H:%M')
+        return page('experiment.html', directory=str(path), name=name, created=created, files=files,
+                    base=str(workflows.GENERATED.resolve()) + os.sep,
                     prepared=(path / 'submit.sh').is_file())
+
+    @app.get('/experiment')
+    def legacy_experiment():
+        return redirect(url_for('workflow', host=host(), directory=request.args.get('directory', '')))
 
     @app.get('/new')
     def new():
-        return page('new.html', base=str(workflows.BASE))
+        return page('new.html', base=str(workflows.BASE), initial=None, editing=False)
+
+    @app.get('/workflow/edit')
+    def edit_workflow():
+        path = directory()
+        if path.parent != workflows.GENERATED.resolve():
+            raise ValueError('Duplicate an example before editing it.')
+        return page('new.html', base=str(workflows.BASE), initial=workflows.decisions(path),
+                    editing=True, directory=str(path))
 
     @app.get('/logo.svg')
     def logo():
@@ -185,12 +216,30 @@ def create_app():
 
     @app.get('/api/jobs')
     def jobs():
-        value = snapshot()
-        items = [summary(job) for job in value.jobs]
+        with guard:
+            announced = list(announced_jobs.items())
+            cached = cache.get((host(), None))
+        # Once dispatch has started, do not make the user wait for the first
+        # SSH snapshot just to see it.  A later poll merges in remote history.
+        local = [item for (item_host, _), item in announced if item_host == host()]
+        if local and not cached:
+            items = local
+            updated = time.time()
+        else:
+            value = snapshot()
+            items = [summary(job) for job in value.jobs]
+            updated = value.fetched_epoch
+        remote_ids = {item['id'] for item in items}
+        items.extend(item for (item_host, job_id), item in announced
+                     if item_host == host() and job_id not in remote_ids)
         folder = request.args.get('directory')
         if folder:
-            items = [job for job in items if job['directory'] == folder]
-        return jsonify(jobs=items, updated=value.fetched_epoch)
+            linked = {folder}
+            manifest = Path(folder) / '.slurmy-workflow.json'
+            if manifest.is_file():
+                linked.update(json.loads(manifest.read_text(encoding='utf-8')).get('_previous_directories', []))
+            items = [job for job in items if job['directory'] in linked]
+        return jsonify(jobs=items, updated=updated)
 
     @app.get('/api/jobs/<job_id>')
     def job_data(job_id):
@@ -198,8 +247,7 @@ def create_app():
         query = request.args.get('q', '').lower()
         rows = [row for row in task_rows(job) if query in ' '.join(str(v) for v in row.values()).lower()]
         page_number = max(0, int(request.args.get('page', '0')))
-        return jsonify(**summary(job), tasks=rows[page_number*100:(page_number+1)*100], matched=len(rows),
-                       slurm=[asdict(record) for record in job.slurm], logs=job.logs, metadata=job.metadata)
+        return jsonify(**summary(job), tasks=rows[page_number*100:(page_number+1)*100], matched=len(rows))
 
     @app.get('/api/jobs/<job_id>/output/<int:task_id>')
     def output(job_id, task_id):
@@ -219,16 +267,118 @@ def create_app():
         value = workflows.existing(data.get('value'), data.get('kind'))
         return jsonify(path=str(value))
 
+    @app.post('/api/browse-path')
+    def browse_path():
+        data = request.get_json() or {}
+        path = Path(data.get('directory') or workflows.BASE).expanduser()
+        path = (workflows.BASE / path).resolve() if not path.is_absolute() else path.resolve()
+        if not path.is_dir():
+            raise ValueError(f'Not an existing directory: {path}')
+        try:
+            children = sorted(path.iterdir(), key=lambda item: (not item.is_dir(), item.name.casefold()))
+        except PermissionError:
+            raise ValueError(f'Permission denied: {path}')
+        items = []
+        for item in children[:1000]:
+            try:
+                if item.is_dir() or item.is_file():
+                    items.append(dict(name=item.name, path=str(item), directory=item.is_dir()))
+            except OSError:
+                continue
+        return jsonify(directory=str(path), parent=str(path.parent), items=items,
+                       truncated=len(children) > 1000)
+
     @app.post('/api/preview')
     def preview():
-        destination, files, count = workflows.specification(request.get_json())
+        target = directory() if request.args.get('directory') else None
+        destination, files, count = workflows.specification(request.get_json(), target)
         return jsonify(directory=str(destination), count=count, files=files)
 
+    @app.post('/api/workflows')
     @app.post('/api/experiments')
     def save():
         with guard:
             destination, count = workflows.save(request.get_json())
         return jsonify(directory=str(destination), count=count), 201
+
+    @app.post('/api/workflows/update')
+    def update_workflow():
+        path = directory()
+        if path.parent != workflows.GENERATED.resolve():
+            raise ValueError('Duplicate an example before editing it.')
+        data = request.get_json() or {}
+        with guard:
+            destination, count = workflows.rename_and_save(data, path)
+        return jsonify(directory=str(destination), count=count)
+
+    @app.post('/api/workflows/duplicate')
+    def duplicate_workflow():
+        source = directory()
+        with guard:
+            destination = workflows.duplicate(source, (request.get_json() or {}).get('name'))
+        return jsonify(directory=str(destination)), 201
+
+    @app.post('/api/workflows/delete')
+    def delete_workflow():
+        path = directory()
+        if path.parent != workflows.GENERATED.resolve():
+            raise ValueError('Example workflows cannot be deleted. Duplicate one to customize it.')
+        expected = path.name.removeprefix('example-')
+        if (request.get_json() or {}).get('name') != expected:
+            raise ValueError(f'Type {expected} exactly to confirm deletion.')
+        with guard:
+            if any(op['scope'] == str(path) and op['state'] == 'running' for op in operations.values()):
+                raise ValueError('Wait for the active workflow operation to finish before deleting it.')
+            archived = workflows.delete_workflow(path)
+        return jsonify(deleted=expected, archived=str(archived))
+
+    def announce_operation_job(operation, job_id, cwd, environment):
+        """Expose a dispatched job as soon as its ID appears in the operation log.
+
+        The remote collector may not see the new job directory/metadata until a
+        later poll.  Keeping this short-lived local record makes the submission
+        visible immediately in both Job history and the originating workflow.
+        """
+        metadata = cwd / 'submit.sh.files' / 'metadata.json'
+        try:
+            details = json.loads(metadata.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            details = {}
+        directory = str(details.get('workflow_directory', cwd))
+        with guard:
+            provisional = operation.get('provisional_job_id')
+            if provisional:
+                announced_jobs.pop((environment['SLURMY_HOST'], provisional), None)
+            announced_jobs[(environment['SLURMY_HOST'], job_id)] = dict(
+                id=job_id, name=Path(directory).name, state='SUBMITTED',
+                total=int(details.get('task_count', 0) or 0), completed=0,
+                percent=0.0, issues=0, created=time.time(), directory=directory,
+                statuses={}, provisional=False)
+            operation['job_id'] = job_id
+
+    def announce_dispatching(operation, cwd, environment):
+        """Show a dispatching row while submit.sh is still running."""
+        metadata = cwd / 'submit.sh.files' / 'metadata.json'
+        try:
+            details = json.loads(metadata.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            details = {}
+        provisional = f"dispatching-{operation['id']}"
+        directory = str(details.get('workflow_directory', cwd))
+        operation['provisional_job_id'] = provisional
+        with guard:
+            announced_jobs[(environment['SLURMY_HOST'], provisional)] = dict(
+                id=provisional, name=Path(directory).name, state='DISPATCHING',
+                total=int(details.get('task_count', 0) or 0), completed=0,
+                percent=0.0, issues=0, created=time.time(), directory=directory,
+                statuses={}, provisional=True)
+
+    def clear_dispatching(operation):
+        provisional = operation.get('provisional_job_id')
+        if not provisional:
+            return
+        with guard:
+            announced_jobs.pop((operation['operation_host'], provisional), None)
 
     def operation(argv, cwd, environment, label, scope):
         with guard:
@@ -239,20 +389,32 @@ def create_app():
             key = secrets.token_hex(12)
             STATE.mkdir(exist_ok=True)
             log = STATE / (key + '.log')
-            operations[key] = dict(id=key, label=label, scope=scope, state='running', code=None, started=time.time())
+            operations[key] = dict(id=key, label=label, scope=scope, state='running',
+                                   code=None, started=time.time(), operation_cwd=str(cwd),
+                                   operation_host=environment.get('SLURMY_HOST', 'datalab'))
+            show_dispatching = label == 'build resources & dispatch Slurm job'
+        if show_dispatching:
+            announce_dispatching(operations[key], cwd, environment)
         def run():
             try:
                 with log.open('w') as stream:
                     code = subprocess.run(argv, cwd=cwd, env=environment, stdout=stream, stderr=subprocess.STDOUT).returncode
                 operations[key].update(state='done' if code == 0 else 'failed', code=code)
+                match = re.search(r'^Slurmy job ID: ([A-Za-z0-9._-]+)$', log.read_text(encoding='utf-8', errors='replace'), re.MULTILINE)
+                if match:
+                    announce_operation_job(operations[key], match.group(1), cwd, environment)
+                else:
+                    clear_dispatching(operations[key])
             except Exception as exc:
                 log.write_text(str(exc))
                 operations[key].update(state='failed', code=-1)
+                clear_dispatching(operations[key])
             with guard:
                 cache.clear()
         threading.Thread(target=run, daemon=True).start()
         return jsonify(operations[key]), 202
 
+    @app.post('/api/workflow/action')
     @app.post('/api/experiment/action')
     def experiment_action():
         path = directory()
@@ -262,7 +424,8 @@ def create_app():
         environment = {**os.environ, 'SLURMY_HOST': host(),
                        'PATH': str(Path(sys.executable).parent) + os.pathsep + os.environ.get('PATH', '')}
         # Makefiles are trusted user workflows; only this explicit click executes them.
-        return operation(['make', action, 'SLURMY_HOST=' + host()], path, environment, action, str(path))
+        label = 'prepare Slurm submission' if action == 'all' else 'build resources & dispatch Slurm job'
+        return operation(['make', action, 'SLURMY_HOST=' + host()], path, environment, label, str(path))
 
     @app.post('/api/jobs/<job_id>/action')
     def job_action(job_id):
@@ -290,6 +453,15 @@ def create_app():
             with log.open('rb') as stream:
                 stream.seek(max(0, log.stat().st_size - 128*1024))
                 content = stream.read().decode('utf-8', 'replace')
+        # `make submit` can still be building/fetching resources after sbatch
+        # has already accepted the job. Register that ID during polling rather
+        # than waiting for the whole operation to finish.
+        match = re.search(r'^Slurmy job ID: ([A-Za-z0-9._-]+)$', content, re.MULTILINE)
+        if match:
+            operation = operations[key]
+            if operation.get('job_id') != match.group(1):
+                announce_operation_job(operation, match.group(1), Path(operation['operation_cwd']),
+                                       {'SLURMY_HOST': operation['operation_host']})
         return jsonify(**operations[key], log=content)
 
     @app.post('/api/shutdown')

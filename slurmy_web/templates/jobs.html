@@ -2,10 +2,10 @@
 {% block title %}Job history{% endblock %}
 {% block data %}data-page="jobs"{% endblock %}
 {% block content %}
-<div class="heading"><div><p class="eyebrow">YOUR CLUSTER, AT A GLANCE</p><h1>Job history</h1><p class="muted">Every submitted experiment, from the first call to the final result.</p></div><a class="button" href="{{ url_for('new', host=host) }}">＋ New experiment</a></div>
-<div class="stats"><article><span>Experiments</span><strong id="stat-total">—</strong></article><article><span>Active</span><strong id="stat-active">—</strong></article><article><span>Calls finished</span><strong id="stat-done">—</strong></article><article><span>Execution issues</span><strong id="stat-issues">—</strong></article></div>
-<section class="panel"><div class="section-heading"><h2>Submitted jobs</h2><div class="tools"><input id="job-filter" type="search" placeholder="Filter by ID or status…" aria-label="Filter jobs"><button id="refresh" class="secondary">↻ Refresh</button></div></div>
+<div class="heading"><div><p class="eyebrow">YOUR CLUSTER, AT A GLANCE</p><h1>Job history</h1><p class="muted">Every submitted job, from its first call to its final result.</p></div><a class="button" href="{{ url_for('new', host=host) }}">＋ New workflow</a></div>
+<div class="stats"><article><span>Jobs</span><strong id="stat-total">—</strong></article><article><span>Active</span><strong id="stat-active">—</strong></article><article><span>Calls finished</span><strong id="stat-done">—</strong></article><article><span>Execution issues</span><strong id="stat-issues">—</strong></article></div>
+<section id="remote-data" class="panel loading" aria-busy="true"><div class="section-heading"><h2>Submitted jobs</h2><div class="tools"><input id="job-filter" type="search" placeholder="Filter by ID or status…" aria-label="Filter jobs"><button id="refresh" class="secondary">↻ Refresh</button></div></div>
 <p id="connection" class="muted" role="status">Connecting to {{ host }}…</p>
-<div class="table-scroll"><table><thead><tr><th>Experiment / ID</th><th>Status</th><th>Progress</th><th>Issues</th><th>Created</th></tr></thead><tbody id="jobs-body"></tbody></table></div>
-<p id="empty" class="empty" hidden>No matching jobs. Create an experiment, or check your SSH host.</p></section>
+<div class="table-scroll"><table><thead><tr><th>Job / ID</th><th>Status</th><th>Progress</th><th>Issues</th><th>Created</th></tr></thead><tbody id="jobs-body"><tr class="loading-row"><td colspan="5"><span class="spinner"></span> Loading jobs from {{ host }}…</td></tr></tbody></table></div>
+<p id="empty" class="empty" hidden>No matching jobs. Submit a workflow, or check your SSH host.</p></section>
 {% endblock %}

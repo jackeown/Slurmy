@@ -1,12 +1,31 @@
 'use strict';
 if(document.body.dataset.page==='new'){
- const form=$('#builder');let step=0, reviewed=null;
+ const form=$('#builder');let step=0, reviewed=null;const initial=JSON.parse($('#builder-initial').textContent||'{}');const context=$('#builder-context');const editing=context?.dataset.editing==='true';
  const sections=[...form.querySelectorAll('[data-step]')];
- function add(template,target){const node=$('#'+template).content.firstElementChild.cloneNode(true);$('.remove',node).addEventListener('click',()=>node.remove());$('#'+target).append(node);return node;}
+ function prefillExamples(root){root.querySelectorAll('input[placeholder],textarea[placeholder]').forEach(input=>{if(!input.value)input.value=input.placeholder;});}
+ function add(template,target){const node=$('#'+template).content.firstElementChild.cloneNode(true);prefillExamples(node);$('.remove',node).addEventListener('click',()=>node.remove());$('#'+target).append(node);return node;}
  $('#add-configuration').addEventListener('click',()=>add('configuration-template','configurations'));
  $('#add-glob').addEventListener('click',()=>add('glob-template','globs'));
  $('#add-resource').addEventListener('click',()=>add('resource-template','resources'));
- add('configuration-template','configurations');add('glob-template','globs');add('resource-template','resources');
+ function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field)field.value=value??'';}}
+ for(const name of ['name','host','partition','degree','mode','jobpairs','configurations_file','building_mode','building_file','limiter_mode','limiter_file','limiter']){const field=form.querySelector(`[name="${name}"]`);if(field&&initial[name]!==undefined)field.value=initial[name];}
+ const configurations=initial.configurations?.length?initial.configurations:[null];for(const values of configurations)fill(add('configuration-template','configurations'),values);
+ const globs=initial.globs?.length?initial.globs:[null];for(const value of globs)fill(add('glob-template','globs'),value===null?null:{glob:value});
+ const resources=initial.resources?.length?initial.resources:[null];for(const values of resources)fill(add('resource-template','resources'),values);
+ prefillExamples(form);
+ const picker=$('#path-browser');let pickedInput=null,pickerDirectory='';
+ async function browse(directory,fallback=true){
+  try{const data=await api('/api/browse-path',{directory});pickerDirectory=data.directory;$('#path-location').value=data.directory;const items=$('#path-items');items.replaceChildren();
+   for(const item of data.items){const row=button(`${item.directory?'📁':'📄'}  ${item.name}`,()=>{if(item.directory)browse(item.path);else if(pickedInput?.dataset.path==='file'){pickedInput.value=item.path;picker.close();validatePath(pickedInput);}},'path-item');row.disabled=!item.directory&&pickedInput?.dataset.path!=='file';items.append(row);}
+   text('#path-help',data.truncated?'Showing the first 1,000 entries. Type a more specific directory above.':pickedInput?.dataset.path==='file'?'Open folders or choose a file.':'Open folders, then choose the current directory.');$('#path-parent').dataset.path=data.parent;
+  }catch(error){if(fallback&&directory)browse('',false);else text('#path-help',error.message);}
+ }
+ form.querySelectorAll('[data-path]').forEach(input=>{const choose=button('Browse…',()=>{pickedInput=input;const current=input.value.trim();let start=current;
+   if(input.dataset.path==='glob')start=current.split(/[*?\[]/,1)[0].replace(/\/$/,'');
+   if(input.dataset.path==='file')start=current.replace(/\/[^/]*$/,'');
+   $('#path-select-directory').hidden=input.dataset.path==='file';picker.showModal();browse(start.startsWith('/')?start:'');},'secondary path-browse');input.insertAdjacentElement('afterend',choose);});
+ $('#path-parent').addEventListener('click',()=>browse($('#path-parent').dataset.path));$('#path-go').addEventListener('click',()=>browse($('#path-location').value));$('#path-location').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();browse(event.target.value);}});
+ $('#path-select-directory').addEventListener('click',()=>{if(!pickedInput)return;const kind=pickedInput.dataset.path;if(kind==='file')return;pickedInput.value=pickerDirectory+(kind==='glob'?'/**/*':'');picker.close();validatePath(pickedInput);});
  // Repeated card fields are read from their card, never from a flattened form.
  function rootValue(name){return form.querySelector(`[name="${name}"]`).value;}
  function visibility(){
@@ -35,9 +54,9 @@ if(document.body.dataset.page==='new'){
  $('#builder-back').addEventListener('click',()=>{step--;renderStep();});
  $('#builder-next').addEventListener('click',async()=>{
   const next=$('#builder-next');next.disabled=true;
-  try{await validSection();if(step===3){reviewed=payload();const data=await api('/api/preview',reviewed);text('#review-summary',`${data.count} explicit calls → ${data.directory}`);const files=$('#review-files');files.replaceChildren();for(const [name,body] of Object.entries(data.files)){const details=el('details');details.append(el('summary',name),el('pre',body));files.append(details);}}step++;renderStep();}
+  try{await validSection();if(step===3){reviewed=payload();const query=editing?'?'+params({directory:context.dataset.directory}):'';const data=await api('/api/preview'+query,reviewed);text('#review-summary',`${data.count} explicit calls → ${data.directory}`);const files=$('#review-files');files.replaceChildren();for(const [name,body] of Object.entries(data.files)){if(name.startsWith('.'))continue;const details=el('details');details.append(el('summary',name),el('pre',body));files.append(details);}}step++;renderStep();}
   catch(error){showError(error);}finally{next.disabled=false;}
  });
- $('#builder-save').addEventListener('click',async()=>{const save=$('#builder-save');save.disabled=true;try{const data=await api('/api/experiments',reviewed);location.href='/experiment?'+new URLSearchParams({host:reviewed.host,directory:data.directory});}catch(error){showError(error);save.disabled=false;}});
+ $('#builder-save').addEventListener('click',async()=>{const save=$('#builder-save');save.disabled=true;try{const endpoint=editing?'/api/workflows/update?'+params({directory:context.dataset.directory}):'/api/workflows';const data=await api(endpoint,reviewed);location.href='/workflow?'+new URLSearchParams({host:reviewed.host,directory:data.directory});}catch(error){showError(error);save.disabled=false;}});
  form.addEventListener('submit',e=>e.preventDefault());renderStep();
 }

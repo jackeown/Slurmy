@@ -227,7 +227,12 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int) ->
             config += f"MAX_CORES={max(t['cores'] for t in batch)}\nMAX_CPUS={max(t['cpus'] for t in batch)}\n"
             (assets / "plans" / f"batch_{i:06d}.sh").write_text(config)
         for name in ("submit.sh", "remote_prepare.sh", "remote_submit.sh", "batch.sh", "call.sh", "timed_call.sh", "csv.sh"):
-            shutil.copy2(REPO / "templates" / name, output if name == "submit.sh" else assets / name)
+            source = REPO / "templates" / name
+            destination = output if name == "submit.sh" else assets / name
+            # A generated file should look newly generated. copy2() preserved the
+            # template's old mtime, which made make immediately call it stale.
+            shutil.copyfile(source, destination)
+            shutil.copymode(source, destination)
         # Reuse the local build driver. Remote recipes build in a disposable
         # copy of the declared root; downloaded files preserve that layout.
         shutil.copy2(REPO / "building-dependencies/slurmy-build.py", assets / "builds/driver.py")

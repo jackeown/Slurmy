@@ -4,8 +4,10 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrf }}">
   <title>{% block title %}Slurmy{% endblock %} · Local workspace</title>
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
   <link rel="icon" href="/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='workflows.css') }}">
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
   {% block scripts %}{% endblock %}
 </head>
@@ -14,17 +16,19 @@
   <a class="brand" href="{{ url_for('index', host=host) }}"><img src="/logo.svg" alt="">Slurmy<span>LOCAL WORKSPACE</span></a>
   <nav aria-label="Main navigation">
     <a href="{{ url_for('index', host=host) }}" {% if request.path == '/' or request.path.startswith('/jobs/') %}aria-current="page"{% endif %}>◫ <span>Job history</span></a>
-    <a href="{{ url_for('experiments', host=host) }}" {% if request.path.startswith('/experiment') %}aria-current="page"{% endif %}>▤ <span>Experiments</span></a>
-    <a href="{{ url_for('new', host=host) }}" {% if request.path == '/new' %}aria-current="page"{% endif %}>＋ <span>New experiment</span></a>
+    <a href="{{ url_for('workflow_list', host=host) }}" {% if request.path.startswith('/workflow') %}aria-current="page"{% endif %}>▤ <span>Workflows</span></a>
+    <a href="{{ url_for('new', host=host) }}" {% if request.path == '/new' %}aria-current="page"{% endif %}>＋ <span>New workflow</span></a>
   </nav>
+  <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false"><span aria-hidden="true">◐</span> <span>Dark mode</span></button>
   <div class="local-note"><span class="dot"></span> Private to this computer<br><small>No accounts. No cloud service.</small></div>
 </aside>
 <main>
-  <header class="topbar"><span>THEOREM PROVING / EXPERIMENTS</span>
+  <header class="topbar"><span>THEOREM PROVING / WORKFLOWS</span>
     <form id="host-form"><label for="host">SSH host</label><input id="host" name="host" value="{{ host }}" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]*"><button class="secondary">Connect</button></form>
   </header>
   <div class="page">{% block content %}{% endblock %}</div>
   <section id="operation" class="operation" hidden aria-live="polite"><div class="section-heading"><h3 id="operation-title">Operation</h3><button id="dismiss-operation" class="secondary">Hide</button></div><pre id="operation-log"></pre></section>
   <div id="notice" role="status" hidden></div>
+  <dialog id="path-browser"><form method="dialog" class="path-browser"><div class="section-heading"><h2>Choose a local path</h2><button value="cancel" class="secondary">Close</button></div><div class="path-location"><button id="path-parent" type="button" class="secondary">↑ Parent</button><input id="path-location" aria-label="Current directory"><button id="path-go" type="button" class="secondary">Go</button></div><div id="path-items" class="path-items"></div><p id="path-help" class="muted"></p><div class="wizard-actions"><button id="path-select-directory" type="button" class="secondary">Choose this directory</button><span></span><button value="cancel" class="secondary">Cancel</button></div></form></dialog>
 </main>
 </body></html>

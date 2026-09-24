@@ -8,6 +8,7 @@ import glob
 import os
 from pathlib import Path
 import sys
+import tempfile
 
 from slurmy import COLUMNS, SlurmyError, path_at, read_pairs
 
@@ -35,17 +36,20 @@ def expand(configurations: list[Path], patterns: list[str], output: Path) -> int
                     rows.append({**row, "problem": str(problem)})
     if not rows:
         raise SlurmyError("no solver configurations")
-    if output.exists():
-        raise SlurmyError(f"refusing to overwrite {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
     try:
-        with output.open("w", encoding="utf-8", newline="") as target:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", dir=output.parent,
+                                         prefix=output.name + ".", suffix=".tmp", delete=False) as target:
+            temporary = Path(target.name)
             writer = csv.DictWriter(target, fieldnames=COLUMNS)
             writer.writeheader()
             writer.writerows(rows)
-        read_pairs(output.resolve())
+        read_pairs(temporary.resolve())
+        os.replace(temporary, output)
     except Exception:
-        output.unlink(missing_ok=True)
+        if temporary:
+            temporary.unlink(missing_ok=True)
         raise
     return len(rows)
 

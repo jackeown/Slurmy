@@ -1,4 +1,4 @@
-"""Local web UI and reusable experiment/monitoring services."""
+"""Local web UI and reusable workflow/job monitoring services."""
 
 
 def create_app():

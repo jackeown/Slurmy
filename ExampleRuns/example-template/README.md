@@ -19,7 +19,8 @@ Paths may point outside this folder; relative CSV paths resolve beside the CSV.
 Shared targets: `all` (prepare), `build`, `submit`, `monitor`, `sync`,
 `stop`, and `clean`. Host and partition are configurable through
 `SLURMY_HOST` and `SLURMY_PARTITION`. After changing inputs or degree, run
-`make clean` before regenerating.
+Running `make` again refreshes generated submission files when these inputs
+change.
 
 For all combinations, create a configurations table without the problem column
 and use [slurmy-pairs.py](../../slurmy-pairs.py). For guided setup, use the

@@ -9,7 +9,7 @@ SLURMY_ID ?=
 .PHONY: run monitor stop sync
 
 run monitor:
-	@python '$(REPO_ROOT)/slurmy-web.py' --host '$(SLURMY_HOST)' --new
+	@python '$(REPO_ROOT)/slurmy-web.py' --background --host '$(SLURMY_HOST)' --new
 
 stop:
 	@cd '$(REPO_ROOT)' && python ./slurmy-cancel.py --host '$(SLURMY_HOST)'
