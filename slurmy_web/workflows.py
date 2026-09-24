@@ -265,13 +265,40 @@ def delete_workflow(source):
     return archived
 
 
+def resource_roles(data):
+    """Place legacy build declarations next to the command they support."""
+    data = dict(data)
+    limiter_path = None
+    try:
+        if data.get('limiter_mode') == 'existing':
+            template = path_at(data.get('limiter_file', ''), BASE)
+            invocation, base = template.read_text(), template.parent
+        else:
+            invocation, base = data.get('limiter', ''), BASE
+        words = shlex.split(invocation)
+        if words:
+            limiter_path = path_at(words[0], base)
+    except (OSError, ValueError):
+        # An unavailable template must remain editable so its path can be fixed.
+        pass
+    resources = []
+    for entry in data.get('resources', []):
+        entry = dict(entry)
+        if entry.get('role') not in {'prover', 'limiter'}:
+            root = path_at(entry.get('root', ''), BASE)
+            entry['role'] = 'limiter' if limiter_path and limiter_path.is_relative_to(root) else 'prover'
+        resources.append(entry)
+    data['resources'] = resources
+    return data
+
+
 def decisions(directory):
     """Load saved builder decisions, reconstructing older workflows when necessary."""
     manifest = directory / '.slurmy-workflow.json'
     if manifest.is_file():
         data = json.loads(manifest.read_text(encoding='utf-8'))
         data['name'] = directory.name
-        return data
+        return resource_roles(data)
     makefile = (directory / 'Makefile').read_text(encoding='utf-8')
     def setting(name, default):
         match = re.search(rf'(?m)^{name}\s*(?:\?|:)?=\s*(\S+)', makefile)
@@ -299,11 +326,11 @@ def decisions(directory):
     executable_word = lexer.get_token()
     if executable_word:
         limiter = shlex.quote(str(path_at(executable_word, directory))) + ' ' + limiter[lexer.instream.tell():]
-    return dict(name=directory.name, host=setting('SLURMY_HOST', 'datalab'),
+    return resource_roles(dict(name=directory.name, host=setting('SLURMY_HOST', 'datalab'),
                 partition=setting('SLURMY_PARTITION', 'CPU-amd'), degree=setting('DEG_PAR', '1'),
                 mode=mode, jobpairs=jobpairs, configurations_file='', configurations=configs,
                 globs=globs, building_mode='create', building_file='', resources=resources,
-                limiter_mode='inline', limiter_file='', limiter=limiter)
+                limiter_mode='inline', limiter_file='', limiter=limiter))
 
 
 def duplicate(source, name):

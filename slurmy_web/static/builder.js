@@ -3,15 +3,20 @@ if(document.body.dataset.page==='new'){
  const form=$('#builder');let step=0, reviewed=null;const initial=JSON.parse($('#builder-initial').textContent||'{}');const context=$('#builder-context');const editing=context?.dataset.editing==='true';
  const sections=[...form.querySelectorAll('[data-step]')];
  function prefillExamples(root){root.querySelectorAll('input[placeholder],textarea[placeholder]').forEach(input=>{if(!input.value)input.value=input.placeholder;});}
- function add(template,target){const node=$('#'+template).content.firstElementChild.cloneNode(true);prefillExamples(node);$('.remove',node).addEventListener('click',()=>node.remove());$('#'+target).append(node);window.initCollapsibles?.();return node;}
+ function add(template,target){const node=$('#'+template).content.firstElementChild.cloneNode(true);prefillExamples(node);$('.remove',node).addEventListener('click',()=>node.remove());$('#'+target).append(node);setupBrowsers(node);window.initCollapsibles?.();return node;}
  $('#add-configuration').addEventListener('click',()=>add('configuration-template','configurations'));
  $('#add-glob').addEventListener('click',()=>add('glob-template','globs'));
- $('#add-resource').addEventListener('click',()=>add('resource-template','resources'));
+ let resourceOrder=0;
+ function addResource(role,values){const node=add('resource-template',role==='limiter'?'limiter-resources':'prover-resources');node.dataset.resourceRole=role;node.dataset.resourceOrder=resourceOrder++;const caption=$('h3',node);const toggle=$('.collapse-toggle',caption);caption.textContent=role==='limiter'?'Limiter root and build':'Prover root and build';if(toggle){toggle.setAttribute('aria-label',`Collapse ${caption.textContent}`);caption.prepend(toggle);}fill(node,values);return node;}
+ $('#add-prover-resource').addEventListener('click',()=>{addResource('prover');visibility();});
+ $('#add-limiter-resource').addEventListener('click',()=>{addResource('limiter');visibility();});
  function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field)field.value=value??'';}}
  for(const name of ['name','host','partition','degree','mode','jobpairs','configurations_file','building_mode','building_file','limiter_mode','limiter_file','limiter']){const field=form.querySelector(`[name="${name}"]`);if(field&&initial[name]!==undefined)field.value=initial[name];}
  const configurations=initial.configurations?.length?initial.configurations:[null];for(const values of configurations)fill(add('configuration-template','configurations'),values);
  const globs=initial.globs?.length?initial.globs:[null];for(const value of globs)fill(add('glob-template','globs'),value===null?null:{glob:value});
- const resources=initial.resources?.length?initial.resources:[null];for(const values of resources)fill(add('resource-template','resources'),values);
+ for(const values of initial.resources||[])addResource(values.role==='limiter'?'limiter':'prover',values);
+ if(!initial.resources?.length)addResource('limiter');
+ if(initial.building_mode==='existing')$('#build-import').open=true;
  prefillExamples(form);
  const picker=$('#path-browser');let pickedInput=null,pickerDirectory='',pickedPathCallback=null;
  async function browse(directory,fallback=true){
@@ -20,7 +25,7 @@ if(document.body.dataset.page==='new'){
    text('#path-help',data.truncated?'Showing the first 1,000 entries. Type a more specific directory above.':pickedInput?.dataset.path==='file'?'Open folders or choose a file.':'Open folders, then choose the current directory.');$('#path-parent').dataset.path=data.parent;
   }catch(error){if(fallback&&directory)browse('',false);else text('#path-help',error.message);}
  }
- form.querySelectorAll('[data-path]').forEach(input=>{const choose=button('Browse…',()=>{pickedInput=input;const current=input.value.trim();let start=current;
+ function setupBrowsers(root){root.querySelectorAll('[data-path]').forEach(input=>{if(input.dataset.browserReady)return;input.dataset.browserReady='true';const choose=button('Browse…',()=>{pickedInput=input;const current=input.value.trim();let start=current;
    if(input.dataset.path==='glob'){
     const cuts=['*','?','['].map(mark=>current.indexOf(mark)).filter(index=>index>=0);
     const cut=cuts.length?Math.min(...cuts):current.length;
@@ -29,7 +34,8 @@ if(document.body.dataset.page==='new'){
    if(input.dataset.path==='file')start=current.replace(/\/[^/]*$/,'');
    $('#path-select-directory').hidden=input.dataset.path==='file';picker.showModal();browse(start.startsWith('/')?start:'');},'secondary path-browse');
    if(input.dataset.path==='glob'){const row=el('div',undefined,'path-input-row');input.replaceWith(row);row.append(input,choose);}else input.insertAdjacentElement('afterend',choose);
- });
+ });}
+ setupBrowsers(form);
  picker.addEventListener('close',()=>{pickedPathCallback=null;});
  $('#path-parent').addEventListener('click',()=>browse($('#path-parent').dataset.path));$('#path-go').addEventListener('click',()=>browse($('#path-location').value));$('#path-location').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();browse(event.target.value);}});
  $('#path-select-directory').addEventListener('click',()=>{if(!pickedInput)return;const kind=pickedInput.dataset.path;if(kind==='file')return;pickedInput.value=pickerDirectory+(kind==='glob'?'/**/*.p':'');picker.close();validatePath(pickedInput);});
@@ -38,7 +44,9 @@ if(document.body.dataset.page==='new'){
  function rootValue(name){return form.querySelector(`[name="${name}"]`).value;}
  function visibility(){
   const mode=rootValue('mode');document.querySelectorAll('[data-mode]').forEach(n=>n.hidden=n.dataset.mode!==mode);$('#problem-selection').hidden=!['interactive','configurations'].includes(mode);
+  $('#problems-from-jobpairs').hidden=mode!=='jobpairs';
   $('#building-existing').hidden=rootValue('building_mode')!=='existing';$('#building-create').hidden=rootValue('building_mode')!=='create';
+  $('#limiter-building-create').hidden=rootValue('building_mode')!=='create';$('#limiter-building-imported').hidden=rootValue('building_mode')!=='existing';
   $('#limiter-existing').hidden=rootValue('limiter_mode')!=='existing';$('#limiter-inline').hidden=rootValue('limiter_mode')!=='inline';
   document.querySelectorAll('.resource').forEach(card=>{const choice=$('.resource-mode',card).value;card.querySelectorAll('[data-recipe]').forEach(n=>n.hidden=n.dataset.recipe!==choice);});
  }
@@ -51,7 +59,7 @@ if(document.body.dataset.page==='new'){
  }
  form.addEventListener('focusout',event=>{if(event.target.matches('[data-path]'))validatePath(event.target);});
  function fields(card){return Object.fromEntries([...card.querySelectorAll('[name]')].map(n=>[n.name,n.value]));}
- function payload(){const names=['name','host','partition','degree','mode','jobpairs','configurations_file','building_mode','building_file','limiter_mode','limiter_file','limiter'];const data=Object.fromEntries(names.map(n=>[n,rootValue(n)]));data.configurations=[...document.querySelectorAll('.configuration')].map(fields);data.resources=[...document.querySelectorAll('.resource')].map(fields);data.globs=[...document.querySelectorAll('[name="glob"]')].map(n=>n.value);return data;}
+ function payload(){const names=['name','host','partition','degree','mode','jobpairs','configurations_file','building_mode','building_file','limiter_mode','limiter_file','limiter'];const data=Object.fromEntries(names.map(n=>[n,rootValue(n)]));data.configurations=[...document.querySelectorAll('.configuration')].map(fields);data.resources=[...document.querySelectorAll('.resource')].sort((a,b)=>Number(a.dataset.resourceOrder)-Number(b.dataset.resourceOrder)).map(node=>({...fields(node),role:node.dataset.resourceRole}));data.globs=[...document.querySelectorAll('[name="glob"]')].map(n=>n.value);return data;}
  function renderStep(){sections.forEach((s,i)=>s.hidden=i!==step);document.querySelectorAll('#steps li').forEach((n,i)=>{n.classList.toggle('current',i===step);const tab=$('button',n);if(i===step)tab.setAttribute('aria-current','step');else tab.removeAttribute('aria-current');});$('#builder-back').hidden=step===0;$('#builder-next').hidden=step===4;$('#builder-save').hidden=step!==4;text('#step-count',`Step ${step+1} of 5`);$('#builder-error').hidden=true;}
  function showError(error){text('#builder-error',error.message);$('#builder-error').hidden=false;}
  async function validSection(){

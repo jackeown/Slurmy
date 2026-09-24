@@ -353,7 +353,9 @@ The app has job history, searchable/paginated calls, saved per-call output,
 and local workflow pages.
 The guided builder supports explicit jobpair CSVs, imported configuration CSVs,
 or interactive solver configurations crossed with problem globs; optional
-remote build scripts/commands and limiter templates are included. Path fields
+remote build scripts/commands and limiter templates are included. Prover commands
+and build recipes are configured together under **Provers**; the limiter invocation
+and its build recipe are configured together under **Limiter**. Path fields
 are checked when you leave them. Preview validates the complete specification
 before saving it under `YourRuns/GENERATED`. Workflow names are used directly
 as folder names; Slurmy does not add a prefix. Path fields include a local file browser; it
