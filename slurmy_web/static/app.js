@@ -45,17 +45,22 @@ function initTableSorting(){
  });
 }
 function initCollapsibles(){
- const elements=[...document.querySelectorAll('section, .panel')].filter((node,index,list)=>list.indexOf(node)===index&&!node.closest('template'));
+ const elements=[...document.querySelectorAll('section, .panel, .form-card')].filter((node,index,list)=>list.indexOf(node)===index&&!node.matches('details')&&!node.closest('template'));
  elements.forEach(section=>{
   if(section.dataset.collapsibleReady)return;
   const header=section.querySelector(':scope > .section-heading, :scope > h2, :scope > h3, :scope > div:first-child');
   if(!header)return;
-  section.dataset.collapsibleReady='true';header.classList.add('collapse-header');
-  const control=el('button','Collapse','collapse-button secondary');control.type='button';control.setAttribute('aria-expanded','true');
-  control.addEventListener('click',()=>{const collapsed=section.classList.toggle('collapsed');control.textContent=collapsed?'Expand':'Collapse';control.setAttribute('aria-expanded',String(!collapsed));});
-  header.append(control);
+  const caption=header.matches('h2,h3,strong')?header:header.querySelector('h2, h3, strong');
+  if(!caption)return;
+  section.dataset.collapsibleReady='true';header.classList.add('collapse-header');caption.classList.add('collapse-caption');
+  const control=el('button',undefined,'collapse-toggle');control.type='button';control.setAttribute('aria-expanded','true');control.setAttribute('aria-label',`Collapse ${caption.textContent.trim()}`);control.title='Collapse section';
+  const toggle=()=>{const collapsed=section.classList.toggle('collapsed');control.setAttribute('aria-expanded',String(!collapsed));control.setAttribute('aria-label',`${collapsed?'Expand':'Collapse'} ${caption.textContent.trim()}`);control.title=`${collapsed?'Expand':'Collapse'} section`;};
+  control.addEventListener('click',event=>{event.stopPropagation();toggle();});
+  header.addEventListener('click',event=>{if(event.target.closest('button, a, input, select, textarea, label, summary'))return;toggle();});
+  caption.prepend(control);
  });
 }
+window.initCollapsibles=initCollapsibles;
 initTableSorting();
 initCollapsibles();
 const themeToggle=$('#theme-toggle');
@@ -108,7 +113,7 @@ function renderJobs(){
 }
 async function fetchJobs(){const directory=document.body.dataset.directory;const data=await api('/api/jobs?'+params(directory?{directory}:{}));jobs=data.jobs;renderJobs();text('#connection',`Connected to ${host} · refreshed ${new Date(data.updated*1000).toLocaleTimeString()} · refreshes every 10 seconds`);}
 async function openOutput(task){
- const panel=$('#call-output');panel.hidden=false;text('#output-title',`Call ${task.id} · ${task.system}`);text('#command',`${task.command}\nWorking directory: ${task.directory}`);$('#command').hidden=false;text('#output-info',task.problem);text('#output-text','Loading saved output…');selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
+ const panel=$('#call-output');panel.hidden=false;text('#output-title',`Call ${task.id} · ${task.system}`);text('#command',`Solver command: ${task.command}\nLimiter command: ${task.limiter_command||'Unavailable for this older job'}\nWorking directory: ${task.directory}`);$('#command').hidden=false;text('#output-info',task.problem);text('#output-text','Loading saved output…');selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
  try{const data=await api(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/output/${task.id}?`+params({}));selectedOutput=data;renderOutput();}catch(error){text('#output-text',error.message);}
 }
 function renderOutput(){if(!selectedOutput)return;const stream=selectedOutput.streams[$('#stream').value];text('#output-text',stream?.content||'(This output stream is empty or was not captured.)');text('#output-info',`${stream?memory(stream.size):'0 B'}${stream?.truncated?' · Truncated: beginning and end shown':''} · Saved output for call ${selectedOutput.task_id}`);}
@@ -136,7 +141,7 @@ let searchTimer;$('#task-filter')?.addEventListener('input',()=>{taskPage=0;clea
 $('#previous')?.addEventListener('click',()=>{taskPage--;refresh();});$('#next')?.addEventListener('click',()=>{taskPage++;refresh();});
 $('#sync')?.addEventListener('click',()=>startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'sync'}));
 $('#prepare')?.addEventListener('click',()=>startOperation('/api/workflow/action?'+params({directory:document.body.dataset.directory}),{action:'all'}));
-$('#submit')?.addEventListener('click',()=>{if(confirm('Dispatch a new Slurm job? Slurmy will prepare the submission, build declared resources on the cluster, and submit its batch jobs. Build outputs may replace files in declared resource directories.'))startOperation('/api/workflow/action?'+params({directory:document.body.dataset.directory}),{action:'submit'});});
+$('#submit')?.addEventListener('click',()=>startOperation('/api/workflow/action?'+params({directory:document.body.dataset.directory}),{action:'submit'}));
 $('#duplicate')?.addEventListener('click',async()=>{
  const suggested=(document.querySelector('h1')?.textContent||'workflow')+'-copy';
  const name=prompt('Name the workflow copy (lowercase letters, numbers, and hyphens):',suggested);

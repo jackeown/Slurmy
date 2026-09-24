@@ -62,6 +62,7 @@ def task_rows(job):
         yield dict(id=task_id, system=definition.system if definition else '',
                    problem=definition.problem if definition else '',
                    command=definition.command if definition else '',
+                   limiter_command=definition.limiter_command if definition else '',
                    directory=definition.solver_root if definition else '',
                    state=state, wall=wall, cpu=result.cpu_seconds if result else None,
                    memory=result.max_memory_kib * 1024 if result and result.max_memory_kib is not None else None,

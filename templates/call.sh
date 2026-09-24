@@ -10,6 +10,8 @@ export OMP_NUM_THREADS=$CORES
 work=$(mktemp -d "${SLURM_TMPDIR:-${TMPDIR:-/tmp}}/slurmy-call.XXXXXXXX")
 stem=$(printf 'task_%09d_%s' "$TASK_ID" "$TASK_KEY")
 export SOLVER_LOG="$work/$stem.solver.log"
+export SOLVER_STDERR_LOG="$work/$stem.solver-stderr.log"
+export LIMITER_STDOUT_LOG="$work/$stem.limiter-stdout.log"
 export WATCHER_LOG="$work/$stem.watcher.log"
 export VAR_FILE="$work/$stem.var"
 export CONTROLLER_LOG="$work/$stem.controller.log"
@@ -30,7 +32,7 @@ cd "$JOB_DIR/rootfs/$SOLVER_ROOT_REL"
 # A session lets cancellation terminate the full limiter/solver process group.
 # The outer timeout catches a broken limiter while allowing its cleanup buffer.
 setsid timeout --signal=TERM --kill-after=5 "$((WC_LIMIT + 25))" \
-    bash "$JOB_DIR/timed_call.sh" > "$SOLVER_LOG" 2> "$CONTROLLER_LOG" &
+    bash "$JOB_DIR/timed_call.sh" > "$LIMITER_STDOUT_LOG" 2> "$CONTROLLER_LOG" &
 active=$!
 set +e
 wait "$active"

@@ -261,8 +261,7 @@ sacct -X -S "$start" -n -P \
 printf '\0'
 """
 
-# Task output is extracted only when the user asks for it. runsolver combines a
-# solver's stdout and stderr in the .solver.log member. To keep a mistaken huge
+# Task output is extracted only when the user asks for it. To keep a mistaken huge
 # output from flooding SSH or the terminal, each displayed member is capped at
 # 1 MiB, preserving both its beginning and end.
 REMOTE_TASK_OUTPUT_SCRIPT = r"""
@@ -325,6 +324,8 @@ emit_member() {
 }
 
 emit_member solver solver.log
+emit_member solver_stderr solver-stderr.log
+emit_member limiter_stdout limiter-stdout.log
 emit_member controller controller.log
 emit_member watcher watcher.log
 emit_member variables var
@@ -353,6 +354,7 @@ class TaskDefinition:
     system: str = ""
     problem: str = ""
     command: str = ""
+    limiter_command: str = ""
     solver_root: str = ""
 
 
@@ -836,7 +838,8 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
                     task_key=str(item.get("task_key", "")),
                     system=str(item.get("system", "")),
                     problem=str(item.get("problem", "")),
-                    command=str(item.get("command", "")),
+                    command=str(item.get("remote_command") or item.get("command", "")),
+                    limiter_command=str(item.get("limiter_command", "")),
                     solver_root=str(item.get("solver_root", "")),
                 )
             for task_id, result in results.items():
@@ -873,7 +876,9 @@ def parse_task_output(job_id: str, task_id: int, archive: str, data: bytes) -> T
     parts = data.split(b"\0")
     streams: dict[str, OutputStream] = {}
     labels = {
-        "solver": "Solver stdout + stderr",
+        "solver": "Solver stdout",
+        "solver_stderr": "Solver stderr",
+        "limiter_stdout": "Limiter stdout",
         "controller": "Runsolver controller",
         "watcher": "Runsolver watcher",
         "variables": "Runsolver variables",

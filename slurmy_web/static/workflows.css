@@ -4,10 +4,8 @@
 }
 
 .workflow-group > summary {
-  display: list-item;
   padding: 20px 24px;
   font-size: 17px;
-  list-style-position: inside;
 }
 
 .workflow-group[open] > summary {
@@ -27,7 +25,6 @@
 
 .workflow-group .count {
   display: inline-grid;
-  float: right;
   place-items: center;
   min-width: 28px;
   height: 28px;
@@ -55,6 +52,39 @@
   text-align: left;
 }
 .theme-toggle:hover { background: #244237; }
+
+.steps li { padding: 0; border-bottom: 0; }
+.steps li > button {
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-bottom: 2px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.steps li > button:hover:not(:disabled) { color: var(--green); background: #eaf3e9; }
+html[data-theme="dark"] .steps li > button:hover:not(:disabled) { background: #20382e; }
+.steps li.current > button { color: var(--green); border-bottom-color: var(--green); font-weight: 700; }
+.steps li > button:disabled { opacity: .65; cursor: wait; }
+
+.glob-row .path-input-row { display: flex; align-items: center; gap: 9px; }
+.glob-row .path-input-row input { flex: 1 1 auto; width: 100%; }
+.glob-row .path-input-row .path-browse { flex: 0 0 auto; margin: 0; align-self: auto; white-space: nowrap; }
+.glob-row > .remove { flex: 0 0 auto; }
+.limiter-invocation-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; }
+.limiter-invocation-row textarea { width: 100%; }
+.limiter-invocation-row button { white-space: nowrap; }
+
+@media(max-width:760px) {
+  .steps li > button { padding: 10px 5px; font-size: 10px; }
+  .limiter-invocation-row { grid-template-columns: 1fr; }
+  .limiter-invocation-row button { justify-self: start; }
+}
 
 html[data-theme="dark"] {
   color-scheme: dark;
@@ -142,9 +172,53 @@ button.path-item:hover:not(:disabled) { background: #f2f7f3; }
 
 /* Shared table and section controls keep dense pages inspectable without
    making users scroll past material they are not currently using. */
-.collapse-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.collapse-header > .collapse-button { flex: 0 0 auto; padding: 6px 10px; font-size: 11px; }
+.collapse-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; }
+.collapse-caption { display: flex; align-items: center; gap: 9px; }
+h2.collapse-header, h3.collapse-header { justify-content: flex-start; }
+.collapse-toggle {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  background: transparent;
+}
+.collapse-toggle:hover { color: var(--green); background: #eaf3e9; }
+html[data-theme="dark"] .collapse-toggle:hover { background: #20382e; }
+.collapse-toggle::before, summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid currentColor;
+  transform: rotate(0deg);
+  transition: transform 180ms ease;
+}
+.collapse-toggle[aria-expanded="true"]::before, details[open] > summary::before { transform: rotate(90deg); }
+.collapse-toggle:focus-visible { outline: 2px solid #52aa86; outline-offset: 2px; }
 .collapsed > :not(.collapse-header) { display: none !important; }
+
+summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  list-style: none;
+}
+summary::-webkit-details-marker { display: none; }
+summary::marker { content: ""; }
+summary::before { flex: 0 0 auto; color: var(--muted); }
+summary:hover::before { color: var(--green); }
+summary .count { margin-left: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  .collapse-toggle::before, summary::before { transition: none; }
+}
 .sort-button { background: transparent; color: var(--muted); border: 0; padding: 4px 5px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .35px; text-transform: uppercase; white-space: nowrap; }
 .sort-button:hover, .sort-button[aria-sort] { background: #eaf3e9; color: var(--green); }
 html[data-theme="dark"] .sort-button:hover, html[data-theme="dark"] .sort-button[aria-sort] { background: #20382e; }

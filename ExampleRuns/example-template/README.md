@@ -1,16 +1,25 @@
-# 📝 Experiment template
+# 📝 Workflow template
 
-Copy this folder within ExampleRuns, or into YourRuns/GENERATED (then change
-`REPO_ROOT` in the Makefile to `../../..`).
+Copy this folder within `ExampleRuns`, or into
+`YourRuns/GENERATED/NAME/` (then change `REPO_ROOT` in the Makefile to
+`../../..`).
 
 1. Put your solver executable and supporting files in `bin/`, or change `solver_directory` and
    the resource root in the input files to existing directories elsewhere.
 2. Edit `jobpairs.csv`: one command/problem per row, with all per-call limits
    and exclusivity choices.
 3. Edit `building.txt`: the solver's blank recipe line currently means no build.
-   Replace it with a build-script path if the executable needs remote compilation.
+   Replace it with a build-script path if the executable needs remote compilation,
+   and list that script in `BUILD_RECIPES` in the Makefile so changes refresh the
+   packaged submission files.
 4. Review the runsolver invocation in `resource_limiter_template.txt`.
 5. Set `DEG_PAR` in the Makefile, then `make` and `make submit`.
+
+When copying to `YourRuns/GENERATED/NAME/`, change the two shared runsolver
+paths in `building.txt` and `resource_limiter_template.txt` from
+`../../building-dependencies/...` to `../../../building-dependencies/...`, or
+replace them with absolute paths. Update the runsolver path in `BUILD_RECIPES`
+the same way. These paths resolve from the file that contains them.
 
 The placeholder `./my-solver` is deliberately not a supplied executable.
 Runsolver is built remotely using the shared recipe.
@@ -24,4 +33,4 @@ change.
 
 For all combinations, create a configurations table without the problem column
 and use [slurmy-pairs.py](../../slurmy-pairs.py). For guided setup, use the
-[web experiment builder](../../YourRuns/example-generator/README.md).
+[web workflow builder](../../YourRuns/example-generator/README.md).

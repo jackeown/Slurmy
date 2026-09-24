@@ -154,6 +154,19 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int) ->
     # First word is an executable path, not an arbitrary shell expression.
     words = shlex.split(limiter)
     limiter_path = path_at(words[0], limiter_file.parent)
+    if limiter_path.name == "runsolver":
+        # Older web forms suggested only limits and the solver command. Supply
+        # runsolver's output paths so result inspection and limit diagnosis work
+        # for those workflows too. Options must precede the solver invocation.
+        capture_options = (
+            ("--watcher-data", "{{watcher_log}}"),
+            ("--var", "{{var_file}}"),
+            ("--solver-data", "{{solver_log}}"),
+        )
+        for option, placeholder in capture_options:
+            if option not in words:
+                limiter = limiter.replace("{{solver_command}}", option + " " + placeholder + " {{solver_command}}", 1)
+        words = shlex.split(limiter)
     roots = [root for root, _ in builds]
     if not any(limiter_path.is_relative_to(root) for root in roots):
         raise SlurmyError("limiter executable must be inside a building.txt resource root")
@@ -209,7 +222,9 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int) ->
         for task in tasks:
             call = assets / "calls" / str(task["task_id"])
             call.mkdir()
-            write_script(call / "solver.sh", "#!/usr/bin/env bash\n" + task["remote_command"] + "\n")
+            write_script(call / "solver.sh", "#!/usr/bin/env bash\n" +
+                         "# Capture the prover's stderr separately from its stdout.\n" +
+                         "( " + task["remote_command"] + " ) 2> \"$SOLVER_STDERR_LOG\"\n")
             write_script(call / "limiter.sh", "#!/usr/bin/env bash\n" + task["limiter_command"] + "\n")
             config = "".join(key.upper() + "=" + shlex.quote(str(value)) + "\n" for key, value in {
                 "task_id": task["task_id"], "task_key": task["task_key"], "batch_id": task["batch_id"],

@@ -206,6 +206,12 @@ limits; those outcomes are not infrastructure issues. Other limiters can be
 invoked, but their tool-specific exit codes and output formats are not
 automatically interpreted as runsolver results.
 
+For a runsolver executable, Slurmy adds any missing `--watcher-data`, `--var`,
+and `--solver-data` capture options when preparing the call scripts. The saved
+call output separates solver stdout, solver stderr, limiter stdout,
+runsolver's watcher log, its measurement variables, and controller diagnostics. The job page shows the
+rendered limiter command for each call.
+
 </blockquote>
 </details>
 
