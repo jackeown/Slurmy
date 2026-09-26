@@ -13,7 +13,14 @@ Each workflow uses the same three-file interface documented in the
 
 ## 🚀 Run an example
 
-After completing the main README's setup:
+After completing the main README's setup, run `python slurmy-web.py` from the
+repository root. Open **Workflows → Example workflows**, choose an example, and
+use **Prepare Slurm submission** or **Dispatch new Slurm job**. To change the
+settings, duplicate the example into `YourRuns` and select **Edit settings**.
+Prover commands and builds are together under Provers; the limiter's invocation
+and build are together under Limiter.
+
+The same examples work from the command line:
 
 ```bash
 cd ExampleRuns/example-combined
@@ -26,9 +33,10 @@ make stop                     # Select an active job to cancel.
 
 Use `SLURMY_HOST=your-alias SLURMY_PARTITION=your-partition make submit`
 to override the example defaults (`datalab`, `CPU-amd`).
-`make DEG_PAR=2` changes within-batch concurrency at generation time.
-After changing inputs, recipes, or degree, run `make`; Slurmy refreshes the
-generated submission files automatically.
+To change within-batch concurrency, run `make clean`, then `make DEG_PAR=2`
+(or edit `DEG_PAR` in the Makefile). Changing only a command-line Make variable
+does not invalidate existing submission scripts. After changing input files or
+recipes, run `make`; Slurmy refreshes the scripts automatically.
 
 ## 📁 What to edit
 

@@ -15,8 +15,9 @@ import time
 from slurmy import COLUMNS, generate, path_at, positive, read_builds, read_pairs
 
 REPO = Path(__file__).resolve().parents[1]
-BASE = REPO / 'YourRuns/example-generator'
-GENERATED = REPO / 'YourRuns/GENERATED'
+USER_RUNS = REPO / 'YourRuns'
+BASE = USER_RUNS
+LEGACY_RUNS = USER_RUNS / 'GENERATED'
 DELETED = REPO / 'YourRuns/.deleted-workflows'
 
 
@@ -63,7 +64,7 @@ def csv_text(rows, columns=COLUMNS):
     return stream.getvalue()
 
 
-def imported_rows(filename, configurations=False):
+def imported_rows(filename, configurations=False, check_paths=True):
     with filename.open(encoding='utf-8-sig', newline='') as stream:
         reader = csv.DictReader(stream)
         expected = set(COLUMNS) - ({'problem'} if configurations else set())
@@ -75,9 +76,11 @@ def imported_rows(filename, configurations=False):
     for row in rows:
         if None in row:
             raise ValueError('Malformed CSV row.')
-        row['solver_directory'] = str(existing(row.get('solver_directory'), 'directory', filename.parent))
+        row['solver_directory'] = str(existing(row.get('solver_directory'), 'directory', filename.parent)
+                                      if check_paths else path_at(row.get('solver_directory', ''), filename.parent))
         if not configurations:
-            row['problem'] = str(existing(row.get('problem'), base=filename.parent))
+            row['problem'] = str(existing(row.get('problem'), base=filename.parent)
+                                 if check_paths else path_at(row.get('problem', ''), filename.parent))
     return rows
 
 
@@ -85,7 +88,7 @@ def specification(data, destination_override=None):
     name = data.get('name', '')
     if not isinstance(name, str) or not re.fullmatch(r'[a-z0-9][a-z0-9-]*', name):
         raise ValueError('Workflow name: use lowercase letters, numbers and hyphens.')
-    destination = destination_override or GENERATED / name
+    destination = destination_override or USER_RUNS / name
     if destination_override is None and destination.exists():
         raise ValueError(f'Workflow already exists: {destination}')
     host, partition = alias(data.get('host')), alias(data.get('partition'))
@@ -168,7 +171,7 @@ def specification(data, destination_override=None):
             (staging / filename).write_text(body, encoding='utf-8')
         (staging / 'building.txt').write_text(building_text(staging))
         generate(staging / 'jobpairs.csv', staging / 'building.txt', staging / 'resource_limiter_template.txt', degree)
-    files['Makefile'] = (f'REPO_ROOT := ../../..\nDEG_PAR := {degree}\nSLURMY_HOST := {host}\n'
+    files['Makefile'] = (f'REPO_ROOT := ../..\nDEG_PAR := {degree}\nSLURMY_HOST := {host}\n'
                          f'SLURMY_PARTITION := {partition}\ninclude $(REPO_ROOT)/templates/workflow.mk\n')
     if configs:
         files['configurations.csv'] = csv_text(configs, tuple(c for c in COLUMNS if c != 'problem'))
@@ -209,7 +212,7 @@ def rename_and_save(data, source):
     name = data.get('name', '')
     if not isinstance(name, str) or not re.fullmatch(r'[a-z0-9][a-z0-9-]*', name):
         raise ValueError('Workflow name: use lowercase letters, numbers and hyphens.')
-    destination = GENERATED / name
+    destination = USER_RUNS / name
     if destination == source:
         manifest = source / '.slurmy-workflow.json'
         if manifest.is_file():
@@ -257,12 +260,121 @@ def rename_and_save(data, source):
 
 def delete_workflow(source):
     """Remove a user workflow from the UI by moving it to a recoverable archive."""
-    if source.parent != GENERATED.resolve():
+    if source.parent != USER_RUNS.resolve():
         raise ValueError('Only user workflows can be deleted.')
     DELETED.mkdir(parents=True, exist_ok=True)
     archived = DELETED / f'{source.name}-{time.time_ns()}'
     source.rename(archived)
     return archived
+
+
+def migrate_user_runs():
+    """Move older workflows up one directory, retaining their job-history links."""
+    if not LEGACY_RUNS.is_dir():
+        return
+    sources = [path for path in sorted(LEGACY_RUNS.iterdir())
+               if path.is_dir() and (path / 'Makefile').is_file()]
+    for source in sources:
+        if (USER_RUNS / source.name).exists():
+            raise ValueError(f'Cannot migrate {source}: {USER_RUNS / source.name} already exists.')
+    mappings = {str(source): str(USER_RUNS / source.name) for source in sources}
+    for migrated in USER_RUNS.iterdir():
+        manifest = migrated / '.slurmy-workflow.json'
+        if migrated.is_dir() and manifest.is_file():
+            for old in json.loads(manifest.read_text()).get('_previous_directories', []):
+                if Path(old).parent == LEGACY_RUNS:
+                    mappings[old] = str(migrated)
+    def remap(value):
+        if isinstance(value, str):
+            for old, new in sorted(mappings.items(), key=lambda item: len(item[0]), reverse=True):
+                value = value.replace(old, new)
+            return value
+        if isinstance(value, list):
+            return [remap(item) for item in value]
+        if isinstance(value, dict):
+            return {key: remap(item) for key, item in value.items()}
+        return value
+    old_base = USER_RUNS / 'example-generator'
+    plans = []
+    for source in sources:
+        manifest = source / '.slurmy-workflow.json'
+        data = json.loads(manifest.read_text()) if manifest.is_file() else decisions(source, check_paths=False)
+        data['name'] = source.name
+        data.setdefault('_created_at', source.stat().st_ctime)
+        # Saved browser decisions may retain paths relative to the former
+        # generator directory. Normalize them before changing the form's base.
+        for key in ('jobpairs', 'configurations_file', 'building_file', 'limiter_file'):
+            if data.get(key):
+                data[key] = str(path_at(data[key], old_base))
+        for config in data.get('configurations', []):
+            config['solver_directory'] = str(path_at(config['solver_directory'], old_base))
+        for resource in data.get('resources', []):
+            for key in ('root', 'script'):
+                if resource.get(key):
+                    resource[key] = str(path_at(resource[key], old_base))
+        data['globs'] = [str(expand_repo_root(value) or path_at(value, old_base))
+                         for value in data.get('globs', [])]
+        if data.get('limiter_mode') == 'inline':
+            invocation = data.get('limiter', '')
+            lexer = shlex.shlex(invocation, posix=True)
+            lexer.whitespace_split = True
+            lexer.commenters = ''
+            executable = lexer.get_token()
+            if executable:
+                data['limiter'] = shlex.quote(str(path_at(executable, old_base))) + ' ' + invocation[lexer.instream.tell():]
+        destination = USER_RUNS / source.name
+        previous = data.get('_previous_directories', [])
+        data = remap(data)
+        data['_previous_directories'] = [*previous, str(source)]
+        files = {}
+        # Relocate definitions without validating resources: a workflow with a
+        # missing prover/problem must still migrate and remain editable.
+        for filename in ('jobpairs.csv', 'configurations.csv'):
+            file = source / filename
+            if not file.is_file():
+                continue
+            with file.open(encoding='utf-8-sig', newline='') as stream:
+                reader = csv.DictReader(stream)
+                columns, rows = reader.fieldnames, list(reader)
+            for row in rows:
+                for key in ('solver_directory', 'problem'):
+                    if row.get(key):
+                        row[key] = str(path_at(row[key], source))
+            files[filename] = remap(csv_text(rows, columns))
+        file = source / 'building.txt'
+        files[file.name] = remap(''.join(str(path_at(line.strip(), source)) + '\n' if line.strip() else '\n'
+                                        for line in file.read_text().splitlines()))
+        file = source / 'resource_limiter_template.txt'
+        invocation = file.read_text().strip()
+        lexer = shlex.shlex(invocation, posix=True)
+        lexer.whitespace_split = True
+        lexer.commenters = ''
+        executable = lexer.get_token()
+        if executable:
+            invocation = shlex.quote(str(path_at(executable, source))) + ' ' + invocation[lexer.instream.tell():]
+        files[file.name] = remap(invocation) + '\n'
+        file = source / 'problem-globs.txt'
+        if file.is_file():
+            files[file.name] = remap(''.join(str(expand_repo_root(line) or path_at(line, source)) + '\n'
+                                            for line in file.read_text().splitlines() if line.strip()))
+        files['Makefile'] = re.sub(r'(?m)^REPO_ROOT\s*:?=.*$', 'REPO_ROOT := ../..',
+                                   remap((source / 'Makefile').read_text()), count=1)
+        for recipe in source.glob('build-resource-*.sh'):
+            files[recipe.name] = remap(recipe.read_text())
+        files['.slurmy-workflow.json'] = json.dumps(data, indent=2, sort_keys=True) + '\n'
+        plans.append((source, destination, files))
+    for source, destination, files in plans:
+        source.rename(destination)
+        for filename, body in files.items():
+            target = destination / filename
+            temporary = target.with_name('.' + target.name + '.slurmy-new')
+            temporary.write_text(body, encoding='utf-8')
+            temporary.replace(target)
+            if target.suffix == '.sh':
+                target.chmod(0o755)
+    # Unknown files are left intact rather than silently discarded.
+    if not any(LEGACY_RUNS.iterdir()):
+        LEGACY_RUNS.rmdir()
 
 
 def resource_roles(data):
@@ -292,7 +404,7 @@ def resource_roles(data):
     return data
 
 
-def decisions(directory):
+def decisions(directory, check_paths=True):
     """Load saved builder decisions, reconstructing older workflows when necessary."""
     manifest = directory / '.slurmy-workflow.json'
     if manifest.is_file():
@@ -310,13 +422,19 @@ def decisions(directory):
         if match:
             glob_values = shlex.split(match.group(1))
     if config_file.is_file() and glob_values:
-        configs = imported_rows(config_file, True)
+        configs = imported_rows(config_file, True, check_paths)
         mode = 'interactive'
         globs = [str(expand_repo_root(value) or path_at(value, directory)) for value in glob_values]
         jobpairs = ''
     else:
         configs, globs, mode, jobpairs = [], [], 'jobpairs', str(directory / 'jobpairs.csv')
-    builds = read_builds(directory / 'building.txt')
+    if check_paths:
+        builds = read_builds(directory / 'building.txt')
+    else:
+        lines = (directory / 'building.txt').read_text().splitlines()
+        builds = [(path_at(lines[i].strip(), directory),
+                   path_at(lines[i + 1].strip(), directory) if lines[i + 1].strip() else None)
+                  for i in range(0, len(lines), 2)]
     resources = [dict(root=str(root), mode='script' if recipe else 'none',
                       script=str(recipe) if recipe else '', commands='') for root, recipe in builds]
     limiter = (directory / 'resource_limiter_template.txt').read_text(encoding='utf-8').strip()
@@ -338,7 +456,7 @@ def duplicate(source, name):
     if not isinstance(name, str) or not re.fullmatch(r'[a-z0-9][a-z0-9-]*', name):
         raise ValueError('Workflow name: use lowercase letters, numbers and hyphens.')
     source_data = decisions(source)
-    destination = GENERATED / name
+    destination = USER_RUNS / name
     if destination.exists():
         raise ValueError(f'Workflow already exists: {destination}')
     destination.mkdir(parents=True)
@@ -356,7 +474,7 @@ def duplicate(source, name):
         if not copied or not (destination / 'Makefile').is_file():
             raise ValueError('The source does not contain a duplicable workflow definition.')
         makefile = destination / 'Makefile'
-        makefile.write_text(re.sub(r'(?m)^REPO_ROOT\s*:?=.*$', 'REPO_ROOT := ../../..',
+        makefile.write_text(re.sub(r'(?m)^REPO_ROOT\s*:?=.*$', 'REPO_ROOT := ../..',
                                    makefile.read_text(encoding='utf-8'), count=1), encoding='utf-8')
         def remap(value):
             if isinstance(value, str) and (value == str(source) or value.startswith(str(source) + '/')):

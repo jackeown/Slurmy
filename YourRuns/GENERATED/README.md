@@ -1,6 +1,0 @@
-# 📂 Generated workflows
-
-The web workflow builder creates `NAME/` folders here.
-Each contains explicit jobpairs, resource/build declarations, a limiter template,
-and a Makefile. Solver and problem resources stay in their original locations
-until build/submission packaging; they are not copied here.

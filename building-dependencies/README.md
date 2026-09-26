@@ -5,6 +5,11 @@ a Slurm job and downloading its outputs. `runsolver/build.sh` is the bundled
 runsolver source-build recipe. The three-file workflow automatically reuses
 this driver for non-empty recipe lines in `building.txt`.
 
+In the web workflow builder, configure each prover's recipe under **Provers**
+and the limiter's recipe under **Limiter**. Choose an existing Bash script or
+enter commands; a prebuilt executable can instead be packaged as-is. Dispatching
+a workflow runs the declared recipes before packaging the job.
+
 For standalone builds or custom build allocations:
 
 ```bash

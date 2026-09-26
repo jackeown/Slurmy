@@ -32,7 +32,7 @@ def safe_job(value):
 def summary(job):
     workflow_directory = job.metadata.get('workflow_directory', '')
     workflow_name = Path(workflow_directory).name if workflow_directory else ''
-    if workflow_name.startswith('example-') and Path(workflow_directory).parent == workflows.GENERATED:
+    if workflow_name.startswith('example-') and Path(workflow_directory).parent == workflows.USER_RUNS:
         workflow_name = workflow_name.removeprefix('example-')
     return dict(id=job.job_id, name=workflow_name or job.job_name, state=job.state,
                 total=job.task_count, completed=job.effective_completed,
@@ -71,6 +71,7 @@ def task_rows(job):
 
 
 def create_app():
+    workflows.migrate_user_runs()
     app = Flask(__name__)
     app.config.update(SECRET_KEY=secrets.token_hex(32), MAX_CONTENT_LENGTH=2 * 1024 * 1024,
                       SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
@@ -138,10 +139,15 @@ def create_app():
         return job
 
     def directory():
-        path = workflows.existing(request.args.get('directory'), 'directory').resolve()
-        allowed = [REPO / 'ExampleRuns', workflows.GENERATED]
+        requested = request.args.get('directory')
+        if requested:
+            old = workflows.path_at(requested, workflows.BASE)
+            if old.parent == workflows.LEGACY_RUNS and (workflows.USER_RUNS / old.name).is_dir():
+                requested = str(workflows.USER_RUNS / old.name)
+        path = workflows.existing(requested, 'directory').resolve()
+        allowed = [REPO / 'ExampleRuns', workflows.USER_RUNS]
         if not any(path.is_relative_to(root.resolve()) and path != root.resolve() for root in allowed):
-            raise ValueError('Choose a workflow under ExampleRuns or YourRuns/GENERATED.')
+            raise ValueError('Choose a workflow under ExampleRuns or YourRuns.')
         if not (path / 'Makefile').is_file():
             raise ValueError('Choose a directory containing a workflow Makefile.')
         return path
@@ -174,10 +180,10 @@ def create_app():
         def entries(root):
             if not root.exists():
                 return []
-            return [dict(name=(path.name.removeprefix('example-') if root == workflows.GENERATED else path.name),
+            return [dict(name=(path.name.removeprefix('example-') if root == workflows.USER_RUNS else path.name),
                          directory=str(path.resolve()), created=created_label(path)) for path in sorted(root.iterdir())
                     if path.is_dir() and (path / 'Makefile').is_file()]
-        return page('experiments.html', user_workflows=entries(workflows.GENERATED),
+        return page('experiments.html', user_workflows=entries(workflows.USER_RUNS),
                     example_workflows=entries(REPO / 'ExampleRuns'))
 
     @app.get('/experiments')
@@ -189,10 +195,10 @@ def create_app():
         path = directory()
         files = {name: (path / name).read_text() for name in
                  ('jobpairs.csv', 'configurations.csv', 'building.txt', 'resource_limiter_template.txt', 'Makefile') if (path / name).is_file()}
-        name = path.name.removeprefix('example-') if path.parent == workflows.GENERATED else path.name
+        name = path.name.removeprefix('example-') if path.parent == workflows.USER_RUNS else path.name
         created = datetime.fromtimestamp(path.stat().st_ctime).astimezone().strftime('%Y-%m-%d %H:%M')
         return page('experiment.html', directory=str(path), name=name, created=created, files=files,
-                    base=str(workflows.GENERATED.resolve()) + os.sep,
+                    base=str(workflows.USER_RUNS.resolve()) + os.sep,
                     prepared=(path / 'submit.sh').is_file())
 
     @app.get('/experiment')
@@ -206,7 +212,7 @@ def create_app():
     @app.get('/workflow/edit')
     def edit_workflow():
         path = directory()
-        if path.parent != workflows.GENERATED.resolve():
+        if path.parent != workflows.USER_RUNS.resolve():
             raise ValueError('Duplicate an example before editing it.')
         return page('new.html', base=str(workflows.BASE), initial=workflows.decisions(path),
                     editing=True, directory=str(path))
@@ -305,7 +311,7 @@ def create_app():
     @app.post('/api/workflows/update')
     def update_workflow():
         path = directory()
-        if path.parent != workflows.GENERATED.resolve():
+        if path.parent != workflows.USER_RUNS.resolve():
             raise ValueError('Duplicate an example before editing it.')
         data = request.get_json() or {}
         with guard:
@@ -322,7 +328,7 @@ def create_app():
     @app.post('/api/workflows/delete')
     def delete_workflow():
         path = directory()
-        if path.parent != workflows.GENERATED.resolve():
+        if path.parent != workflows.USER_RUNS.resolve():
             raise ValueError('Example workflows cannot be deleted. Duplicate one to customize it.')
         expected = path.name.removeprefix('example-')
         if (request.get_json() or {}).get('name') != expected:

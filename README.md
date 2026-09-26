@@ -5,27 +5,24 @@
 
 </div>
 
-Run resource-limited theorem-prover jobs on a Slurm cluster. Define a reusable
-workflow, then specify
-each solver–problem call explicitly, or generate all combinations as a convenience.
-Build on the cluster, inspect the generated shell scripts, monitor progress,
-and synchronize results.
+Create theorem-proving workflows, build their provers and resource limiters on
+a Slurm cluster, and inspect each job's progress and output in a local web app.
 
-1. Prepare `jobpairs.csv`, `building.txt`, and `resource_limiter_template.txt`.
-2. Run `slurmy.py` to generate a readable `submit.sh` and its helper files.
-3. Run `submit.sh`: build dependencies on compute nodes, download them for
-   packaging, transfer the job, and submit its batches.
-4. Open the local web app to monitor the job and inspect each call's output.
-
-Python runs on your computer. The cluster runs Bash, Slurm commands, and your
-cluster-built executables. See [ExampleRuns](ExampleRuns/README.md) for ready-made
-Vampire, E, and Drodi workflows, or use the
-[web workflow builder](YourRuns/example-generator/README.md).
+A **workflow** is a reusable definition: prover commands, problem selection,
+build recipes, limits, and cluster settings. Dispatching a workflow creates a
+**job**, containing explicit solver–problem calls grouped into Slurm batches.
 
 ```bash
 python -m pip install -r requirements.txt
-python slurmy-web.py  # Opens the browser and stays attached; press Ctrl-C to stop it.
+python slurmy-web.py  # Opens the browser; Ctrl-C stops the local server.
 ```
+
+Open **Workflows** to browse the supplied examples, or **New workflow** to
+create your own. User workflows live directly in `YourRuns/NAME/`.
+See [example workflows](ExampleRuns/README.md) for Vampire, E, and Drodi.
+
+Python runs on your computer. Building and proving run on the cluster, so your
+computer and the cluster can use different architectures.
 
 <details>
 <summary><strong>🚀 Requirements and setup</strong></summary>
@@ -76,22 +73,148 @@ Binaries are built and run on the cluster; the laptop architecture may differ.
 </details>
 
 <details>
-<summary><strong>📝 Create your own submission</strong></summary>
+<summary><strong>🌐 Create workflows and run jobs in the browser</strong></summary>
 
 <blockquote>
 
-The core interface does not infer solver–problem combinations or choose a
-working directory from a build recipe. Every CSV row describes exactly one call.
+The guided setup follows **Basics → Provers → Problems → Limiter → Review**.
+
+- **Basics:** name the workflow, choose the SSH host and Slurm partition,
+  and set the maximum concurrent calls within each batch.
+- **Provers:** enter commands and per-call limits or import a CSV. Describe
+  optional prover build recipes alongside the commands. Each root is built
+  once per submission, even when multiple configurations use it.
+- **Problems:** select one or more globs. Their union is paired with every
+  configuration; duplicate problem paths are removed. An explicit jobpairs CSV
+  already supplies its problems.
+- **Limiter:** enter or import the limiter invocation and describe its resource
+  root and optional build recipe. Both invocation sections have collapsible
+  placeholder references and editable examples.
+- **Review:** validate and inspect the resulting specification, then save it.
+  Saving does not build or submit anything.
+
+Path fields have a local file browser and are checked when you leave them.
+Relative paths entered in the form resolve from `YourRuns/`; paths in imported
+files resolve from those files' directories. Saved call/resource paths are
+absolute. Selecting a path does not upload or copy its contents.
+
+On a workflow page:
+
+| Action | Effect |
+| --- | --- |
+| Prepare Slurm submission | Create or refresh submission scripts and helper files locally. |
+| Dispatch new Slurm job | Prepare scripts, build declared resources on compute nodes, download and package them, then submit the batches. |
+| Edit settings | Revisit the saved form choices, including the name. |
+| Duplicate workflow | Create an independent user workflow from an example or an existing workflow. |
+| Delete workflow | Move a user workflow to `YourRuns/.deleted-workflows/` for recovery. |
+
+Examples are read-only; duplicate one to customize it. Renaming a user workflow
+moves its folder while keeping earlier jobs linked. Local definitions and past
+jobs appear separately: **Workflows** contains templates, **Job history**
+contains their particular runs.
+
+The job page shows searchable, sortable calls and progress. Select a completed
+call to inspect solver stdout/stderr, limiter output, watcher measurements, and
+controller diagnostics, including the exact solver and limiter commands.
+Ordinary time or memory limits are expected outcomes, not infrastructure issues.
+Percent complete counts finished calls; it does not estimate progress within
+a running proof search. **Sync results** downloads the saved results once;
+**Cancel** lets you select an active Slurm ID to cancel.
+
+The app provides a dark-mode toggle and collapsible section headers.
+Workflow pages list linked jobs; older submissions without a workflow path
+remain available under Job history.
+
+<details>
+<summary><strong>🖥️ Starting and stopping the app</strong></summary>
+
+<blockquote>
 
 ```bash
-python /path/to/Slurmy/slurmy.py jobpairs.csv building.txt resource_limiter_template.txt --deg_par 4
-# --deg_par: maximum number of jobpairs running simultaneously within EACH batch.
-
-bash ./submit.sh  # Build remotely, fetch artifacts, package inputs, and submit.
+python slurmy-web.py                  # Foreground; Ctrl-C stops this server.
+python slurmy-web.py --new            # Open New workflow.
+python slurmy-web.py --directory ExampleRuns/example-vampire
+python slurmy-web.py --job JOB_ID     # Open one submitted job.
+python slurmy-web.py --background     # Start/reuse the server and return to the shell.
+python slurmy-web.py --stop           # Stop the app; Slurm jobs continue.
 ```
 
-Generated files appear beside `jobpairs.csv`. Generation does not connect to
-the cluster. Existing submission files are not overwritten.
+Repeated invocations reuse an existing server. `make monitor` in a workflow
+starts/reuses it in the background and opens that workflow's page.
+Closing a browser tab does not stop the server. Restart after updating the code
+or dependencies. Let active build/submission operations finish first;
+`--stop` refuses while a web-launched operation is running.
+
+The app uses Flask and Waitress, listens only on `127.0.0.1` (normally port
+8765), and is intended for one local user. It can read local paths and execute
+trusted workflow commands with your permissions; do not expose it through a
+public tunnel, proxy, or shared server. Cross-site and unprotected state-changing
+requests are rejected. No database, CDN, or JavaScript build tools are required.
+
+`--host` / `SLURMY_HOST` chooses the SSH alias.
+`--port` / `SLURMY_WEB_PORT` chooses a local web port.
+`--no-browser` suppresses automatic browser opening. The legacy
+`slurmy-monitor.py` opens this same web app.
+
+Server and operation logs live in the ignored `.slurmy-web/` directory.
+Operations are tracked in memory. On Windows, run Slurmy inside WSL and open
+the printed localhost URL in your Windows browser if automatic opening fails.
+
+Older `YourRuns/GENERATED/NAME/` workflows are migrated to `YourRuns/NAME/`
+when the updated app starts. Their Makefiles, saved paths, and links to past jobs
+are updated; no jobs are submitted by this migration.
+
+</blockquote>
+</details>
+
+</blockquote>
+</details>
+
+<details>
+<summary><strong>📄 Workflow files and job specifications</strong></summary>
+
+<blockquote>
+
+A saved workflow is a reusable job definition. The web app creates a folder
+directly under `YourRuns/NAME/`, with files you can inspect or use from the
+command line. Solver and problem files remain in their original locations.
+
+```text
+YourRuns/my-workflow/
+  Makefile                       # Prepare, build, submit, monitor, sync, stop, clean.
+  jobpairs.csv                   # One explicit solver–problem call per row.
+  building.txt                   # Resource roots and optional remote build scripts.
+  resource_limiter_template.txt  # How to wrap each solver command.
+  .slurmy-workflow.json           # Saved form choices for editing and duplication.
+  configurations.csv             # Present for configuration × problem workflows.
+  problem-globs.txt              # Present for configuration × problem workflows.
+  build-resource-0.sh            # Present when build commands were entered in the form.
+```
+
+The core runner expects the three specification files and `--deg_par`.
+The Makefile and saved form choices support the web interface; they are not
+additional inputs to the core runner. An explicit jobpairs workflow does not
+need configurations or globs.
+
+A generated Makefile uses the shared targets:
+
+```make
+REPO_ROOT := ../..
+DEG_PAR := 4
+SLURMY_HOST := datalab
+SLURMY_PARTITION := CPU-amd
+include $(REPO_ROOT)/templates/workflow.mk
+```
+
+For configuration × problem workflows it also regenerates `jobpairs.csv`
+from the configurations and globs. Inline build scripts are stored beside the
+specifications; existing build scripts can remain elsewhere.
+
+The following examples use existing directories under `/home/me/provers`
+and problems under `/home/me/benchmarks`. Replace these with your own paths.
+The web app saves absolute paths; handwritten specification files may use
+paths relative to the containing file.
+Every CSV row describes exactly one call.
 
 <details>
 <summary><strong>📋 jobpairs.csv — explicit calls</strong></summary>
@@ -100,9 +223,9 @@ the cluster. Existing submission files are not overwritten.
 
 ```csv
 command,solver_directory,problem,wc_limit,cpu_limit,mem_limit,cores,cpus,exclusive_cpu,exclusive_node
-./solver --time {{cpu_limit}} {{problem}},resources/solver-a,problems/easy.p,70,60,2GiB,1,1,false,false
-./solver --threads {{cores}} {{problem}},resources/solver-b,problems/hard.p,130,120,4GiB,4,1,true,false
-./solver fixed-input.p,resources/solver-a,resources/solver-a/fixed-input.p,70,60,2GiB,1,1,false,true
+./solver --time {{cpu_limit}} {{problem}},/home/me/provers/solver-a,/home/me/benchmarks/easy.p,70,60,2GiB,1,1,false,false
+./solver --threads {{cores}} {{problem}},/home/me/provers/solver-b,/home/me/benchmarks/hard.p,130,120,4GiB,4,1,true,false
+./solver fixed-input.p,/home/me/provers/solver-a,/home/me/provers/solver-a/fixed-input.p,70,60,2GiB,1,1,false,true
 ```
 
 | Column | Meaning for this single call |
@@ -142,12 +265,12 @@ Each resource takes exactly two lines: its existing local root directory,
 then a Bash build-script path. A blank second line means “package as-is.”
 
 ```text
-resources/solver-a
-recipes/build-solver-a.sh
-resources/solver-b
+/home/me/provers/solver-a
+/home/me/recipes/build-solver-a.sh
+/home/me/provers/solver-b
 
-resources/runsolver
-recipes/build-runsolver.sh
+/home/me/provers/runsolver
+/home/me/recipes/build-runsolver.sh
 ```
 
 Paths resolve relative to `building.txt`. List the limiter's root here too.
@@ -191,7 +314,7 @@ It must lie inside a declared resource root; it may be absent initially if that
 root has a build recipe.
 
 ```text
-resources/runsolver/runsolver --cpu-limit {{cpu_limit}} --wall-clock-limit {{wc_limit}} --rss-swap-limit {{mem_limit_mib}} --watcher-data {{watcher_log}} --var {{var_file}} --solver-data {{solver_log}} {{solver_command}}
+/home/me/provers/runsolver/runsolver --cpu-limit {{cpu_limit}} --wall-clock-limit {{wc_limit}} --rss-swap-limit {{mem_limit_mib}} --watcher-data {{watcher_log}} --var {{var_file}} --solver-data {{solver_log}} {{solver_command}}
 ```
 
 All solver placeholders are available, plus `{{solver_command}}`,
@@ -330,122 +453,69 @@ splitting.
 </details>
 
 <details>
-<summary><strong>🌐 Local web app: create workflows and monitor jobs</strong></summary>
+<summary><strong>💻 Command-line submission and results</strong></summary>
 
 <blockquote>
 
-```bash
-python slurmy-web.py                  # Run in the foreground; Ctrl-C stops this server.
-python slurmy-web.py --new            # Run in the foreground and open the builder.
-python slurmy-web.py --directory ExampleRuns/example-vampire
-python slurmy-web.py --job JOB_ID     # Run in the foreground and open a job.
-python slurmy-web.py --background     # Start/reuse the app and return to the shell.
-python slurmy-web.py --stop           # Stop a background app; Slurm jobs continue.
-```
-
-`make monitor` in an example opens that workflow's page in the background. In
-`YourRuns/example-generator`, both `make` and `make monitor` open the builder.
-Repeated invocations reuse the same server. New submissions record their local
-workflow directory so their jobs appear on the corresponding workflow page;
-older jobs without this field remain in the full job history.
-
-The app has job history, searchable/paginated calls, saved per-call output,
-and local workflow pages.
-The guided builder supports explicit jobpair CSVs, imported configuration CSVs,
-or interactive solver configurations crossed with problem globs; optional
-remote build scripts/commands and limiter templates are included. Prover commands
-and build recipes are configured together under **Provers**; the limiter invocation
-and its build recipe are configured together under **Limiter**. Path fields
-are checked when you leave them. Preview validates the complete specification
-before saving it under `YourRuns/GENERATED`. Workflow names are used directly
-as folder names; Slurmy does not add a prefix. Path fields include a local file browser; it
-selects existing paths on the computer running Slurmy and does not upload their contents.
-Any workflow can be duplicated into an independent user workflow. **Edit settings** reopens the
-guided builder with the workflow's choices prefilled, so you can change call construction,
-problem selection, resource builds, limits, and limiter configuration without editing generated
-files. You can also rename the workflow; Slurmy moves its folder while keeping jobs submitted
-under earlier names linked to it. Deleting a user workflow requires typing its name and moves it
-to `YourRuns/.deleted-workflows` for recovery; submitted jobs remain in Job history. Examples
-remain read-only and cannot be deleted.
-
-Saving creates files only. **Prepare Slurm submission** validates the workflow and creates or
-refreshes the files that will be transferred to the cluster without submitting them. **Dispatch
-new Slurm job** prepares the submission, remotely builds its declared resources, and submits the
-resulting batch jobs to Slurm.
-Only trusted local Makefiles/commands should be run. A job's **Sync results**
-button downloads current results once; **Cancel** confirms the selected active
-Slurm job ID. The terminal tools are still available for scripting:
+The same specifications work without the web app:
 
 ```bash
-python slurmy-sync.py --follow        # Incrementally sync the newest job.
-python slurmy-sync.py JOB_ID          # Sync a particular job once.
-python slurmy-cancel.py               # Choose from active jobs.
-python slurmy-cancel.py SLURM_JOB_ID   # Cancel this Slurm ID non-interactively.
+python /path/to/Slurmy/slurmy.py jobpairs.csv building.txt resource_limiter_template.txt --deg_par 4
+# Maximum simultaneous calls within each batch.
+bash ./submit.sh  # Build remotely, fetch artifacts, package inputs, and submit.
 ```
 
-The web monitor shows per-call progress and elapsed times; select a completed call to
-inspect archived solver, watcher, and controller output. Percent complete counts
-finished calls, including ordinary resource-limit outcomes—it is not a prediction
-of how far a running proof search has progressed. Solver output can establish
-whether a completed call actually proved the benchmark.
+Generation does not connect to the cluster. It writes `submit.sh` and
+`submit.sh.files/` beside `jobpairs.csv` and refuses to overwrite them.
+Workflow Makefiles handle regeneration automatically when inputs or templates
+change. After changing `DEG_PAR`, run `make clean`, then `make`, so the new
+degree reaches the generated scripts.
 
-The app uses Flask with Waitress and listens **only on 127.0.0.1**, normally
-port 8765. It has no accounts or multi-user isolation: do not expose it through
-a proxy, public tunnel, or shared server. It can read local paths and run trusted
-workflow commands with your permissions. Cross-site requests and unprotected
-state-changing requests are rejected. No JavaScript build tools, CDN, or database
-are required; Textual/Rich are no longer dependencies.
+The shared Makefile supports `make` (prepare), `make build`, `make submit`,
+`make monitor`, `make sync`, `make stop`, and `make clean`.
+`make clean` removes submission scripts/helpers, retaining specification files
+and downloaded binaries. Submission builds resources again, even if you ran
+`make build` first.
 
-`--host` / `SLURMY_HOST` selects the SSH alias, not the web bind address.
-Use `--port` / `SLURMY_WEB_PORT` for a different local port, `--no-browser` to
-run in the foreground without opening a browser, or `--background` to return to
-the shell. `--serve` is retained as an explicit alias for the foreground mode.
-The server stays running after a browser tab closes. Restart it after updating the
-code or dependencies.
-Server and operation logs are stored in the ignored `.slurmy-web/` directory;
-operation tracking is in memory, so let builds/submissions finish before stopping
-the app. `--stop` refuses while a web-launched operation is running.
+```bash
+python slurmy-sync.py --follow       # Incrementally sync the newest job.
+python slurmy-sync.py JOB_ID         # Sync one job once.
+python slurmy-cancel.py              # Choose from active Slurm jobs.
+python slurmy-cancel.py SLURM_JOB_ID  # Cancel this Slurm ID non-interactively.
+```
 
-On Windows, run the app and tools inside WSL and open the printed localhost URL
-in your Windows browser if automatic opening is unavailable. The app must run on
-the machine whose local file paths you enter. The legacy `slurmy-monitor.py` and
-generator script now open the same web app instead of separate terminal UIs.
-
-Sync uses rsync to avoid downloading unchanged archives. It writes local results
-and regularly refreshed metadata under `slurmy-results/JOB_ID/`; see
-`slurmy-sync.py --help` for destination and refresh options. Existing historical
-results remain readable, including older formats.
-
-Remote jobs live under `~/Slurmy/USER_TIMESTAMP_PID/`; remote builds
-use `~/Slurmy-builds/`. Failures remain available for inspection. Submission is
-not transactional: if a later sbatch fails, earlier accepted batches remain
-submitted and can be cancelled with the cancellation tool.
+Sync uses rsync to avoid downloading unchanged archives. Results and refreshed
+metadata are saved under `slurmy-results/JOB_ID/`; see `slurmy-sync.py --help`
+for destination and refresh options. `make sync SLURMY_ID=JOB_ID` selects a
+particular Slurmy job instead of the latest one.
 
 ```text
 submit.sh                         # Local entry point: build, package, transfer, submit.
 submit.sh.files/
-  remote_prepare.sh               # Creates this job's remote directory.
+  remote_prepare.sh               # Creates the remote job directory.
   remote_submit.sh                # Checks topology, plans allocations, calls sbatch.
   batch.sh                        # Checks physical-core placement; launches calls.
   call.sh                         # Runs the limiter; captures and publishes results.
-  timed_call.sh                   # Measures elapsed/CPU time using Bash's timer.
+  timed_call.sh                   # Measures elapsed/CPU time.
   csv.sh                          # CSV escaping shared by remote helpers.
   calls/                          # Per-call solver/limiter scripts and configuration.
   plans/                          # Proposed batches before hardware-based splitting.
-  builds/                         # Shared build driver and generated recipe wrappers.
-  archive-paths.txt                # NUL-delimited local paths to package.
+  builds/                         # Build driver and generated recipe wrappers.
+  archive-paths.txt                # Local paths to package.
   metadata.json                   # Counts, format version, and scheduling policy.
-  manifest.jsonl                  # Full per-call definitions for inspection/monitoring.
+  manifest.jsonl                  # Full per-call definitions.
 ```
 
-On the cluster, `batches/`, `allocations.csv`, `submission.csv`,
-`progress/`, `logs/`, and `results/` are added. Each call publishes a CSV result
-and a compressed output archive independently, so completed calls can be synced
-while other calls are still running.
+Remote jobs live under `~/Slurmy/USER_TIMESTAMP_PID/`; builds use
+`~/Slurmy-builds/`. Remote job directories also contain `batches/`,
+`allocations.csv`, `submission.csv`, `progress/`, `logs/`, and `results/`.
+Each call publishes a CSV result and compressed output archive independently,
+so completed calls can be synced while other calls continue.
 
-This three-file interface replaces the earlier `.solver`/many-flags interface.
-Regenerate old submission scripts; do not submit them expecting the new behavior.
-In example workflows, `make clean` removes only generated submission files.
+Submission is not transactional: if a later sbatch fails, earlier accepted
+batches remain submitted and can be cancelled. Historical results remain
+readable. The three-file interface replaces the earlier `.solver` interface;
+regenerate old submission scripts before using them.
 
 </blockquote>
 </details>

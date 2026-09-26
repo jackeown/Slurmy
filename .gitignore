@@ -16,5 +16,5 @@ __pycache__/
 /ExampleRuns/example-drodi/jobpairs.csv
 /ExampleRuns/example-combined/jobpairs.csv
 .slurmy-built
-/YourRuns/GENERATED/*/
+/YourRuns/*/
 /YourRuns/.deleted-workflows/
