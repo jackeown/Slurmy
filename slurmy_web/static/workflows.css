@@ -80,6 +80,19 @@ html[data-theme="dark"] .steps li > button:hover:not(:disabled) { background: #2
 .limiter-invocation-row textarea { width: 100%; }
 .limiter-invocation-row button { white-space: nowrap; }
 
+/* TPTP problem inspection, using the same token categories as vampireGuide. */
+pre.tptp-source { max-height: 65vh; white-space: pre; overflow: auto; background: #fff; color: #24292e; }
+.tptp-source .tptp-comment { color: #6a737d; }
+.tptp-source .tptp-variable { color: #268b89; }
+.tptp-source .tptp-number,
+.tptp-source .tptp-boolean,
+.tptp-source .tptp-builtin { color: #005cc5; }
+.tptp-source .tptp-string,
+.tptp-source .tptp-atom { color: #032f62; }
+.tptp-source .tptp-function { color: #d73a49; }
+.tptp-source .tptp-keyword { color: #00009f; }
+.tptp-source .tptp-operator { color: #393a34; }
+
 @media(max-width:760px) {
   .steps li > button { padding: 10px 5px; font-size: 10px; }
   .limiter-invocation-row { grid-template-columns: 1fr; }
@@ -99,6 +112,17 @@ html[data-theme="dark"] {
   --white: #18241f;
   background: var(--paper);
 }
+html[data-theme="dark"] pre.tptp-source { background: #282a36; color: #f8f8f2; }
+html[data-theme="dark"] .tptp-source .tptp-comment { color: #90a0c2; }
+html[data-theme="dark"] .tptp-source .tptp-variable { color: #8be9fd; }
+html[data-theme="dark"] .tptp-source .tptp-number { color: #bd93f9; }
+html[data-theme="dark"] .tptp-source .tptp-boolean,
+html[data-theme="dark"] .tptp-source .tptp-builtin { color: #ff79c6; }
+html[data-theme="dark"] .tptp-source .tptp-string,
+html[data-theme="dark"] .tptp-source .tptp-atom { color: #f1fa8c; }
+html[data-theme="dark"] .tptp-source .tptp-function { color: #50fa7b; }
+html[data-theme="dark"] .tptp-source .tptp-keyword { color: #bd93f9; }
+html[data-theme="dark"] .tptp-source .tptp-operator { color: #8be9fd; }
 html[data-theme="dark"] body,
 html[data-theme="dark"] main { background: var(--paper); }
 html[data-theme="dark"] .topbar { background: #141f1b; }

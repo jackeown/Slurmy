@@ -1,9 +1,10 @@
 {% extends 'base.html' %}
 {% block title %}Problem · {{ job_id }}{% endblock %}
 {% block data %}data-page="problem" data-job="{{ job_id }}" data-task="{{ task_id }}"{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='tptp.js') }}" defer></script>{% endblock %}
 {% block content %}
 <a class="back" href="{{ url_for('job_page', job_id=job_id, host=host) }}">← Back to job</a>
 <div class="heading"><div><p class="eyebrow">PROBLEM IN JOB {{ job_id }}</p><h1 id="problem-name">Loading problem…</h1><p id="connection" class="muted" role="status">Loading from {{ host }}…</p></div><div class="tools"><button id="refresh" class="secondary">↻ Refresh</button></div></div>
-<section class="panel"><div class="section-heading"><h2>Problem text</h2></div><p id="problem-path" class="muted"></p><pre id="problem-text" class="output">Loading packaged problem…</pre></section>
+<section class="panel"><div class="section-heading"><h2>Problem text</h2></div><p id="problem-path" class="muted"></p><pre class="tptp-source"><code id="problem-text">Loading packaged problem…</code></pre><p id="problem-truncated" class="muted" hidden>Only the first 1 MiB is shown.</p></section>
 <section id="remote-data" class="panel loading" aria-busy="true"><div class="section-heading"><h2>Calls on this problem</h2></div><p class="muted">Sorted by wall-clock time, fastest first. Select a call to inspect its saved output on the job page.</p><div class="table-scroll"><table><thead><tr><th>ID</th><th>System</th><th>Status</th><th>CPU</th><th>Wall</th><th>Memory</th><th>Output</th></tr></thead><tbody id="problem-tasks-body"><tr><td colspan="7"><span class="spinner"></span> Loading calls…</td></tr></tbody></table></div></section>
 {% endblock %}

@@ -134,7 +134,8 @@ async function fetchProblem(){
  const jobId=document.body.dataset.job, taskId=document.body.dataset.task;
  const data=await api(`/api/jobs/${encodeURIComponent(jobId)}/problems/${taskId}?`+params({}));
  text('#problem-name',data.problem.split('/').pop());text('#problem-path',data.problem);
- text('#problem-text',data.text+(data.truncated?'\n\n[Only the first 1 MiB is shown.]':''));
+ window.highlightTptp($('#problem-text'),data.text);
+ $('#problem-truncated').hidden=!data.truncated;
  const body=$('#problem-tasks-body');body.replaceChildren();
  for(const task of data.tasks){const inspect=task.output?link('Inspect →',`/jobs/${encodeURIComponent(jobId)}?`+params({call:task.id})):'Not saved yet';body.append(tableRow([String(task.id),task.system||'—',badge(task.state),duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
  text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()} · ${data.tasks.length} calls on this problem`);
