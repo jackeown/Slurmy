@@ -15,33 +15,60 @@ async function api(path, data) {
 function notice(text){const node=$('#notice');node.textContent=text;node.hidden=false;setTimeout(()=>node.hidden=true,6500);}
 function duration(value){if(value==null)return '—';if(value===0)return '0 s';if(value<1)return `${(value*1000).toFixed(value<.01?1:0)} ms`;if(value<60)return `${value.toFixed(2)} s`;if(value<3600)return `${Math.floor(value/60)}m ${(value%60).toFixed(0)}s`;return `${Math.floor(value/3600)}h ${Math.floor(value%3600/60)}m`;}
 function memory(value){if(value==null)return '—';let i=0;const units=['B','KiB','MiB','GiB','TiB'];while(value>=1024&&i<units.length-1){value/=1024;i++;}return `${value.toFixed(i===0?0:1)} ${units[i]}`;}
+const outcomeColors={'not finished':'#87938f','theorem':'#278866','unsatisfiable':'#4479b5','satisfiable':'#9367ac','countersatisfiable':'#219a98','counter satisfiable':'#219a98','timeout':'#e7b251','time limit':'#ca842c','memory limit':'#bb684a','resourceout':'#9f5241','resource out':'#9f5241','error':'#bb555b','solver error':'#bb555b'};
+const otherOutcomeColors=['#6d70b7','#a66b8b','#628b51','#ac7650','#568d9c','#a5a047'];
+function renderOutcomes(outcomes){
+ const chart=$('#outcome-chart'),breakdown=$('#outcome-breakdown');if(!chart||!breakdown)return;
+ const items=(outcomes||[]).filter(item=>Number.isFinite(item.count)&&item.count>0);
+ const total=items.reduce((sum,item)=>sum+item.count,0);
+ chart.replaceChildren();breakdown.replaceChildren();chart.classList.toggle('is-empty',total===0);
+ if(!total){chart.style.background='';chart.setAttribute('aria-label','No call outcomes yet');breakdown.append(el('p','No call outcomes yet.','muted'));return;}
+ let start=0,other=0;const segments=[];const labels=[];
+ for(const item of items){
+  const color=outcomeColors[item.label.toLowerCase()]||otherOutcomeColors[other++%otherOutcomeColors.length];
+  const end=start+item.count/total*100;segments.push(`${color} ${start}% ${end}%`);start=end;
+  const percent=item.count/total*100;const row=el('div',undefined,'outcome-row');
+  const name=el('span',undefined,'outcome-name');const swatch=el('span',undefined,'outcome-swatch');swatch.style.backgroundColor=color;swatch.setAttribute('aria-hidden','true');name.append(swatch,el('span',item.label));if(item.source)name.append(el('small',`(${item.source})`,'outcome-source'));
+  row.append(name,el('span',item.count.toLocaleString(),'outcome-count'),el('strong',`${percent.toFixed(1)}%`,'outcome-percent'));breakdown.append(row);
+  labels.push(`${item.label}${item.source?` (${item.source})`:''}: ${item.count} (${percent.toFixed(1)}%)`);
+ }
+ chart.style.background=`conic-gradient(${segments.join(',')})`;
+ chart.setAttribute('aria-label',`Call outcomes for ${total} calls. ${labels.join('; ')}`);
+ chart.title=labels.join('\n');
+}
 function badge(state){const value=state.toLowerCase();let cls='';if(/error|fail|incomplete|interrupted|cancel|not run/.test(value))cls='bad';else if(/limit|timeout/.test(value))cls='limit';else if(/run|pending|submit|dispatch|completing/.test(value))cls='active';else if(/done|ok|completed|theorem|unsatisfiable|satisfiable|counter/.test(value))cls='good';return el('span',state,`badge ${cls}`);}
 function text(id, value){const node=$(id);if(node)node.textContent=value;}
 function button(label, action, cls='secondary'){const node=el('button',label,cls);node.type='button';node.addEventListener('click',action);return node;}
 function tableRow(cells){const tr=el('tr');for(const cell of cells){const td=el('td');td.append(cell instanceof Node?cell:document.createTextNode(cell??'—'));tr.append(td);}return tr;}
-function sortableValue(value){
- const text=value.trim().replace(/[,%]/g,'');
- const number=Number(text);
- return text!==''&&!Number.isNaN(number)?number:text.toLocaleLowerCase();
+const tableSort={tasks:{key:'id',direction:'asc'},problem:{key:'wall',direction:'asc'},jobs:{key:'created',direction:'desc'}};
+function pageSize(id){const value=Number($(id)?.value);return Number.isInteger(value)?Math.max(1,Math.min(10000,value)):100;}
+function updateSortButtons(table){
+ const sort=tableSort[table.dataset.sortTable];
+ table.querySelectorAll('thead th[data-sort]').forEach(th=>{
+  const control=th.querySelector('.sort-button'),active=sort.key===th.dataset.sort;
+  control.textContent=`${control.dataset.label} ${active?(sort.direction==='asc'?'↑':'↓'):'↕'}`;
+  if(active)th.setAttribute('aria-sort',sort.direction==='asc'?'ascending':'descending');else th.removeAttribute('aria-sort');
+ });
 }
 function initTableSorting(){
- document.querySelectorAll('table').forEach(table=>{
-  table.querySelectorAll('thead th').forEach((th,index)=>{
-   if(th.querySelector('.sort-button'))return;
-   const label=th.textContent.trim()||`Column ${index+1}`;
+ document.querySelectorAll('table[data-sort-table]').forEach(table=>{
+  table.querySelectorAll('thead th[data-sort]').forEach(th=>{
+   const label=th.textContent.trim();
    th.textContent='';
-   const control=el('button',`${label} ↕`,'sort-button secondary');
+   const control=el('button',label,'sort-button secondary');
    control.type='button';control.title=`Sort by ${label}`;control.setAttribute('aria-label',`Sort by ${label}`);
-   control.dataset.direction='none';
+   control.dataset.label=label;
    control.addEventListener('click',()=>{
-    const direction=control.dataset.direction==='asc'?'desc':'asc';
-    table.querySelectorAll('thead .sort-button').forEach(button=>{button.dataset.direction='none';button.textContent=`${button.dataset.label} ↕`;button.removeAttribute('aria-sort');});
-    control.dataset.label=label;control.dataset.direction=direction;control.textContent=`${label} ${direction==='asc'?'↑':'↓'}`;control.setAttribute('aria-sort',direction);
-    const body=table.tBodies[0];if(!body)return;
-    [...body.rows].sort((a,b)=>{const av=sortableValue(a.cells[index]?.textContent||'');const bv=sortableValue(b.cells[index]?.textContent||'');if(av===bv)return 0;const result=av>bv?1:-1;return direction==='asc'?result:-result;}).forEach(row=>body.append(row));
+    const kind=table.dataset.sortTable,sort=tableSort[kind];
+    sort.direction=sort.key===th.dataset.sort&&sort.direction==='asc'?'desc':'asc';sort.key=th.dataset.sort;
+    updateSortButtons(table);
+    if(kind==='tasks'){taskPage=0;refresh();}
+    else if(kind==='problem'){problemPage=0;refresh();}
+    else{jobsPage=0;renderJobs();}
    });
-   control.dataset.label=label;th.append(control);
+   th.append(control);
   });
+  updateSortButtons(table);
  });
 }
 function initCollapsibles(){
@@ -86,7 +113,7 @@ $('#dismiss-operation')?.addEventListener('click',()=>{$('#operation').hidden=tr
 async function startOperation(url,data){try{const op=await api(url,data);lockWorkflowActions(true);watchOperation(op.id);}catch(error){notice(error.message);}}
 const runningOperation=sessionStorage.getItem('slurmy-operation');if(runningOperation)watchOperation(runningOperation);
 
-let jobs=[], taskPage=0, jobData=null, selectedOutput=null, hasLoadedRemote=false, refreshInFlight=false, staleTimer=null, lastLoadedAt=null;
+let jobs=[], taskPage=0, problemPage=0, jobsPage=0, jobData=null, selectedOutput=null, hasLoadedRemote=false, refreshInFlight=false, staleTimer=null, lastLoadedAt=null;
 function pendingJobs(){try{return JSON.parse(sessionStorage.getItem('slurmy-pending-jobs')||'[]').filter(job=>job.host===host&&Date.now()-job.created<3600000);}catch{return [];}}
 function savePendingJobs(value){sessionStorage.setItem('slurmy-pending-jobs',JSON.stringify(value));}
 async function deleteJob(id, control, redirect=false){
@@ -100,7 +127,7 @@ async function deleteJob(id, control, redirect=false){
  }catch(error){control.disabled=false;notice(error.message);}
 }
 function announceJob(id){const known=pendingJobs();if(!known.some(job=>job.id===id))known.push({id,host,directory:document.body.dataset.directory||'',name:document.querySelector('h1')?.textContent||'Slurmy',state:'SUBMITTED',total:0,completed:0,percent:0,issues:0,created:Date.now()});savePendingJobs(known);}
-function remoteState(state){const panel=$('#remote-data');if(!panel)return;panel.classList.remove('loading','refreshing','stale');if(state)panel.classList.add(state);panel.setAttribute('aria-busy',String(state==='loading'||state==='refreshing'));}
+function remoteState(state){for(const panel of [$('#remote-data'),$('#results-overview')]){if(!panel)continue;panel.classList.remove('loading','refreshing','stale');if(state)panel.classList.add(state);panel.setAttribute('aria-busy',String(state==='loading'||state==='refreshing'));}}
 function loadingRow(body,columns,message,failed=false){body.replaceChildren();const row=el('tr');row.className=failed?'loading-row failed-row':'loading-row';const cell=el('td');cell.colSpan=columns;if(!failed)cell.append(el('span','', 'spinner'));cell.append(document.createTextNode(' '+message));row.append(cell);body.append(row);}
 function beginRefresh(){clearTimeout(staleTimer);remoteState(hasLoadedRemote?'refreshing':'loading');const refresh=$('#refresh');if(refresh){refresh.disabled=true;refresh.textContent='↻ Refreshing…';}if(hasLoadedRemote)text('#connection',`Refreshing data from ${host}… Previously loaded data remains visible.`);}
 function finishRefresh(){remoteState('');const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Refresh';}}
@@ -112,8 +139,11 @@ function renderJobs(){
  if(pending.length)savePendingJobs(pending);
  const visible=[...pending,...jobs];
  const filtered=visible.filter(j=>`${j.id} ${j.name} ${j.state}`.toLowerCase().includes(query));
+ const {key,direction}=tableSort.jobs;
+ filtered.sort((a,b)=>{const av=a[key]??'',bv=b[key]??'';const result=typeof av==='number'&&typeof bv==='number'?av-bv:String(av).localeCompare(String(bv),undefined,{numeric:true});return (direction==='asc'?result:-result)||String(a.id).localeCompare(String(b.id));});
+ const perPage=pageSize('#jobs-page-size');jobsPage=Math.min(jobsPage,Math.max(0,Math.ceil(filtered.length/perPage)-1));
  const body=$('#jobs-body');body.replaceChildren();
- for(const job of filtered){
+ for(const job of filtered.slice(jobsPage*perPage,(jobsPage+1)*perPage)){
   const title=job.provisional?el('div',job.id,'job-link'):link(job.id,'/jobs/'+encodeURIComponent(job.id)+'?'+params({}));title.className='job-link';title.append(el('small',job.name));
   const progress=el('div');if(job.total){progress.append(el('span',`${job.completed} / ${job.total} · ${job.percent.toFixed(1)}%`,'progress-label'));const bar=el('progress');bar.max=100;bar.value=job.percent;bar.setAttribute('aria-label',`${job.percent.toFixed(1)} percent complete`);progress.append(bar);}else progress.append(el('span','Awaiting cluster metadata…','progress-label'));
   if(job.phase)progress.append(el('small',job.phase,'submission-phase'));
@@ -126,6 +156,8 @@ function renderJobs(){
   body.append(tableRow(cells));
  }
  $('#empty').hidden=filtered.length!==0;
+ text('#jobs-page-label',`${filtered.length} matching jobs · page ${jobsPage+1} of ${Math.max(1,Math.ceil(filtered.length/perPage))}`);
+ $('#jobs-previous').disabled=jobsPage===0;$('#jobs-next').disabled=(jobsPage+1)*perPage>=filtered.length;
  text('#stat-total',visible.length);text('#stat-active',visible.filter(j=>['RUNNING','PENDING','SUBMITTED','SUBMITTING','DISPATCHING'].includes(j.state)).length);text('#stat-done',visible.reduce((a,j)=>a+j.completed,0).toLocaleString());text('#stat-issues',visible.reduce((a,j)=>a+j.issues,0));
 }
 async function fetchJobs(){const directory=document.body.dataset.directory;const data=await api('/api/jobs?'+params(directory?{directory}:{}));jobs=data.jobs;renderJobs();text('#connection',`Connected to ${host} · refreshed ${new Date(data.updated*1000).toLocaleTimeString()} · refreshes every 10 seconds`);}
@@ -146,20 +178,23 @@ $('#stream')?.addEventListener('change',renderOutput);
 $('#close-output')?.addEventListener('click',()=>{$('#call-output').hidden=true;selectedOutput=null;});
 async function fetchJob(){
  const jobId=document.body.dataset.job;
- const data=await api(`/api/jobs/${encodeURIComponent(jobId)}?`+params({page:taskPage,q:$('#task-filter').value}));jobData=data;
+ const perPage=pageSize('#task-page-size');
+ const data=await api(`/api/jobs/${encodeURIComponent(jobId)}?`+params({page:taskPage,per_page:perPage,sort:tableSort.tasks.key,direction:tableSort.tasks.direction,q:$('#task-filter').value}));jobData=data;
  const submission=data.submission_state==='submitting'?` · submitting batches ${data.submitted_batches}/${data.batch_count}`:data.submission_state==='failed'?' · batch submission stopped before all calls were queued':'';
  text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()}${submission} · completion counts finished calls, not proof-search progress`);
  text('#stat-state',data.state);text('#stat-done',`${data.completed} / ${data.total}`);text('#stat-percent',data.percent.toFixed(1)+'%');text('#stat-issues',data.issues);
+ renderOutcomes(data.outcomes);
  const tasks=$('#tasks-body');tasks.replaceChildren();
  for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):task.diagnostic?button('Inspect log →',()=>openDiagnostic(task)):'—';tasks.append(tableRow([String(task.id),task.system||'—',problem,badge(task.state),task.will_run||'—',task.reason||'—',duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
  if(!data.tasks.length)tasks.append(tableRow(['No matching calls.','','','','','','','','','']));
- text('#page-label',`${data.matched} matching calls · page ${taskPage+1} of ${Math.max(1,Math.ceil(data.matched/100))}`);$('#previous').disabled=taskPage===0;$('#next').disabled=(taskPage+1)*100>=data.matched;
+ text('#page-label',`${data.matched} matching calls · page ${taskPage+1} of ${Math.max(1,Math.ceil(data.matched/perPage))}`);$('#previous').disabled=taskPage===0;$('#next').disabled=(taskPage+1)*perPage>=data.matched;
  const selected=new URLSearchParams(location.search).get('call');if(selected&&data.tasks.some(task=>String(task.id)===selected)){history.replaceState(null,'',location.pathname+'?'+params({}));openOutput(data.tasks.find(task=>String(task.id)===selected));}
  const diagnostic=new URLSearchParams(location.search).get('diagnostic');if(diagnostic&&data.tasks.some(task=>String(task.id)===diagnostic)){history.replaceState(null,'',location.pathname+'?'+params({}));openDiagnostic(data.tasks.find(task=>String(task.id)===diagnostic));}
 }
 async function fetchProblem(){
  const jobId=document.body.dataset.job, taskId=document.body.dataset.task;
- const data=await api(`/api/jobs/${encodeURIComponent(jobId)}/problems/${taskId}?`+params({}));
+ const perPage=pageSize('#problem-page-size');
+ const data=await api(`/api/jobs/${encodeURIComponent(jobId)}/problems/${taskId}?`+params({page:problemPage,per_page:perPage,sort:tableSort.problem.key,direction:tableSort.problem.direction}));
  text('#problem-name',data.problem.split('/').pop());text('#problem-path',data.problem);
  const source=$('#problem-text');
  if(source.tagName==='PRE'){
@@ -176,7 +211,9 @@ async function fetchProblem(){
  const truncated=$('#problem-truncated');if(truncated)truncated.hidden=!data.truncated;
  const body=$('#problem-tasks-body');body.replaceChildren();
  for(const task of data.tasks){const inspect=task.output?link('Inspect →',`/jobs/${encodeURIComponent(jobId)}?`+params({call:task.id})):task.diagnostic?link('Inspect log →',`/jobs/${encodeURIComponent(jobId)}?`+params({diagnostic:task.id})):'—';body.append(tableRow([String(task.id),task.system||'—',badge(task.state),task.will_run||'—',task.reason||'—',duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
- text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()} · ${data.tasks.length} calls on this problem`);
+ text('#problem-page-label',`${data.matched} calls · page ${problemPage+1} of ${Math.max(1,Math.ceil(data.matched/perPage))}`);
+ $('#problem-previous').disabled=problemPage===0;$('#problem-next').disabled=(problemPage+1)*perPage>=data.matched;
+ text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()} · ${data.matched} calls on this problem`);
 }
 async function refresh(){
  if(refreshInFlight)return;refreshInFlight=true;beginRefresh();
@@ -185,9 +222,12 @@ async function refresh(){
  finally{refreshInFlight=false;}
 }
 $('#refresh')?.addEventListener('click',refresh);
-$('#job-filter')?.addEventListener('input',()=>{if(hasLoadedRemote)renderJobs();});
+$('#job-filter')?.addEventListener('input',()=>{jobsPage=0;if(hasLoadedRemote)renderJobs();});
 let searchTimer;$('#task-filter')?.addEventListener('input',()=>{taskPage=0;clearTimeout(searchTimer);searchTimer=setTimeout(refresh,300);});
+for(const [id,kind] of [['#task-page-size','tasks'],['#problem-page-size','problem'],['#jobs-page-size','jobs']])$(id)?.addEventListener('change',event=>{event.currentTarget.value=pageSize(id);if(kind==='tasks'){taskPage=0;refresh();}else if(kind==='problem'){problemPage=0;refresh();}else{jobsPage=0;renderJobs();}});
 $('#previous')?.addEventListener('click',()=>{taskPage--;refresh();});$('#next')?.addEventListener('click',()=>{taskPage++;refresh();});
+$('#problem-previous')?.addEventListener('click',()=>{problemPage--;refresh();});$('#problem-next')?.addEventListener('click',()=>{problemPage++;refresh();});
+$('#jobs-previous')?.addEventListener('click',()=>{jobsPage--;renderJobs();});$('#jobs-next')?.addEventListener('click',()=>{jobsPage++;renderJobs();});
 $('#sync')?.addEventListener('click',()=>startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'sync'}));
 $('#delete-job')?.addEventListener('click',event=>deleteJob(document.body.dataset.job,event.currentTarget,true));
 const submitMenu=$('#submit-menu'),submitMenuToggle=$('#submit-menu-toggle');

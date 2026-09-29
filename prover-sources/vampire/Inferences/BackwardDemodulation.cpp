@@ -1,0 +1,205 @@
+/*
+ * This file is part of the source code of the software program
+ * Vampire. It is protected by applicable
+ * copyright laws.
+ *
+ * This source code is distributed under the licence found here
+ * https://vprover.github.io/license.html
+ * and in the source directory
+ */
+/**
+ * @file BackwardDemodulation.cpp
+ * Implements class BackwardDemodulation.
+ */
+
+#include "Lib/DHMultiset.hpp"
+#include "Lib/Environment.hpp"
+#include "Lib/Metaiterators.hpp"
+#include "Lib/Random.hpp"
+#include "Debug/TimeProfiling.hpp"
+#include "Lib/VirtualIterator.hpp"
+
+#include "Kernel/Clause.hpp"
+#include "Kernel/ColorHelper.hpp"
+#include "Kernel/EqHelper.hpp"
+#include "Kernel/Inference.hpp"
+#include "Kernel/Ordering.hpp"
+#include "Kernel/Term.hpp"
+
+#include "Indexing/Index.hpp"
+#include "Indexing/ResultSubstitution.hpp"
+#include "Debug/TimeProfiling.hpp"
+
+#include "Saturation/SaturationAlgorithm.hpp"
+
+#include "Shell/Options.hpp"
+#include "Shell/Statistics.hpp"
+
+#include "BackwardDemodulation.hpp"
+
+namespace Inferences {
+
+using namespace std;
+using namespace Lib;
+using namespace Kernel;
+using namespace Indexing;
+using namespace Saturation;
+
+template<bool higherOrder>
+BackwardDemodulation<higherOrder>::BackwardDemodulation(SaturationAlgorithm& salg)
+  : _ord(salg.getOrdering()),
+    _preordered(salg.getOptions().backwardDemodulation() == Options::Demodulation::PREORDERED),
+    _index(salg.getSimplifyingIndex<DemodulationSubtermIndex<higherOrder>>()),
+    _helper(DemodulationHelper(salg.getOptions(), &salg.getOrdering()))
+{}
+
+namespace {
+
+struct Applicator : SubstApplicator {
+  Applicator(ResultSubstitution* subst) : subst(subst) {}
+  TermList apply(unsigned v) const override {
+    return subst->applyToBoundQuery(TermList::var(v));
+  }
+  ResultSubstitution* subst;
+};
+
+} // end namespace
+
+template<bool higherOrder>
+struct BackwardDemodulation<higherOrder>::ResultFn
+{
+  typedef DHMultiset<unsigned, FnvHash, IdentityHash> ClauseSet;
+
+  ResultFn(Clause* cl, BackwardDemodulation& parent, const DemodulationHelper& helper)
+  : _cl(cl), _helper(helper), _ordering(parent._ord)
+  {
+    ASS_EQ(_cl->length(),1);
+    _eqLit=(*_cl)[0];
+    _removed=SmartPtr<ClauseSet>(new ClauseSet());
+  }
+
+  /**
+   * Return pair of clauses. First clause is being replaced,
+   * and the second is the clause, that replaces it. If no
+   * replacement should occur, return pair of zeroes.
+   */
+  BwSimplificationRecord operator() (pair<TermList,QueryRes<ResultSubstitutionSP, TermLiteralClause>> arg)
+  {
+    auto qr=arg.second;
+
+    // under randomized simplifications, each candidate rewrite is with this probability
+    // dropped as early as possible (saving also the applicability checks), with the same
+    // probability as in the forward variant (to be tuned)
+    constexpr double RSI_SKIP_PROB = 0.01;
+    if(env.options->randomizedSimplifications() && Random::getDouble(0.0,1.0) < RSI_SKIP_PROB) {
+      return BwSimplificationRecord(0);
+    }
+
+    if( !ColorHelper::compatible(_cl->color(), qr.data->clause->color()) ) {
+      //colors of premises don't match
+      return BwSimplificationRecord(0);
+    }
+
+    if(_cl==qr.data->clause || _removed->find(qr.data->clause->number())) {
+      //the retrieved clause was already replaced during this
+      //backward demodulation
+      return BwSimplificationRecord(0);
+    }
+
+    TermList lhs=arg.first;
+    TermList rhs=EqHelper::getOtherEqualitySide(_eqLit, lhs);
+
+    // AYB there used to be a check here to ensure that the sorts
+    // matched. This is no longer necessary, as sort matching / unification
+    // is handled directly within the tree
+
+    auto subs = qr.unifier;
+    ASS(subs->isIdentityOnResultWhenQueryBound());
+
+    Applicator appl(subs.ptr());
+
+    TermList lhsS=qr.data->term;
+
+    if (_ordering.compareUnidirectional(AppliedTerm(lhsS), AppliedTerm(rhs,&appl,true))!=Ordering::GREATER) {
+      return BwSimplificationRecord(0);
+    }
+
+    TermList rhsS=subs->applyToBoundQuery(rhs);
+
+    if (_helper.redundancyCheckNeededForPremise(qr.data->clause,qr.data->literal,lhsS) &&
+      !_helper.isPremiseRedundant(qr.data->clause,qr.data->literal,lhsS,rhsS,lhs,&appl))
+    {
+      return BwSimplificationRecord(0);
+    }
+
+    Literal* resLit=EqHelper::replace(qr.data->literal,lhsS,rhsS);
+    if(EqHelper::isEqTautology(resLit)) {
+      env.statistics->backwardDemodulationsToEqTaut++;
+      _removed->insert(qr.data->clause->number());
+      return BwSimplificationRecord(qr.data->clause);
+    }
+
+    unsigned cLen=qr.data->clause->length();
+    RStack<Literal*> resLits;
+
+    resLits->push(resLit);
+
+    for(unsigned i=0;i<cLen;i++) {
+      Literal* curr=(*qr.data->clause)[i];
+      if(curr!=qr.data->literal) {
+        resLits->push(curr);
+      }
+    }
+
+    _removed->insert(qr.data->clause->number());
+    Clause *replacement = Clause::fromStack(
+      *resLits,
+      SimplifyingInference2(InferenceRule::BACKWARD_DEMODULATION, qr.data->clause, _cl)
+    );
+    if(env.options->proofExtra() == Options::ProofExtra::FULL)
+      env.proofExtra.insert(replacement, new BackwardDemodulationExtra(lhs, lhsS));
+    return BwSimplificationRecord(qr.data->clause, replacement);
+  }
+private:
+  Literal* _eqLit;
+  Clause* _cl;
+  SmartPtr<ClauseSet> _removed;
+
+  const DemodulationHelper& _helper;
+
+  const Ordering& _ordering;
+};
+
+template<bool higherOrder>
+void BackwardDemodulation<higherOrder>::perform(Clause* cl,
+	BwSimplificationRecordIterator& simplifications)
+{
+  TIME_TRACE("backward demodulation");
+
+  if(cl->length()!=1 || !(*cl)[0]->isEquality() || !(*cl)[0]->isPositive() ) {
+    simplifications=BwSimplificationRecordIterator::getEmpty();
+    return;
+  }
+  Literal* lit=(*cl)[0];
+
+  BwSimplificationRecordIterator replacementIterator=
+    pvi( getFilteredIterator(
+	    getMappingIterator(
+		    getMapAndFlattenIterator(
+			    EqHelper::getDemodulationLHSIterator(lit, _preordered, _ord).first,
+			    [this](TypedTermList lhs)
+          { return pvi( pushPairIntoRightIterator(lhs, _index->template getInstances<higherOrder>(lhs, true)) ); }),
+		    ResultFn(cl, *this, _helper)),
+ 	      [](BwSimplificationRecord arg){ return arg.toRemove!=0; }));
+
+  //here we know that the getPersistentIterator evaluates all items of the
+  //replacementIterator right at this point, so we can measure the time just
+  //simply (which cannot be generally done when iterators are involved)
+
+  simplifications=getPersistentIterator(std::move(replacementIterator));
+}
+
+template class BackwardDemodulation<true>;
+template class BackwardDemodulation<false>;
+
+}

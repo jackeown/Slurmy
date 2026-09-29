@@ -1,0 +1,31 @@
+name: Create Source Archives
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Checkout Tree
+      uses: actions/checkout@v6
+      with:
+        submodules: true
+    - name: Create Tarball
+      working-directory: ${{ runner.workspace }}
+      run: tar --exclude='.git' --exclude='*/.git' -czf vampire-z3.tar.gz vampire
+    - name: Upload Tarball
+      uses: actions/upload-artifact@v7
+      with:
+        name: vampire-z3.tar.gz
+        path: ${{ runner.workspace }}/vampire-z3.tar.gz
+        overwrite: true
+        archive: false
+    - name: Create Tarball
+      working-directory: ${{ runner.workspace }}
+      run: tar --exclude='.git' --exclude='*/.git' --exclude='z3' -czf vampire.tar.gz vampire
+    - name: Upload Vampire (no Z3)
+      uses: actions/upload-artifact@v7
+      with:
+        name: vampire.tar.gz
+        path: ${{ runner.workspace }}/vampire.tar.gz
+        overwrite: true
+        archive: false

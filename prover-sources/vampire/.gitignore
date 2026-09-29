@@ -1,0 +1,46 @@
+# ignore common build directories
+/cmake-build
+/build
+/coverage-build
+
+# ignore TPTP directories/symlinks at the top level
+/Problems
+/Axioms
+tptp
+
+# ctags
+tags
+
+# Callgrind?
+.kdbgrc.vampire*
+callgrind.out.*
+valgrind.supp
+
+# Mac things?
+._*
+.DS_Store
+.cproject
+.project
+.vscode/
+.settings/
+
+# Problem files
+*.p
+# Don't ignore problem files under the checks folder's subdirs
+!checks/**/*.p
+*.tptp
+*.txt
+*.smt2
+*.cnf
+tags
+cmake-build
+.exrc
+.clang-format
+.clangd
+.lldbinit
+
+# vim swap files
+**/.*.swp
+**/.*.swo
+.ccls-cache
+.cache/

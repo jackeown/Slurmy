@@ -21,7 +21,7 @@ from typing import Any
 
 VERSION = "0.2.0"
 DEFAULT_HOST = os.environ.get("SLURMY_HOST", "datalab")
-NORMAL_TASK_RESULTS = {"ok", "time-limit", "memory-limit"}
+NORMAL_TASK_RESULTS = {"ok", "time-limit", "memory-limit", "counter-satisfiable"}
 SLURM_ERROR_STATES = {
     "BOOT_FAIL",
     "DEADLINE",
@@ -86,7 +86,7 @@ for directory in "${job_dirs[@]}"; do
         printf 'SUMMARY\0%s\0' "$job"
         # Slurmy quotes every CSV field. The summary uses only numeric and enum
         # columns, which cannot themselves contain commas.
-        awk -F, '
+        summary_payload=$(awk -F, '
             function value(field) {
                 if (field ~ /^".*"$/) {
                     sub(/^"/, "", field); sub(/"$/, "", field)
@@ -98,8 +98,16 @@ for directory in "${job_dirs[@]}"; do
                 id = value($1)
                 complete[id] = value($2)
                 result_status[id] = value($3)
+                if (result_status[id] == "solver-error" && value($4) == "143" && value($16) == "")
+                    suspect_archive[id] = value($15)
                 if (result_status[id] == "solver-error" && value($16) == "Timeout")
                     result_status[id] = "time-limit"
+                if (result_status[id] == "solver-error" && value($16) == "CounterSatisfiable")
+                    result_status[id] = "counter-satisfiable"
+                if (result_status[id] == "solver-error" && value($16) != "" && value($4) + 0 < 128 &&
+                    tolower(value($16)) !~ /^(error|oserror|inputerror|syntaxerror|semanticerror|typeerror|usageerror)$/ &&
+                    tolower(value($16)) != "timeout" && tolower(value($16)) != "countersatisfiable")
+                    result_status[id] = "ok"
                 wall[id] = value($5)
             }
             END {
@@ -118,8 +126,10 @@ for directory in "${job_dirs[@]}"; do
                 printf "completed\t%d\nwall_sum\t%.9f\nwall_max\t%.9f\n", completed, wall_sum, wall_max
                 for (status in count) printf "status\t%s\t%d\n", status, count[status]
                 for (status in unresolved) printf "unresolved\t%s\t%d\n", status, unresolved[status]
+                for (id in suspect_archive) printf "candidate\t%s\t%s\n", id, suspect_archive[id]
             }
-        ' "${csv_results[@]}"
+        ' "${csv_results[@]}")
+        printf '%s\n' "$summary_payload"
         printf '\0'
     elif (( ${#tsv_results[@]} )); then
         printf 'SUMMARY\0%s\0' "$job"
@@ -193,6 +203,21 @@ for directory in "${job_dirs[@]}"; do
         printf 'SUBMISSION_STATE\0%s\0' "$job"
         cat "$directory/submission.state"
         printf '\0'
+    fi
+
+    # Older runsolver result rows may say solver-error/143 and MEMOUT=false even
+    # though their archived watcher explicitly records a memory-limit kill.
+    # Inspect only those exceptional rows; never infer a limit from exit 143.
+    if (( ${#csv_results[@]} )); then
+        while IFS=$'\t' read -r kind task_id archive; do
+            [[ "$kind" == candidate ]] || continue
+            [[ "$task_id" =~ ^[0-9]+$ && "$archive" =~ ^[A-Za-z0-9._-]+[.]tar[.]gz$ ]] || continue
+            archive_path="$directory/results/$archive"
+            [[ -f "$archive_path" ]] || continue
+            if tar -xOzf "$archive_path" --wildcards '*watcher.log' 2>/dev/null | grep -Fq 'Maximum memory exceeded:'; then
+                printf 'RESULT_OVERRIDE\0%s\0%s\0memory-limit\0' "$job" "$task_id"
+            fi
+        done <<< "$summary_payload"
     fi
 
     if [[ "$created" =~ ^[0-9]+$ ]] && { [[ -z "$oldest" ]] || (( created < oldest )); }; then
@@ -565,6 +590,7 @@ PROTOCOL_ARITY = {
     "PROGRESS_TSV": 2,
     "SUBMISSION_CSV": 2,
     "SUBMISSION_STATE": 2,
+    "RESULT_OVERRIDE": 3,
     "SUBMISSION_TSV": 2,
     "RESULTS_CSV": 2,
     "RESULTS_TSV": 2,
@@ -668,6 +694,20 @@ def parse_jsonl_results(payload: str) -> dict[int, ResultRecord]:
     return results
 
 
+def normalize_szs_result(result: ResultRecord) -> None:
+    if result.status != 'solver-error':
+        return
+    szs = result.szs_status.lower()
+    if szs == 'timeout':
+        result.status = 'time-limit'
+    elif szs == 'countersatisfiable':
+        result.status = 'counter-satisfiable'
+    elif (szs and result.return_code.isdigit() and int(result.return_code) < 128
+          and szs not in {'error', 'oserror', 'inputerror', 'syntaxerror',
+                          'semanticerror', 'typeerror', 'usageerror'}):
+        result.status = 'ok'
+
+
 def summarize_results(job: JobSnapshot, results: dict[int, ResultRecord]) -> None:
     completed = [result for result in results.values() if result.complete]
     job.completed = len(completed)
@@ -677,7 +717,8 @@ def summarize_results(job: JobSnapshot, results: dict[int, ResultRecord]) -> Non
     unresolved: dict[str, int] = {}
     for result in results.values():
         target = counts if result.complete else unresolved
-        status = 'time-limit' if result.status == 'solver-error' and result.szs_status.lower() == 'timeout' else result.status
+        normalize_szs_result(result)
+        status = result.status
         target[status] = target.get(status, 0) + 1
     job.status_counts = counts
     job.unresolved_counts = unresolved
@@ -758,6 +799,7 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
     batch_tasks: dict[str, list[tuple[str, str]]] = {}
     submissions: dict[str, tuple[str, str]] = {}
     submission_states: dict[str, str] = {}
+    result_overrides: dict[str, dict[int, str]] = {}
     logs: dict[str, dict[str, str]] = {}
     queue_payload = ""
     accounting_payload = ""
@@ -790,6 +832,8 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
             submissions[fields[0]] = (kind, fields[1])
         elif kind == "SUBMISSION_STATE":
             submission_states[fields[0]] = fields[1]
+        elif kind == "RESULT_OVERRIDE" and fields[1].isdigit():
+            result_overrides.setdefault(fields[0], {})[int(fields[1])] = fields[2]
         elif kind == "RESULTS_CSV":
             detail_csv[fields[0]] = fields[1]
         elif kind == "RESULTS_TSV":
@@ -826,6 +870,12 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
                         job.task_batches[task_id] = batch_id
         if job_id in summaries:
             parse_summary(job, summaries[job_id])
+            for override in result_overrides.get(job_id, {}).values():
+                if job.status_counts.get('solver-error', 0):
+                    job.status_counts['solver-error'] -= 1
+                    if not job.status_counts['solver-error']:
+                        del job.status_counts['solver-error']
+                    job.status_counts[override] = job.status_counts.get(override, 0) + 1
         elif job_id in legacy_overviews:
             summarize_results(job, parse_jsonl_results(legacy_overviews[job_id]))
 
@@ -875,6 +925,11 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
             results = parse_tsv_results(detail_tsv.get(job_id, ""))
             results.update(parse_csv_results(detail_csv.get(job_id, "")))
             results.update(parse_jsonl_results(detail_jsonl.get(job_id, "")))
+            for result in results.values():
+                normalize_szs_result(result)
+            for task_id, override in result_overrides.get(job_id, {}).items():
+                if task_id in results and results[task_id].status == 'solver-error':
+                    results[task_id].status = override
             job.results = results
             if results:
                 summarize_results(job, results)

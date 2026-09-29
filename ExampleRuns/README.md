@@ -5,7 +5,7 @@ Each workflow uses the same three-file interface documented in the
 
 | Folder | Workflow |
 | --- | --- |
-| [example-vampire](example-vampire/) | Latest Vampire, built from source. |
+| [example-vampire](example-vampire/) | Vampire, built from the included source snapshot. |
 | [example-e](example-e/) | E, built from source. |
 | [example-drodi](example-drodi/) | Drodi, built from source. |
 | [example-combined](example-combined/) | All three configurations × ten shared problems. |
@@ -54,10 +54,12 @@ The combined example selects five easy and five hard problems under
 [problems](example-combined/problems/). Its resources reference the individual prover folders.
 The union of all selected globs is crossed with every configuration.
 
-Each prover's cluster-built executable is downloaded into its `bin/` directory.
-That directory is packaged for submission and used as the solver's working
-directory. Source checkout and compilation happen in temporary directories on
-the cluster; no separate local `resource/` directory is needed.
+Each example points its build's `source` field at the corresponding checked-in
+directory under [prover-sources](../prover-sources/). Slurmy uploads that source
+to the cluster build job's `$SLURMY_BUILD_WORK`; the recipe compiles it there
+and writes the executable to `$SLURMY_BUILD_OUTPUT`. Slurmy downloads the output
+into the example's `bin/` runtime root, which is then packaged for submission.
+This is the same pattern to use with your own local prover source.
 
 `make` does not compile or submit. `make build` explicitly builds and downloads
 resources; `make submit` builds them again before packaging.

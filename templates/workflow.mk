@@ -26,7 +26,7 @@ prepare:
 	fi
 	@$(MAKE) --no-print-directory submit.sh
 
-submit.sh: Makefile $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES) $(REPO_ROOT)/slurmy.py $(REPO_ROOT)/templates/workflow.mk $(wildcard $(REPO_ROOT)/templates/*.sh)
+submit.sh: Makefile $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES) $(REPO_ROOT)/slurmy.py $(REPO_ROOT)/building-dependencies/slurmy-build.py $(REPO_ROOT)/templates/workflow.mk $(wildcard $(REPO_ROOT)/templates/*.sh)
 	@if [ -e submit.sh ] || [ -d submit.sh.files ]; then \
 		printf '♻️  Inputs changed; refreshing generated submission files.\n'; \
 		rm -f -- submit.sh; rm -rf -- submit.sh.files; \

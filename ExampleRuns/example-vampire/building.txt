@@ -1,4 +1,4 @@
 [
-  {"root": "bin", "source": "", "recipe": "build.sh", "artifact": "vampire"},
+  {"root": "bin", "source": "../../prover-sources/vampire", "recipe": "build.sh", "artifact": "vampire"},
   {"root": "../../building-dependencies/runsolver", "source": "", "recipe": "../../building-dependencies/runsolver/build.sh", "artifact": "runsolver"}
 ]

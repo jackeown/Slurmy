@@ -4,6 +4,10 @@ set -euo pipefail
 JOB_DIR="$HOME/Slurmy/$1"
 export JOB_DIR
 PARTITION=$2
+WORKFLOW_NAME=$4
+[[ "$WORKFLOW_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || {
+    echo 'Invalid workflow name.' >&2; exit 1;
+}
 mkdir -p "$JOB_DIR/rootfs" "$JOB_DIR/results" "$JOB_DIR/progress" "$JOB_DIR/logs"
 tar -xzf "$JOB_DIR/incoming/job-files.tar.gz" -C "$JOB_DIR"
 tar -xzf "$JOB_DIR/incoming/inputs.tar.gz" -C "$JOB_DIR/rootfs"
@@ -113,7 +117,7 @@ for batch in batches/batch_*.sh; do
     PARALLEL=${PARALLEL:-${#TASK_IDS[@]}}
     SLOT_CORES=$MAX_CORES
     if (( EXCLUSIVE_CPU )); then SLOT_CORES=$((MAX_CPUS * CORES_PER_SOCKET)); fi
-    OPTIONS=(--parsable --partition="$PARTITION" --job-name=Slurmy
+    OPTIONS=(--parsable --partition="$PARTITION" --job-name="$WORKFLOW_NAME"
         --nodes=1 --ntasks="$PARALLEL" --cpus-per-task="$SLOT_CORES"
         --threads-per-core=1 --distribution=block:block
         --mem="${MEMORY_MIB}M" --time="$(( (WALL_SECONDS + 59) / 60 ))"

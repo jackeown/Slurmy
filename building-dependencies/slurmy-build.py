@@ -58,15 +58,6 @@ def run(
         raise BuildError(f"command failed: {shlex.join(command)}{suffix}") from exc
 
 
-def remote_user(host: str) -> str:
-    result = run(["ssh", "-T", "-G", "--", host], capture=True)
-    for line in result.stdout.splitlines():
-        key, _, value = line.partition(" ")
-        if key.lower() == "user" and NAME_RE.fullmatch(value):
-            return value
-    raise BuildError(f"could not determine a safe SSH username for {host!r}")
-
-
 def checked_artifact(value: str) -> str:
     path = PurePosixPath(value)
     if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
@@ -123,7 +114,7 @@ def make_context_archive(source: Path, destination: Path) -> None:
 
 def build_job_script(args: argparse.Namespace, *, has_context: bool) -> str:
     directives = [
-        f"#SBATCH --job-name=slurmy-build-{args.name}",
+        f"#SBATCH --job-name={args.name}",
         "#SBATCH --output=build.log",
         "#SBATCH --error=build.log",
         f"#SBATCH --cpus-per-task={args.cpus_per_task}",
@@ -219,8 +210,7 @@ def execute_build(args: argparse.Namespace) -> None:
     if not args.artifact:
         raise BuildError("at least one --artifact is required")
 
-    user = remote_user(args.host)
-    build_id = f"{user}_{int(time.time())}_{os.getpid()}_{args.name}"
+    build_id = f"{args.name}_{int(time.time())}_{os.getpid()}"
     remote_dir = f"$HOME/Slurmy-builds/{build_id}"
     print(f"Slurmy build: {build_id}", flush=True)
     print(f"Remote directory: {args.host}:{remote_dir}", flush=True)
@@ -249,12 +239,22 @@ def execute_build(args: argparse.Namespace) -> None:
     print(f"Slurm job: {job_id}", flush=True)
 
     previous = ""
+    missed_polls = 0
     while True:
-        state_result = run(
-            ["ssh", "-T", "--", args.host, "bash", "-s", "--", job_id],
-            input_text=REMOTE_STATE,
-            capture=True,
-        )
+        try:
+            state_result = run(
+                ["ssh", "-T", "--", args.host, "bash", "-s", "--", job_id],
+                input_text=REMOTE_STATE,
+                capture=True,
+            )
+        except BuildError:
+            missed_polls += 1
+            if missed_polls >= 10:
+                raise
+            print(f"Build status temporarily unreachable; retrying ({missed_polls}/10).", flush=True)
+            time.sleep(args.poll_interval)
+            continue
+        missed_polls = 0
         state = normalize_state(state_result.stdout)
         if state and state != previous:
             print(f"State: {state}", flush=True)

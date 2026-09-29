@@ -118,10 +118,16 @@ moves its folder while keeping earlier jobs linked. Local definitions and past
 jobs appear separately: **Workflows** contains templates, **Job history**
 contains their particular runs.
 
-The job page shows searchable, sortable calls and progress. Select a completed
+The job page has a collapsible results overview with a pie chart and percentages
+for every call outcome, labeled by whether the status came from the prover or
+resource limiter. It also shows searchable, sortable calls and progress. Select a completed
 call to inspect solver stdout/stderr, limiter output, watcher measurements, and
 controller diagnostics, including the exact solver and limiter commands.
-Ordinary time or memory limits are expected outcomes, not infrastructure issues.
+Ordinary time or memory limits and SZS answers such as `Satisfiable` or
+`CounterSatisfiable` are outcomes, not execution issues, even when a prover
+uses a nonzero exit code for its answer. Crashes and SZS error statuses remain
+issues. If runsolver's variables disagree with its watcher log
+about a memory-limit kill, the watcher log takes precedence.
 Percent complete counts finished calls; it does not estimate progress within
 a running proof search. **Sync results** downloads the saved results once;
 **Cancel** lets you select an active Slurm ID to cancel.
@@ -228,6 +234,11 @@ For browser-created workflows, `building.txt` is a JSON list. Each entry has
 `$SLURMY_BUILD_OUTPUT` on the compute node. It must put the declared artifact
 under the latter; Slurmy checks for it, then downloads the output directory
 into `root`. A blank source is useful when the recipe downloads its own source.
+The [prover examples](ExampleRuns/README.md) demonstrate local source
+directories that are uploaded for each build.
+Independent resources build concurrently on separate Slurm build jobs.
+Legacy recipes or resources whose source, recipe, and output paths overlap
+another build's output run sequentially to preserve their ordering.
 Older two-line-per-resource `building.txt` files still work.
 
 A generated Makefile uses the shared targets:
@@ -578,8 +589,10 @@ submit.sh.files/
   manifest.jsonl                  # Full per-call definitions.
 ```
 
-Remote jobs live under `~/Slurmy/USER_TIMESTAMP_PID/`; builds use
-`~/Slurmy-builds/`. Remote job directories also contain `batches/`,
+Remote jobs live under `~/Slurmy/WORKFLOW_TIMESTAMP_PID/`, where the prefix is
+the workflow folder name (safely shortened if needed). Slurm batch and build
+job names use that prefix too. Existing username-prefixed jobs remain readable.
+Builds use `~/Slurmy-builds/`. Remote job directories also contain `batches/`,
 `allocations.csv`, `submission.csv`, `submission.state`, `progress/`, `logs/`, and `results/`.
 Each call publishes a CSV result and compressed output archive independently,
 so completed calls can be synced while other calls continue.

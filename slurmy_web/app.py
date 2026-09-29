@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from collections import Counter
 import json
 import os
 from pathlib import Path
@@ -43,6 +44,32 @@ def summary(job):
                 submission_state=job.submission_state, submitted_batches=job.submission_count,
                 batch_count=job.batch_count,
                 statuses=job.status_counts)
+
+
+def outcome_breakdown(job):
+    """Count final SZS answers or fallback execution outcomes across all calls."""
+    fallback = {'ok': 'OK', 'time-limit': 'Time limit',
+                'counter-satisfiable': 'CounterSatisfiable',
+                'memory-limit': 'Memory limit'}
+    counts = Counter()
+    for result in job.results.values():
+        szs = result.szs_status.strip()
+        if szs:
+            label, source = szs, 'prover'
+        else:
+            label = fallback.get(result.status, result.status.replace('-', ' ').capitalize())
+            source = ('resource limiter' if result.status in
+                      {'time-limit', 'memory-limit', 'resource-limiter-error'} else
+                      'controller' if result.status in {'worker-error', 'interrupted'} else
+                      'execution')
+        counts[(label, source)] += 1
+    total = max(job.task_count, len(job.tasks), len(job.results))
+    unfinished = max(0, total - len(job.results))
+    if unfinished:
+        counts[('Not finished', '')] += unfinished
+    return [{'label': label, 'source': source, 'count': count}
+            for (label, source), count in sorted(
+                counts.items(), key=lambda item: (-item[1], item[0][0].lower(), item[0][1]))]
 
 
 def submission_phase(log):
@@ -140,6 +167,31 @@ def task_rows(job):
                    szs_status=result.szs_status if result else '',
                    will_run=will_run, reason=reason, diagnostic=diagnostic,
                    output=bool(result and result.archive))
+
+
+CALL_SORT_FIELDS = {'id', 'system', 'problem', 'state', 'will_run', 'reason', 'cpu', 'wall', 'memory'}
+
+
+def sorted_call_rows(rows, field, direction):
+    if field not in CALL_SORT_FIELDS or direction not in {'asc', 'desc'}:
+        abort(400, 'Invalid call sort order.')
+    # Keep absent measurements last in either direction, and IDs stable for ties.
+    present = [row for row in rows if row[field] is not None and row[field] != '']
+    missing = [row for row in rows if row[field] is None or row[field] == '']
+    present.sort(key=lambda row: (row[field].casefold() if isinstance(row[field], str) else row[field], row['id']),
+                 reverse=direction == 'desc')
+    return present + missing
+
+
+def call_page_args(default_sort='id'):
+    try:
+        page = int(request.args.get('page', '0'))
+        per_page = int(request.args.get('per_page', '100'))
+    except ValueError:
+        abort(400, 'Page and page size must be numbers.')
+    if page < 0 or not 1 <= per_page <= 10000:
+        abort(400, 'Page must be nonnegative and page size must be 1–10000.')
+    return page, per_page, request.args.get('sort', default_sort), request.args.get('direction', 'asc')
 
 
 def create_app():
@@ -339,8 +391,10 @@ def create_app():
         job = job_snapshot(job_id)
         query = request.args.get('q', '').lower()
         rows = [row for row in task_rows(job) if query in ' '.join(str(v) for v in row.values()).lower()]
-        page_number = max(0, int(request.args.get('page', '0')))
-        return jsonify(**summary(job), tasks=rows[page_number*100:(page_number+1)*100], matched=len(rows))
+        page_number, per_page, sort, direction = call_page_args()
+        rows = sorted_call_rows(rows, sort, direction)
+        return jsonify(**summary(job), outcomes=outcome_breakdown(job),
+                       tasks=rows[page_number*per_page:(page_number+1)*per_page], matched=len(rows))
 
     @app.get('/api/jobs/<job_id>/output/<int:task_id>')
     def output(job_id, task_id):
@@ -359,9 +413,11 @@ def create_app():
             abort(404, 'Call not found in this job.')
         path = definition.problem
         rows = [row for row in task_rows(job) if row['problem'] == path]
-        rows.sort(key=lambda row: (row['wall'] is None, row['wall'] if row['wall'] is not None else 0, row['id']))
+        page_number, per_page, sort, direction = call_page_args('wall')
+        rows = sorted_call_rows(rows, sort, direction)
         content, truncated = app.config.get('COLLECTOR', RemoteCollector)(host(), 10).fetch_problem_text(job_id, path)
-        return jsonify(problem=path, text=content, truncated=truncated, tasks=rows)
+        return jsonify(problem=path, text=content, truncated=truncated,
+                       tasks=rows[page_number*per_page:(page_number+1)*per_page], matched=len(rows))
 
     @app.post('/api/validate-path')
     def validate_path():

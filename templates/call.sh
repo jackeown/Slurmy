@@ -80,6 +80,11 @@ if [[ -f "$WATCHER_LOG" ]]; then
         memory=$(sed -n 's/^maximum resident set size=[[:space:]]*//p' "$WATCHER_LOG" | tail -n 1)
     fi
 fi
+if [[ -f "$WATCHER_LOG" ]] && grep -Fq 'Maximum memory exceeded:' "$WATCHER_LOG"; then
+    # Some runsolver versions write MEMOUT=false even after reporting the
+    # limit breach and terminating the child. The watcher is authoritative.
+    memory_out=true
+fi
 szs_status=
 szs_status=$(sed -nE 's/.*SZS[[:space:]]+status[[:space:]]+([A-Za-z][A-Za-z0-9_-]*).*/\1/p' \
     "$SOLVER_LOG" "$SOLVER_STDERR_LOG" "$LIMITER_STDOUT_LOG" 2>/dev/null | tail -n 1 || true)
@@ -89,6 +94,10 @@ elif [[ "$timed_out" == true ]]; then status=time-limit
 elif [[ "${szs_status,,}" == timeout ]]; then status=time-limit
 elif (( code == 124 || code == 137 )); then status=worker-error; complete=false
 elif (( limiter_code != 0 )) && [[ -z "$child" ]]; then status=resource-limiter-error
+elif (( code >= 128 )); then status=solver-error
+elif [[ "${szs_status,,}" == countersatisfiable ]]; then status=counter-satisfiable
+elif [[ "${szs_status,,}" =~ ^(error|oserror|inputerror|syntaxerror|semanticerror|typeerror|usageerror)$ ]]; then status=solver-error
+elif [[ -n "$szs_status" ]]; then status=ok
 elif (( code != 0 )); then status=solver-error
 fi
 archive="batch_${BATCH_ID}_${stem}_${SLURM_JOB_ID:-local}_$(date +%s).tar.gz"

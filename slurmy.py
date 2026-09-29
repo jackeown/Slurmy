@@ -346,7 +346,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int,
             config += f"WALL_SECONDS={60 + sum(t['wc_limit'] + 30 for t in batch)}\n"
             config += f"MAX_CORES={max(t['cores'] for t in batch)}\nMAX_CPUS={max(t['cpus'] for t in batch)}\n"
             (assets / "plans" / f"batch_{i:06d}.sh").write_text(config)
-        for name in ("submit.sh", "remote_prepare.sh", "remote_submit.sh", "batch.sh", "call.sh", "timed_call.sh", "csv.sh"):
+        for name in ("submit.sh", "remote_prepare.sh", "remote_submit.sh", "batch.sh", "call.sh", "timed_call.sh", "csv.sh", "workflow_name.sh"):
             source = REPO / "templates" / name
             destination = output if name == "submit.sh" else assets / name
             # A generated file should look newly generated. copy2() preserved the
@@ -366,14 +366,25 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int,
                 axiom_lines.append(f'cp -- "$JOB_DIR/rootfs"/{shlex.quote(str(source).lstrip("/"))} '
                                    f'"$TPTP_DIR"/{shlex.quote(target)}')
             write_script(assets / 'prepare_axioms.sh', '\n'.join(axiom_lines) + '\n')
-        build_lines = ["#!/usr/bin/env bash", "set -euo pipefail", 'HERE=$(cd -- "$(dirname -- "$0")" && pwd)']
-        build_total = sum(build.recipe is not None for build in builds)
-        build_number = 0
+        build_lines = ["#!/usr/bin/env bash", "set -euo pipefail", 'HERE=$(cd -- "$(dirname -- "$0")" && pwd)', 'source "$HERE/../workflow_name.sh"']
+        active_builds = [(i, build) for i, build in enumerate(builds) if build.recipe is not None]
+        build_total = len(active_builds)
+        # A legacy recipe may rely on the previous build's copied tree. Also
+        # avoid concurrent writes/reads when one runtime root contains another
+        # build's root, source, or recipe. Otherwise the resources are independent.
+        parallel_builds = all(build.artifact for _, build in active_builds)
+        for i, build in active_builds:
+            for j, other in active_builds:
+                if i == j:
+                    continue
+                if any(path.is_relative_to(build.root) for path in
+                       (other.root, other.source, other.recipe) if path is not None) \
+                   or build.root.is_relative_to(other.root):
+                    parallel_builds = False
+        commands = []
         for i, build in enumerate(builds):
             if build.recipe is None:
                 continue
-            build_number += 1
-            build_lines.append(f'echo "Build progress: {build_number}/{build_total} resources (resource-{i})"')
             wrapper = assets / "builds" / f"recipe_{i}.sh"
             if build.artifact:
                 # Use the original script at submission time, so editing a
@@ -383,12 +394,28 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int,
                 body = build.recipe.read_text(encoding="utf-8")
                 write_script(wrapper, '#!/usr/bin/env bash\nset -euo pipefail\nOUTPUT_DEST=$SLURMY_BUILD_OUTPUT\nexport SLURMY_BUILD_OUTPUT=$SLURMY_BUILD_WORK\n(\n' + body + '\n)\ncp -a "$SLURMY_BUILD_WORK/." "$OUTPUT_DEST/"\ntouch "$OUTPUT_DEST/.slurmy-built"\n')
                 recipe_arg = f'"$HERE/recipe_{i}.sh"'
-            build_lines.append('python "$HERE/driver.py" --host "${SLURMY_HOST:-datalab}" '
-                               f'--name resource-{i} --recipe {recipe_arg} '
-                               + (f'--context {shlex.quote(str(build.source))} ' if build.source else '')
-                               + f'--output {shlex.quote(str(build.root))} '
-                               + f'--artifact={shlex.quote(build.artifact or ".slurmy-built")} '
-                               + '--sbatch-option="--partition=${SLURMY_PARTITION:?Set SLURMY_PARTITION}"')
+            command = ('python "$HERE/driver.py" --host "${SLURMY_HOST:-datalab}" '
+                       f'--name "$WORKFLOW_NAME-build-{i}" --recipe {recipe_arg} '
+                       + (f'--context {shlex.quote(str(build.source))} ' if build.source else '')
+                       + f'--output {shlex.quote(str(build.root))} '
+                       + f'--artifact={shlex.quote(build.artifact or ".slurmy-built")} '
+                       + '--sbatch-option="--partition=${SLURMY_PARTITION:?Set SLURMY_PARTITION}"')
+            commands.append((i, command))
+        if parallel_builds and build_total > 1:
+            build_lines += [f'echo "Starting {build_total} independent cluster builds in parallel"', 'build_pids=()', 'build_names=()']
+            for i, command in commands:
+                build_lines += [f'echo "Starting resource-{i}"', command + ' &', 'build_pids+=("$!")', f'build_names+=(resource-{i})']
+            build_lines += ['failed=0', 'for index in "${!build_pids[@]}"; do',
+                            '    if wait "${build_pids[$index]}"; then',
+                            '        echo "Finished ${build_names[$index]}"',
+                            '    else',
+                            '        echo "Failed ${build_names[$index]}" >&2',
+                            '        failed=1',
+                            '    fi',
+                            'done', '(( failed == 0 )) || exit 1']
+        else:
+            for number, (i, command) in enumerate(commands, 1):
+                build_lines += [f'echo "Build progress: {number}/{build_total} resources (resource-{i})"', command]
         write_script(assets / "builds/run.sh", "\n".join(build_lines) + "\n")
         # NUL-separated paths allow spaces, commas, quotes and newlines.
         entries = sorted(set([*roots, *axioms, *(Path(t['solver_root']) for t in tasks), *(Path(t["problem"]) for t in tasks)]))
