@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import glob
 import hashlib
 import json
 import math
@@ -21,7 +22,7 @@ COLUMNS = ("command", "solver_directory", "problem", "wc_limit", "cpu_limit", "m
 RESULT_COLUMNS = ("task_id", "complete", "status", "return_code", "wall_seconds",
                   "cpu_seconds", "user_seconds", "system_seconds", "cpu_usage_percent",
                   "max_virtual_memory_kib", "max_memory_kib", "timed_out", "memory_out",
-                  "task_key", "archive")
+                  "task_key", "archive", "szs_status")
 REPO = Path(__file__).resolve().parent
 PLACEHOLDER = re.compile(r"\{\{([a-z_]+)\}\}")
 
@@ -110,6 +111,30 @@ def read_builds(filename: Path) -> list[tuple[Path, Path | None]]:
     return builds
 
 
+def read_axioms(filename: Path | None) -> tuple[list[Path], Path | None]:
+    """Expand optional axiom globs and find their single TPTP library root."""
+    if filename is None:
+        return [], None
+    files = set()
+    for line in filename.read_text(encoding='utf-8').splitlines():
+        if not line.strip():
+            continue
+        pattern = str(path_at(line.strip(), filename.parent))
+        matches = {Path(name).resolve() for name in glob.glob(pattern, recursive=True) if Path(name).is_file()}
+        if not matches:
+            raise SlurmyError(f"axiom glob matched no files: {line}")
+        files.update(matches)
+    if not files:
+        raise SlurmyError('axiom-globs.txt contains no axiom files')
+    roots = set()
+    for file in files:
+        parts = file.parts
+        roots.add(Path(*parts[:parts.index('Axioms')]) if 'Axioms' in parts else file.parent)
+    if len(roots) != 1:
+        raise SlurmyError('axiom globs must share one TPTP root; put included files under one Axioms directory')
+    return sorted(files), roots.pop()
+
+
 def remote_path(path: Path) -> str:
     return '"${JOB_DIR}/rootfs"/' + shlex.quote(str(path).lstrip("/"))
 
@@ -145,9 +170,11 @@ def write_script(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
-def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int) -> Path:
+def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int,
+             axioms_file: Path | None = None) -> Path:
     tasks = read_pairs(jobpairs)
     builds = read_builds(building)
+    axioms, tptp_root = read_axioms(axioms_file)
     limiter = limiter_file.read_text(encoding="utf-8").strip()
     if not limiter or "{{solver_command}}" not in limiter:
         raise SlurmyError("resource_limiter_template.txt must contain {{solver_command}}")
@@ -247,7 +274,8 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int) ->
             config = "".join(key.upper() + "=" + shlex.quote(str(value)) + "\n" for key, value in {
                 "task_id": task["task_id"], "task_key": task["task_key"], "batch_id": task["batch_id"],
                 "cores": task["cores"], "cpus": task["cpus"], "wc_limit": task["wc_limit"],
-                    "solver_root_rel": task['solver_root'].lstrip("/")}.items())
+                    "solver_root_rel": task['solver_root'].lstrip("/"),
+                    "tptp_root_rel": str(tptp_root).lstrip('/') or '.' if tptp_root else ''}.items())
             (call / "config.sh").write_text(config)
         for i, batch in enumerate(batches):
             config = shell_array("TASK_IDS", [t["task_id"] for t in batch])
@@ -282,7 +310,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int) ->
                                '--artifact=.slurmy-built --sbatch-option="--partition=${SLURMY_PARTITION:?Set SLURMY_PARTITION}"')
         write_script(assets / "builds/run.sh", "\n".join(build_lines) + "\n")
         # NUL-separated paths allow spaces, commas, quotes and newlines.
-        entries = sorted(set([*roots, *(Path(t['solver_root']) for t in tasks), *(Path(t["problem"]) for t in tasks)]))
+        entries = sorted(set([*roots, *axioms, *(Path(t['solver_root']) for t in tasks), *(Path(t["problem"]) for t in tasks)]))
         entries = [p for p in entries if not any(p != other and p.is_relative_to(other) for other in entries)]
         (assets / "archive-paths.txt").write_bytes(b"".join(str(p).lstrip("/").encode() + b"\0" for p in entries))
     except Exception:
@@ -297,11 +325,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("jobpairs", type=Path)
     parser.add_argument("building", type=Path)
     parser.add_argument("resource_limiter_template", type=Path)
+    parser.add_argument('--axioms-file', type=Path, help='optional file with one TPTP axiom path or glob per line')
     parser.add_argument("--deg_par", required=True, type=int, help="maximum concurrent jobpairs within one batch")
     args = parser.parse_args(argv)
     try:
         positive(str(args.deg_par), "--deg_par")
-        output = generate(args.jobpairs.resolve(), args.building.resolve(), args.resource_limiter_template.resolve(), args.deg_par)
+        output = generate(args.jobpairs.resolve(), args.building.resolve(), args.resource_limiter_template.resolve(),
+                          args.deg_par, args.axioms_file.resolve() if args.axioms_file else None)
     except (SlurmyError, OSError, ValueError) as exc:
         parser.error(str(exc))
     print(f"Prepared {output}. Inspect its companion files, then run it to build and submit.")

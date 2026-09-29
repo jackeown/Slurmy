@@ -86,7 +86,7 @@ The guided setup follows **Basics → Provers → Problems → Limiter → Revie
   once per submission, even when multiple configurations use it.
 - **Problems:** select one or more globs. Their union is paired with every
   configuration; duplicate problem paths are removed. An explicit jobpairs CSV
-  already supplies its problems.
+  already supplies its problems. Optionally add globs for included TPTP axioms.
 - **Limiter:** enter or import the limiter invocation and describe its resource
   root and optional build recipe. Both invocation sections have collapsible
   placeholder references and editable examples.
@@ -124,6 +124,14 @@ a running proof search. **Sync results** downloads the saved results once;
 The app provides a dark-mode toggle and collapsible section headers.
 Workflow pages list linked jobs; older submissions without a workflow path
 remain available under Job history.
+
+On a job page, **Sync/Download** fetches new results without re-downloading
+unchanged files. Problem names open a page with the packaged problem text and
+that job's calls on the problem, fastest first. Call status shows a reported
+SZS status when available; otherwise it distinguishes normal completion,
+resource limits, solver failures, and limiter failures. **Delete job** is
+available after its Slurm allocations finish; it permanently removes the
+cluster job directory and any locally synced results after you type its ID.
 
 <details>
 <summary><strong>🖥️ Starting and stopping the app</strong></summary>
@@ -188,10 +196,13 @@ YourRuns/my-workflow/
   .slurmy-workflow.json           # Saved form choices for editing and duplication.
   configurations.csv             # Present for configuration × problem workflows.
   problem-globs.txt              # Present for configuration × problem workflows.
+  axiom-globs.txt                # Optional TPTP include files to package.
   build-resource-0.sh            # Present when build commands were entered in the form.
 ```
 
 The core runner expects the three specification files and `--deg_par`.
+An optional `--axioms-file axiom-globs.txt` packages TPTP axiom files and sets
+`TPTP` to their shared library root for each call.
 The Makefile and saved form choices support the web interface; they are not
 additional inputs to the core runner. An explicit jobpairs workflow does not
 need configurations or globs.
@@ -359,9 +370,11 @@ embedded inside arguments such as `--file=/local/path`, configuration files,
 or shell-generated strings are **not** rewritten. Prefer relative paths inside
 your solver directory and `{{problem}}` for the selected input.
 
-A problem's containing directory is not automatically included. If a benchmark
-includes other files (e.g. TPTP axioms), list their shared root in
-`building.txt` with a blank recipe. Package needed scripts, data, shared
+A problem's containing directory is not automatically included. In the web
+builder's Problems step, add axiom globs for files referenced by TPTP
+`include(...)` directives; the selected files retain their paths in the cluster
+copy, and Slurmy sets `TPTP` to the shared library root. For other dependencies,
+list their root in `building.txt` with a blank recipe. Package needed scripts, data, shared
 libraries, and interpreter environments similarly; a laptop's Python environment
 or system libraries are not copied automatically.
 

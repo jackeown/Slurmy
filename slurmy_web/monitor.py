@@ -343,6 +343,7 @@ class ResultRecord:
     max_memory_kib: float | None = None
     task_key: str = ""
     archive: str = ""
+    szs_status: str = ""
     problem: str = ""
     command: str = ""
 
@@ -590,6 +591,7 @@ def parse_result_rows(rows: Any) -> dict[int, ResultRecord]:
             max_memory_kib=as_float(fields[10]),
             task_key=fields[13],
             archive=fields[14],
+            szs_status=fields[15] if len(fields) > 15 else '',
         )
     return results
 
@@ -948,6 +950,29 @@ class RemoteCollector:
             message = process.stderr.decode("utf-8", "replace").strip()
             raise RuntimeError(message or f"ssh exited with status {process.returncode}")
         return parse_snapshot(self.host, process.stdout)
+
+    def fetch_problem_text(self, job_id: str, problem: str) -> tuple[str, bool]:
+        """Read a packaged problem, never an arbitrary path on the SSH host."""
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', job_id):
+            raise ValueError('Invalid job ID.')
+        path = Path(problem)
+        if not path.is_absolute() or '..' in path.parts:
+            raise ValueError('Invalid problem path.')
+        script = r'''set -euo pipefail
+root=$(realpath -e -- "$HOME/Slurmy/$1/rootfs")
+file=$(realpath -e -- "$root/$2")
+[[ "$file" == "$root/"* && -f "$file" ]] || exit 2
+head -c 1048577 -- "$file"
+'''
+        command = ['ssh', '-T', '-o', 'BatchMode=yes', '-o',
+                   f'ConnectTimeout={max(1, int(self.timeout))}', '--', self.host,
+                   'bash', '-s', '--', job_id, problem.lstrip('/')]
+        process = subprocess.run(command, input=script.encode(), stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, timeout=self.timeout + 20, check=False)
+        if process.returncode:
+            raise RuntimeError(process.stderr.decode('utf-8', 'replace').strip() or
+                               'The packaged problem could not be read on the cluster.')
+        return process.stdout[:1048576].decode('utf-8', 'replace'), len(process.stdout) > 1048576
 
     def fetch_task_output(self, job_id: str, result: ResultRecord) -> TaskOutput:
         if not result.archive or not result.task_key:

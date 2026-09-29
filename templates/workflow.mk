@@ -10,6 +10,7 @@ JOBPAIRS ?= jobpairs.csv
 BUILDING ?= building.txt
 LIMITER ?= resource_limiter_template.txt
 BUILD_RECIPES ?=
+AXIOMS ?=
 
 .PHONY: all prepare submit monitor sync stop clean build
 all: prepare
@@ -23,12 +24,12 @@ prepare:
 	fi
 	@$(MAKE) --no-print-directory submit.sh
 
-submit.sh: $(JOBPAIRS) $(BUILDING) $(LIMITER) $(BUILD_RECIPES) $(REPO_ROOT)/slurmy.py $(REPO_ROOT)/templates/workflow.mk $(wildcard $(REPO_ROOT)/templates/*.sh)
+submit.sh: $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES) $(REPO_ROOT)/slurmy.py $(REPO_ROOT)/templates/workflow.mk $(wildcard $(REPO_ROOT)/templates/*.sh)
 	@if [ -e submit.sh ] || [ -d submit.sh.files ]; then \
 		printf '♻️  Inputs changed; refreshing generated submission files.\n'; \
 		rm -f -- submit.sh; rm -rf -- submit.sh.files; \
 	fi
-	python '$(REPO_ROOT)/slurmy.py' '$(JOBPAIRS)' '$(BUILDING)' '$(LIMITER)' --deg_par '$(DEG_PAR)'
+	python '$(REPO_ROOT)/slurmy.py' '$(JOBPAIRS)' '$(BUILDING)' '$(LIMITER)' --deg_par '$(DEG_PAR)' $(if $(AXIOMS),--axioms-file '$(AXIOMS)')
 	@printf '\n✅ Prepared the explicit jobpairs. Inspect submit.sh.files/.\n👉 make submit builds resources on the cluster, fetches them, and submits the calls.\n'
 
 build: prepare

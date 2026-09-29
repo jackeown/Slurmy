@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -49,7 +50,11 @@ def task_rows(job):
         state = 'pending' if job.active_records else 'not run'
         wall = None
         if result:
-            state, wall = result.status, result.wall_seconds
+            state, wall = result.szs_status or result.status.replace('-', ' '), result.wall_seconds
+            if result.status in {'resource-limiter-error', 'worker-error', 'interrupted'}:
+                state = result.status.replace('-', ' ')
+            elif result.status == 'error' and not result.szs_status:
+                state = 'execution error'
         elif progress and progress.batch_id in job.active_batch_ids:
             state = progress.state
             wall = max(0, time.time() - progress.started_epoch) if progress.started_epoch else None
@@ -67,6 +72,8 @@ def task_rows(job):
                    state=state, wall=wall, cpu=result.cpu_seconds if result else None,
                    memory=result.max_memory_kib * 1024 if result and result.max_memory_kib is not None else None,
                    return_code=result.return_code if result else '',
+                   execution_status=result.status if result else '',
+                   szs_status=result.szs_status if result else '',
                    output=bool(result and result.archive))
 
 
@@ -168,6 +175,10 @@ def create_app():
     def job_page(job_id):
         return page('job.html', job_id=safe_job(job_id))
 
+    @app.get('/jobs/<job_id>/problems/<int:task_id>')
+    def problem_page(job_id, task_id):
+        return page('problem.html', job_id=safe_job(job_id), task_id=task_id)
+
     @app.get('/workflows')
     def workflow_list():
         def created_label(path):
@@ -194,7 +205,7 @@ def create_app():
     def workflow():
         path = directory()
         files = {name: (path / name).read_text() for name in
-                 ('jobpairs.csv', 'configurations.csv', 'building.txt', 'resource_limiter_template.txt', 'Makefile') if (path / name).is_file()}
+                 ('jobpairs.csv', 'configurations.csv', 'problem-globs.txt', 'axiom-globs.txt', 'building.txt', 'resource_limiter_template.txt', 'Makefile') if (path / name).is_file()}
         name = path.name.removeprefix('example-') if path.parent == workflows.USER_RUNS else path.name
         created = datetime.fromtimestamp(path.stat().st_ctime).astimezone().strftime('%Y-%m-%d %H:%M')
         return page('experiment.html', directory=str(path), name=name, created=created, files=files,
@@ -264,6 +275,18 @@ def create_app():
             abort(404, 'Output is available after this call saves its result archive.')
         value = app.config.get('COLLECTOR', RemoteCollector)(host(), 10).fetch_task_output(job_id, result)
         return jsonify(asdict(value))
+
+    @app.get('/api/jobs/<job_id>/problems/<int:task_id>')
+    def problem_data(job_id, task_id):
+        job = job_snapshot(job_id)
+        definition = job.tasks.get(task_id)
+        if not definition:
+            abort(404, 'Call not found in this job.')
+        path = definition.problem
+        rows = [row for row in task_rows(job) if row['problem'] == path]
+        rows.sort(key=lambda row: (row['wall'] is None, row['wall'] if row['wall'] is not None else 0, row['id']))
+        content, truncated = app.config.get('COLLECTOR', RemoteCollector)(host(), 10).fetch_problem_text(job_id, path)
+        return jsonify(problem=path, text=content, truncated=truncated, tasks=rows)
 
     @app.post('/api/validate-path')
     def validate_path():
@@ -449,6 +472,40 @@ def create_app():
         else:
             raise ValueError('Unknown job action.')
         return operation(argv, REPO, os.environ.copy(), data['action'], host() + ':' + job_id)
+
+    @app.post('/api/jobs/<job_id>/delete')
+    def delete_job(job_id):
+        job_id = safe_job(job_id)
+        if (request.get_json() or {}).get('job_id') != job_id:
+            raise ValueError(f'Type {job_id} exactly to confirm deletion.')
+        job = job_snapshot(job_id)
+        if job.active_records:
+            abort(409, 'This job still has active Slurm allocations. Cancel them and wait for completion before deleting it.')
+        with guard:
+            if any(op['scope'] == host() + ':' + job_id and op['state'] == 'running' for op in operations.values()):
+                abort(409, 'Wait for the active job operation to finish before deleting it.')
+        local = REPO / 'slurmy-results' / job_id
+        if local.is_symlink():
+            abort(409, 'The local result directory is a symlink; remove it manually.')
+        script = r'''set -euo pipefail
+job="$HOME/Slurmy/$1"
+[[ -d "$job" && ! -L "$job" ]] || { echo 'Job directory not found or is a symlink.' >&2; exit 2; }
+if squeue -h -u "$USER" -o '%Z' | grep -Fxq -- "$job"; then
+    echo 'Slurm still has an active allocation for this job.' >&2
+    exit 3
+fi
+rm -r -- "$job"
+'''
+        result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '--', host(), 'bash', '-s', '--', job_id],
+                                input=script, text=True, capture_output=True, timeout=60, check=False)
+        if result.returncode:
+            abort(409, result.stderr.strip() or 'Could not delete the cluster job directory.')
+        if local.is_dir():
+            shutil.rmtree(local)
+        with guard:
+            announced_jobs.pop((host(), job_id), None)
+            cache.clear()
+        return jsonify(deleted=job_id)
 
     @app.get('/api/operations/<key>')
     def operation_state(key):

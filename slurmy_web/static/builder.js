@@ -6,6 +6,7 @@ if(document.body.dataset.page==='new'){
  function add(template,target){const node=$('#'+template).content.firstElementChild.cloneNode(true);prefillExamples(node);$('.remove',node).addEventListener('click',()=>node.remove());$('#'+target).append(node);setupBrowsers(node);window.initCollapsibles?.();return node;}
  $('#add-configuration').addEventListener('click',()=>add('configuration-template','configurations'));
  $('#add-glob').addEventListener('click',()=>add('glob-template','globs'));
+ $('#add-axiom-glob').addEventListener('click',()=>add('axiom-glob-template','axiom-globs'));
  let resourceOrder=0;
  function addResource(role,values){const node=add('resource-template',role==='limiter'?'limiter-resources':'prover-resources');node.dataset.resourceRole=role;node.dataset.resourceOrder=resourceOrder++;const caption=$('h3',node);const toggle=$('.collapse-toggle',caption);caption.textContent=role==='limiter'?'Limiter root and build':'Prover root and build';if(toggle){toggle.setAttribute('aria-label',`Collapse ${caption.textContent}`);caption.prepend(toggle);}fill(node,values);return node;}
  $('#add-prover-resource').addEventListener('click',()=>{addResource('prover');visibility();});
@@ -14,6 +15,7 @@ if(document.body.dataset.page==='new'){
  for(const name of ['name','host','partition','degree','mode','jobpairs','configurations_file','building_mode','building_file','limiter_mode','limiter_file','limiter']){const field=form.querySelector(`[name="${name}"]`);if(field&&initial[name]!==undefined)field.value=initial[name];}
  const configurations=initial.configurations?.length?initial.configurations:[null];for(const values of configurations)fill(add('configuration-template','configurations'),values);
  const globs=initial.globs?.length?initial.globs:[null];for(const value of globs)fill(add('glob-template','globs'),value===null?null:{glob:value});
+ for(const value of initial.axiom_globs||[])fill(add('axiom-glob-template','axiom-globs'),{axiom_glob:value});
  for(const values of initial.resources||[])addResource(values.role==='limiter'?'limiter':'prover',values);
  if(!initial.resources?.length)addResource('limiter');
  if(initial.building_mode==='existing')$('#build-import').open=true;
@@ -38,7 +40,7 @@ if(document.body.dataset.page==='new'){
  setupBrowsers(form);
  picker.addEventListener('close',()=>{pickedPathCallback=null;});
  $('#path-parent').addEventListener('click',()=>browse($('#path-parent').dataset.path));$('#path-go').addEventListener('click',()=>browse($('#path-location').value));$('#path-location').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();browse(event.target.value);}});
- $('#path-select-directory').addEventListener('click',()=>{if(!pickedInput)return;const kind=pickedInput.dataset.path;if(kind==='file')return;pickedInput.value=pickerDirectory+(kind==='glob'?'/**/*.p':'');picker.close();validatePath(pickedInput);});
+ $('#path-select-directory').addEventListener('click',()=>{if(!pickedInput)return;const kind=pickedInput.dataset.path;if(kind==='file')return;pickedInput.value=pickerDirectory+(kind==='glob'?(pickedInput.name==='axiom_glob'?'/**/*.ax':'/**/*.p'):'');picker.close();validatePath(pickedInput);});
  $('#limiter-browse').addEventListener('click',()=>{const invocation=$('[name="limiter"]');const current=invocation.value.trim()||invocation.placeholder;const first=current.match(/^(?:'[^']*'|"[^"]*"|\S+)/)?.[0]||'';const binary=first.replace(/^['"]|['"]$/g,'');pickedInput={dataset:{path:'file'},value:binary};pickedPathCallback=path=>{const rest=current.slice(first.length).trimStart();const quoted="'"+path.replace(/'/g,"'\\''")+"'";invocation.value=quoted+(rest?' '+rest:'');};$('#path-select-directory').hidden=true;picker.showModal();browse(binary.startsWith('/')?binary.replace(/\/[^/]*$/,''):'');});
  // Repeated card fields are read from their card, never from a flattened form.
  function rootValue(name){return form.querySelector(`[name="${name}"]`).value;}
@@ -59,7 +61,7 @@ if(document.body.dataset.page==='new'){
  }
  form.addEventListener('focusout',event=>{if(event.target.matches('[data-path]'))validatePath(event.target);});
  function fields(card){return Object.fromEntries([...card.querySelectorAll('[name]')].map(n=>[n.name,n.value]));}
- function payload(){const names=['name','host','partition','degree','mode','jobpairs','configurations_file','building_mode','building_file','limiter_mode','limiter_file','limiter'];const data=Object.fromEntries(names.map(n=>[n,rootValue(n)]));data.configurations=[...document.querySelectorAll('.configuration')].map(fields);data.resources=[...document.querySelectorAll('.resource')].sort((a,b)=>Number(a.dataset.resourceOrder)-Number(b.dataset.resourceOrder)).map(node=>({...fields(node),role:node.dataset.resourceRole}));data.globs=[...document.querySelectorAll('[name="glob"]')].map(n=>n.value);return data;}
+ function payload(){const names=['name','host','partition','degree','mode','jobpairs','configurations_file','building_mode','building_file','limiter_mode','limiter_file','limiter'];const data=Object.fromEntries(names.map(n=>[n,rootValue(n)]));data.configurations=[...document.querySelectorAll('.configuration')].map(fields);data.resources=[...document.querySelectorAll('.resource')].sort((a,b)=>Number(a.dataset.resourceOrder)-Number(b.dataset.resourceOrder)).map(node=>({...fields(node),role:node.dataset.resourceRole}));data.globs=[...document.querySelectorAll('[name="glob"]')].map(n=>n.value);data.axiom_globs=[...document.querySelectorAll('[name="axiom_glob"]')].map(n=>n.value);return data;}
  function renderStep(){sections.forEach((s,i)=>s.hidden=i!==step);document.querySelectorAll('#steps li').forEach((n,i)=>{n.classList.toggle('current',i===step);const tab=$('button',n);if(i===step)tab.setAttribute('aria-current','step');else tab.removeAttribute('aria-current');});$('#builder-back').hidden=step===0;$('#builder-next').hidden=step===4;$('#builder-save').hidden=step!==4;text('#step-count',`Step ${step+1} of 5`);$('#builder-error').hidden=true;}
  function showError(error){text('#builder-error',error.message);$('#builder-error').hidden=false;}
  async function validSection(){

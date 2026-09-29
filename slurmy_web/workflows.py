@@ -119,6 +119,10 @@ def specification(data, destination_override=None):
         rows = [{**row, 'problem': problem} for row in configs for problem in sorted(problems)]
     else:
         raise ValueError('Choose how to define solver/problem calls.')
+    axiom_patterns = []
+    for value in data.get('axiom_globs', []):
+        pattern, _ = problem_glob(value)
+        axiom_patterns.append(pattern)
     recipes = {}
     if data.get('building_mode') == 'existing':
         builds = read_builds(existing(data.get('building_file')))
@@ -160,6 +164,8 @@ def specification(data, destination_override=None):
     executable = path_at(executable_word, base)
     limiter = shlex.quote(str(executable)) + ' ' + limiter[lexer.instream.tell():]
     files = {'jobpairs.csv': csv_text(rows), 'resource_limiter_template.txt': limiter + '\n', **recipes}
+    if axiom_patterns:
+        files['axiom-globs.txt'] = '\n'.join(axiom_patterns) + '\n'
     def building_text(staged=None):
         return ''.join(str(root) + '\n' + (str(staged / recipe.name) if staged and recipe and recipe.name in recipes and recipe.parent == destination
                       else str(recipe) if recipe else '') + '\n' for root, recipe in builds)
@@ -170,9 +176,12 @@ def specification(data, destination_override=None):
         for filename, body in files.items():
             (staging / filename).write_text(body, encoding='utf-8')
         (staging / 'building.txt').write_text(building_text(staging))
-        generate(staging / 'jobpairs.csv', staging / 'building.txt', staging / 'resource_limiter_template.txt', degree)
+        generate(staging / 'jobpairs.csv', staging / 'building.txt', staging / 'resource_limiter_template.txt',
+                 degree, staging / 'axiom-globs.txt' if axiom_patterns else None)
     files['Makefile'] = (f'REPO_ROOT := ../..\nDEG_PAR := {degree}\nSLURMY_HOST := {host}\n'
                          f'SLURMY_PARTITION := {partition}\ninclude $(REPO_ROOT)/templates/workflow.mk\n')
+    if axiom_patterns:
+        files['Makefile'] = 'AXIOMS := axiom-globs.txt\n' + files['Makefile']
     if configs:
         files['configurations.csv'] = csv_text(configs, tuple(c for c in COLUMNS if c != 'problem'))
         files['problem-globs.txt'] = '\n'.join(patterns) + '\n'
@@ -314,6 +323,8 @@ def migrate_user_runs():
                     resource[key] = str(path_at(resource[key], old_base))
         data['globs'] = [str(expand_repo_root(value) or path_at(value, old_base))
                          for value in data.get('globs', [])]
+        data['axiom_globs'] = [str(expand_repo_root(value) or path_at(value, old_base))
+                                for value in data.get('axiom_globs', [])]
         if data.get('limiter_mode') == 'inline':
             invocation = data.get('limiter', '')
             lexer = shlex.shlex(invocation, posix=True)
@@ -354,6 +365,10 @@ def migrate_user_runs():
             invocation = shlex.quote(str(path_at(executable, source))) + ' ' + invocation[lexer.instream.tell():]
         files[file.name] = remap(invocation) + '\n'
         file = source / 'problem-globs.txt'
+        if file.is_file():
+            files[file.name] = remap(''.join(str(expand_repo_root(line) or path_at(line, source)) + '\n'
+                                            for line in file.read_text().splitlines() if line.strip()))
+        file = source / 'axiom-globs.txt'
         if file.is_file():
             files[file.name] = remap(''.join(str(expand_repo_root(line) or path_at(line, source)) + '\n'
                                             for line in file.read_text().splitlines() if line.strip()))
@@ -416,6 +431,9 @@ def decisions(directory, check_paths=True):
         match = re.search(rf'(?m)^{name}\s*(?:\?|:)?=\s*(\S+)', makefile)
         return match.group(1) if match else default
     config_file, globs_file = directory / 'configurations.csv', directory / 'problem-globs.txt'
+    axiom_file = directory / 'axiom-globs.txt'
+    axiom_globs = [str(expand_repo_root(line) or path_at(line, directory))
+                   for line in axiom_file.read_text().splitlines() if line.strip()] if axiom_file.is_file() else []
     glob_values = [line.strip() for line in globs_file.read_text().splitlines() if line.strip()] if globs_file.is_file() else []
     if not glob_values:
         match = re.search(r'--problems\s+(.+?)\s+--output(?:\s|$)', makefile)
@@ -447,7 +465,7 @@ def decisions(directory, check_paths=True):
     return resource_roles(dict(name=directory.name, host=setting('SLURMY_HOST', 'datalab'),
                 partition=setting('SLURMY_PARTITION', 'CPU-amd'), degree=setting('DEG_PAR', '1'),
                 mode=mode, jobpairs=jobpairs, configurations_file='', configurations=configs,
-                globs=globs, building_mode='create', building_file='', resources=resources,
+                globs=globs, axiom_globs=axiom_globs, building_mode='create', building_file='', resources=resources,
                 limiter_mode='inline', limiter_file='', limiter=limiter))
 
 

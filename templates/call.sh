@@ -4,6 +4,9 @@ set -euo pipefail
 export LC_ALL=C
 export CALL_DIR="$JOB_DIR/calls/$1"
 source "$CALL_DIR/config.sh"
+if [[ -n ${TPTP_ROOT_REL:-} ]]; then
+    export TPTP="$JOB_DIR/rootfs/$TPTP_ROOT_REL"
+fi
 BATCH_ID=$2
 source "$JOB_DIR/csv.sh"
 export OMP_NUM_THREADS=$CORES
@@ -51,7 +54,8 @@ if [[ -f "$work/time" ]]; then
         cpu=$(awk -v u="$user" -v s="$system" 'BEGIN {print u+s}')
     fi
 fi
-timed_out=false; memory_out=false; status=ok; complete=true
+timed_out=false; memory_out=false; status=ok; complete=true; child=
+limiter_code=$code
 if [[ -f "$WATCHER_LOG" ]]; then
     child=$(sed -n 's/^Child status:[[:space:]]*//p' "$WATCHER_LOG" | tail -n 1)
     [[ ! "$child" =~ ^[0-9]+$ ]] || code=$child
@@ -74,19 +78,23 @@ if [[ -f "$WATCHER_LOG" ]]; then
         memory=$(sed -n 's/^maximum resident set size=[[:space:]]*//p' "$WATCHER_LOG" | tail -n 1)
     fi
 fi
+szs_status=
+szs_status=$(sed -nE 's/.*SZS[[:space:]]+status[[:space:]]+([A-Za-z][A-Za-z0-9_-]*).*/\1/p' \
+    "$SOLVER_LOG" "$SOLVER_STDERR_LOG" "$LIMITER_STDOUT_LOG" 2>/dev/null | tail -n 1 || true)
 if (( interrupted )); then status=interrupted; complete=false
 elif [[ "$memory_out" == true ]]; then status=memory-limit
 elif [[ "$timed_out" == true ]]; then status=time-limit
 elif (( code == 124 || code == 137 )); then status=worker-error; complete=false
-elif (( code != 0 )); then status=error
+elif (( limiter_code != 0 )) && [[ -z "$child" ]]; then status=resource-limiter-error
+elif (( code != 0 )); then status=solver-error
 fi
 archive="batch_${BATCH_ID}_${stem}_${SLURM_JOB_ID:-local}_$(date +%s).tar.gz"
 tar -czf "$JOB_DIR/results/.$archive.tmp" -C "$work" .
 mv "$JOB_DIR/results/.$archive.tmp" "$JOB_DIR/results/$archive"
 result=$(printf '%s/results/batch_%06d_task_%09d.csv' "$JOB_DIR" "$BATCH_ID" "$TASK_ID")
 {
-    csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive
-    csv_row "$TASK_ID" "$complete" "$status" "$code" "$wall" "$cpu" "$user" "$system" "$cpu_usage" "$max_vm" "$memory" "${timed_out:-false}" "${memory_out:-false}" "$TASK_KEY" "$archive"
+    csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status
+    csv_row "$TASK_ID" "$complete" "$status" "$code" "$wall" "$cpu" "$user" "$system" "$cpu_usage" "$max_vm" "$memory" "${timed_out:-false}" "${memory_out:-false}" "$TASK_KEY" "$archive" "$szs_status"
 } > "$result.tmp"
 mv "$result.tmp" "$result"
 publish_progress "$status"
