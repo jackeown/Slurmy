@@ -258,8 +258,11 @@ summary .count { margin-left: auto; }
   .collapse-toggle::before, summary::before { transition: none; }
 }
 .sort-button { background: transparent; color: var(--muted); border: 0; padding: 4px 5px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .35px; text-transform: uppercase; white-space: nowrap; }
-.page-size-control { display: inline-flex; align-items: center; gap: 9px; margin: 8px 0 14px; color: var(--muted); font-size: 13px; }
+.page-size-control { display: inline-flex; flex-direction: row; align-items: center; gap: 9px; margin: 8px 0 14px; color: var(--muted); font-size: 13px; white-space: nowrap; }
 .page-size-control input { width: 86px; padding: 6px 8px; }
+.page-jump { display: inline-flex; flex-direction: row; align-items: center; gap: 7px; margin: 0; white-space: nowrap; }
+.page-jump input { width: 70px; padding: 7px 8px; text-align: center; }
+.pagination { flex-wrap: wrap; }
 .sort-button:hover, .sort-button[aria-sort] { background: #eaf3e9; color: var(--green); }
 html[data-theme="dark"] .sort-button:hover, html[data-theme="dark"] .sort-button[aria-sort] { background: #20382e; }
 
