@@ -476,8 +476,6 @@ def create_app():
     @app.post('/api/jobs/<job_id>/delete')
     def delete_job(job_id):
         job_id = safe_job(job_id)
-        if (request.get_json() or {}).get('job_id') != job_id:
-            raise ValueError(f'Type {job_id} exactly to confirm deletion.')
         job = job_snapshot(job_id)
         if job.active_records:
             abort(409, 'This job still has active Slurm allocations. Cancel them and wait for completion before deleting it.')

@@ -89,6 +89,16 @@ const runningOperation=sessionStorage.getItem('slurmy-operation');if(runningOper
 let jobs=[], taskPage=0, jobData=null, selectedOutput=null, hasLoadedRemote=false, refreshInFlight=false, staleTimer=null, lastLoadedAt=null;
 function pendingJobs(){try{return JSON.parse(sessionStorage.getItem('slurmy-pending-jobs')||'[]').filter(job=>job.host===host&&Date.now()-job.created<3600000);}catch{return [];}}
 function savePendingJobs(value){sessionStorage.setItem('slurmy-pending-jobs',JSON.stringify(value));}
+async function deleteJob(id, control, redirect=false){
+ control.disabled=true;
+ try{
+  await api(`/api/jobs/${encodeURIComponent(id)}/delete?`+params({}),{});
+  savePendingJobs(pendingJobs().filter(item=>item.id!==id));
+  if(redirect){location.href='/?'+params({});return;}
+  jobs=jobs.filter(item=>item.id!==id);renderJobs();
+  notice(`Deleted job ${id} from the cluster and local synced results.`);
+ }catch(error){control.disabled=false;notice(error.message);}
+}
 function announceJob(id){const known=pendingJobs();if(!known.some(job=>job.id===id))known.push({id,host,directory:document.body.dataset.directory||'',name:document.querySelector('h1')?.textContent||'Slurmy',state:'SUBMITTED',total:0,completed:0,percent:0,issues:0,created:Date.now()});savePendingJobs(known);}
 function remoteState(state){const panel=$('#remote-data');if(!panel)return;panel.classList.remove('loading','refreshing','stale');if(state)panel.classList.add(state);panel.setAttribute('aria-busy',String(state==='loading'||state==='refreshing'));}
 function loadingRow(body,columns,message,failed=false){body.replaceChildren();const row=el('tr');row.className=failed?'loading-row failed-row':'loading-row';const cell=el('td');cell.colSpan=columns;if(!failed)cell.append(el('span','', 'spinner'));cell.append(document.createTextNode(' '+message));row.append(cell);body.append(row);}
@@ -106,7 +116,12 @@ function renderJobs(){
  for(const job of filtered){
   const title=job.provisional?el('div',job.id,'job-link'):link(job.id,'/jobs/'+encodeURIComponent(job.id)+'?'+params({}));title.className='job-link';title.append(el('small',job.name));
   const progress=el('div');if(job.total){progress.append(el('span',`${job.completed} / ${job.total} · ${job.percent.toFixed(1)}%`,'progress-label'));const bar=el('progress');bar.max=100;bar.value=job.percent;bar.setAttribute('aria-label',`${job.percent.toFixed(1)} percent complete`);progress.append(bar);}else progress.append(el('span','Awaiting cluster metadata…','progress-label'));
-  body.append(tableRow([title,badge(job.state),progress,job.issues?el('strong',job.issues,'error'):'—',new Date(job.created*1000).toLocaleString()]));
+  const cells=[title,badge(job.state),progress,job.issues?el('strong',job.issues,'error'):'—',new Date(job.created*1000).toLocaleString()];
+  if(page==='jobs'){
+   const action=job.provisional?'Awaiting submission':button('Delete',event=>deleteJob(job.id,event.currentTarget),'danger');
+   cells.push(action);
+  }
+  body.append(tableRow(cells));
  }
  $('#empty').hidden=filtered.length!==0;
  text('#stat-total',visible.length);text('#stat-active',visible.filter(j=>['RUNNING','PENDING','SUBMITTED'].includes(j.state)).length);text('#stat-done',visible.reduce((a,j)=>a+j.completed,0).toLocaleString());text('#stat-issues',visible.reduce((a,j)=>a+j.issues,0));
@@ -134,8 +149,19 @@ async function fetchProblem(){
  const jobId=document.body.dataset.job, taskId=document.body.dataset.task;
  const data=await api(`/api/jobs/${encodeURIComponent(jobId)}/problems/${taskId}?`+params({}));
  text('#problem-name',data.problem.split('/').pop());text('#problem-path',data.problem);
- window.highlightTptp($('#problem-text'),data.text);
- $('#problem-truncated').hidden=!data.truncated;
+ const source=$('#problem-text');
+ if(source.tagName==='PRE'){
+  source.classList.remove('output'); // Older server template used the generic log styling.
+  source.classList.add('tptp-source');
+ }
+ if(typeof window.highlightTptp!=='function'){
+  try{
+   await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='/static/tptp.js';script.onload=resolve;script.onerror=reject;document.head.append(script);});
+  }catch{ /* Plain text remains available if highlighting cannot load. */ }
+ }
+ if(typeof window.highlightTptp==='function')window.highlightTptp(source,data.text);
+ else source.textContent=data.text;
+ const truncated=$('#problem-truncated');if(truncated)truncated.hidden=!data.truncated;
  const body=$('#problem-tasks-body');body.replaceChildren();
  for(const task of data.tasks){const inspect=task.output?link('Inspect →',`/jobs/${encodeURIComponent(jobId)}?`+params({call:task.id})):'Not saved yet';body.append(tableRow([String(task.id),task.system||'—',badge(task.state),duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
  text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()} · ${data.tasks.length} calls on this problem`);
@@ -143,7 +169,7 @@ async function fetchProblem(){
 async function refresh(){
  if(refreshInFlight)return;refreshInFlight=true;beginRefresh();
  try{if(page==='jobs'||page==='workflow')await fetchJobs();else if(page==='job')await fetchJob();else if(page==='problem')await fetchProblem();hasLoadedRemote=true;finishRefresh();scheduleStaleWarning();}
- catch(error){remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check your SSH access or VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),8,'Calls could not be loaded. Use Refresh to try again.',true);else loadingRow($('#jobs-body'),5,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
+ catch(error){remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check your SSH access or VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),8,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='jobs'||page==='workflow')loadingRow($('#jobs-body'),page==='jobs'?6:5,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
  finally{refreshInFlight=false;}
 }
 $('#refresh')?.addEventListener('click',refresh);
@@ -151,13 +177,7 @@ $('#job-filter')?.addEventListener('input',()=>{if(hasLoadedRemote)renderJobs();
 let searchTimer;$('#task-filter')?.addEventListener('input',()=>{taskPage=0;clearTimeout(searchTimer);searchTimer=setTimeout(refresh,300);});
 $('#previous')?.addEventListener('click',()=>{taskPage--;refresh();});$('#next')?.addEventListener('click',()=>{taskPage++;refresh();});
 $('#sync')?.addEventListener('click',()=>startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'sync'}));
-$('#delete-job')?.addEventListener('click',async()=>{
- const id=document.body.dataset.job;
- const confirmation=prompt(`Permanently delete job ${id}?\n\nThis removes its cluster directory and any locally synced results. Active jobs must be cancelled and finish first.\n\nType the exact job ID to confirm:`,'');
- if(confirmation===null)return;
- try{await api(`/api/jobs/${encodeURIComponent(id)}/delete?`+params({}),{job_id:confirmation});savePendingJobs(pendingJobs().filter(item=>item.id!==id));location.href='/?'+params({});}
- catch(error){notice(error.message);}
-});
+$('#delete-job')?.addEventListener('click',event=>deleteJob(document.body.dataset.job,event.currentTarget,true));
 $('#prepare')?.addEventListener('click',()=>startOperation('/api/workflow/action?'+params({directory:document.body.dataset.directory}),{action:'all'}));
 $('#submit')?.addEventListener('click',()=>startOperation('/api/workflow/action?'+params({directory:document.body.dataset.directory}),{action:'submit'}));
 $('#duplicate')?.addEventListener('click',async()=>{

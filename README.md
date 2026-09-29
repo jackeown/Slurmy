@@ -131,7 +131,8 @@ that job's calls on the problem, fastest first. Call status shows a reported
 SZS status when available; otherwise it distinguishes normal completion,
 resource limits, solver failures, and limiter failures. **Delete job** is
 available after its Slurm allocations finish; it permanently removes the
-cluster job directory and any locally synced results after you type its ID.
+cluster job directory and any locally synced results when clicked. The same
+action is available in the Job history table.
 
 <details>
 <summary><strong>🖥️ Starting and stopping the app</strong></summary>
