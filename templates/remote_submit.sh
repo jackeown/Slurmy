@@ -81,7 +81,7 @@ for batch in batches/batch_*.sh; do
     }
     csv_row "$BATCH_ID" "$PARALLEL" "$((PARALLEL * SLOT_CORES))" "$MEMORY_MIB" "$WALL_SECONDS" "$EXCLUSIVE_CPU" "$EXCLUSIVE_NODE" >> allocations.csv
 done
-csv_row slurm_job_id offset array_size submitted_epoch > submission.csv
+csv_row slurm_job_id offset array_size submitted_epoch batch_id > submission.csv
 for batch in batches/batch_*.sh; do
     source "$batch"
     PARALLEL=${#TASK_IDS[@]}
@@ -103,7 +103,7 @@ for batch in batches/batch_*.sh; do
     SUBMITTED=$(sbatch "${OPTIONS[@]}" batch.sh)
     ID=${SUBMITTED%%;*}
     [[ "$ID" =~ ^[0-9]+$ ]] || { echo "Invalid sbatch ID: $SUBMITTED" >&2; exit 1; }
-    csv_row "$ID" 0 1 "$(date +%s)" >> submission.csv
+    csv_row "$ID" 0 1 "$(date +%s)" "$BATCH_ID" >> submission.csv
     echo "Batch $BATCH_ID: Slurm $ID"
 done
 echo "Slurmy job ID: $1"

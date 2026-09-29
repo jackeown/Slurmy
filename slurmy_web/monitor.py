@@ -218,6 +218,12 @@ for directory in "${job_dirs[@]}"; do
             (
                 set +u
                 source "$batch_file"
+                if [[ "$batch_file" =~ (batch|chunk)_([0-9]+)[.]sh$ ]] && declare -p TASK_IDS >/dev/null 2>&1; then
+                    batch_id=$((10#${BASH_REMATCH[2]}))
+                    for task_id in "${TASK_IDS[@]}"; do
+                        printf 'BATCH_TASK\0%s\0%s\0%s\0' "$job" "$batch_id" "$task_id"
+                    done
+                fi
                 declare -p TASK_IDS TASK_KEYS TASK_PROBLEM_RELS TASK_COMMANDS TASK_SOLVER_ROOT_RELS >/dev/null 2>&1 || exit 0
                 for index in "${!TASK_IDS[@]}"; do
                     system=
@@ -417,7 +423,9 @@ class JobSnapshot:
     tasks: dict[int, TaskDefinition] = field(default_factory=dict)
     progress: dict[int, BatchProgress] = field(default_factory=dict)
     call_progress: dict[int, BatchProgress] = field(default_factory=dict)
+    task_batches: dict[int, int] = field(default_factory=dict)
     submission_offsets: dict[str, int] = field(default_factory=dict)
+    submitted_batches: set[int] = field(default_factory=set)
     slurm: list[SlurmRecord] = field(default_factory=list)
     logs: dict[str, str] = field(default_factory=dict)
 
@@ -529,6 +537,7 @@ class ClusterSnapshot:
 
 PROTOCOL_ARITY = {
     "CALL_PROGRESS": 2,
+    "BATCH_TASK": 3,
     "REMOTE_HOME": 1,
     "DETAIL": 1,
     "JOB": 2,
@@ -714,6 +723,7 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
     taskdefs: dict[str, list[list[str]]] = {}
     progress_payloads: dict[str, tuple[str, str]] = {}
     call_payloads: dict[str, list[str]] = {}
+    batch_tasks: dict[str, list[tuple[str, str]]] = {}
     submissions: dict[str, tuple[str, str]] = {}
     logs: dict[str, dict[str, str]] = {}
     queue_payload = ""
@@ -739,6 +749,8 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
             legacy_overviews[fields[0]] = fields[1]
         elif kind == "CALL_PROGRESS":
             call_payloads.setdefault(fields[0], []).append(fields[1])
+        elif kind == "BATCH_TASK":
+            batch_tasks.setdefault(fields[0], []).append((fields[1], fields[2]))
         elif kind in {"PROGRESS_CSV", "PROGRESS_TSV"}:
             progress_payloads[fields[0]] = (kind, fields[1])
         elif kind in {"SUBMISSION_CSV", "SUBMISSION_TSV"}:
@@ -765,6 +777,14 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
             job.metadata = json.loads(pending_metadata.get(job_id, "{}"))
         except json.JSONDecodeError:
             job.metadata = {}
+        for batch_id, task_id in batch_tasks.get(job_id, []):
+            if batch_id.isdigit() and task_id.isdigit():
+                job.task_batches[int(task_id)] = int(batch_id)
+        if not job.task_batches:
+            for batch_id, task_ids in enumerate(job.metadata.get('planned_batch_tasks', [])):
+                for task_id in task_ids:
+                    if isinstance(task_id, int):
+                        job.task_batches[task_id] = batch_id
         if job_id in summaries:
             parse_summary(job, summaries[job_id])
         elif job_id in legacy_overviews:
@@ -809,6 +829,8 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
         for fields in submission_rows[1:]:
             if len(fields) >= 2 and fields[1].isdigit():
                 job.submission_offsets[fields[0]] = int(fields[1])
+                if len(fields) >= 5 and fields[4].isdigit():
+                    job.submitted_batches.add(int(fields[4]))
 
         if job_id == detail_job:
             results = parse_tsv_results(detail_tsv.get(job_id, ""))

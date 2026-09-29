@@ -42,12 +42,59 @@ def summary(job):
                 statuses=job.status_counts)
 
 
+def unfinished_call(job, task_id, progress):
+    """Explain a missing result using this call's actual Slurm batch."""
+    batch_id = job.task_batches.get(task_id)
+    if batch_id is None and progress:
+        batch_id = progress.batch_id
+    if batch_id is None:
+        batch_id = task_id // job.batch_size
+    records = [record for record in job.slurm
+               if record.array_task_id.isdigit()
+               and job.submission_offsets.get(record.array_job_id, 0) + int(record.array_task_id) == batch_id]
+    records.sort(key=lambda record: record.source != 'queue')
+    record = records[0] if records else None
+    log = ''
+    if record:
+        log = job.logs.get(f'slurm_{record.array_job_id}_{record.array_task_id}.out', '')
+    excerpt = next((line.strip() for line in reversed(log.splitlines()) if line.strip()), '')[:240]
+    suffix = f' Last Slurm log line: {excerpt}' if excerpt else ''
+    if record and record.source == 'queue':
+        code = record.state.upper().split()[0]
+        if code in {'RUNNING', 'COMPLETING'}:
+            if progress and progress.state == 'running':
+                return 'running', 'Running', f'Call started in Slurm batch {batch_id}; no result saved yet.', log
+            return 'batch starting', 'Yes', f'Slurm batch {batch_id} is {code.lower()}, but this call has not recorded a start yet.{suffix}', log
+        return 'queued', 'Yes', f'Slurm batch {batch_id} is {code.lower()}: {record.location}.{suffix}', log
+    if record:
+        code = record.state.upper().split()[0].rstrip('+')
+        label = {'COMPLETED': 'result missing', 'TIMEOUT': 'batch timed out',
+                 'OUT_OF_MEMORY': 'batch out of memory', 'NODE_FAIL': 'node failed',
+                 'CANCELLED': 'batch cancelled', 'FAILED': 'batch failed',
+                 'PREEMPTED': 'batch preempted'}.get(code, 'batch ' + code.lower())
+        reason = (f'Slurm batch {batch_id} ended as {code}, but this call has no saved result.'
+                  f'{suffix} See its batch log for details.')
+        return label, 'No', reason, log
+    if progress and progress.state != 'running':
+        return 'result missing', 'No', f'Call recorded {progress.state}, but no result was saved. Slurm no longer reports batch {batch_id}.', log
+    if batch_id not in job.submitted_batches and job.submitted_batches:
+        return 'not submitted', 'No', f'Batch {batch_id} was planned but has no Slurm submission. Submission may have stopped partway through.', log
+    if not job.submission_offsets and not job.slurm:
+        recent = time.time() - job.created_epoch < 180
+        return ('preparing submission', 'Unknown', 'No Slurm submission recorded yet; preparation may still be underway.', log) if recent else (
+            'not submitted', 'No', 'No Slurm submission was recorded for this job.', log)
+    return 'scheduler status unknown', 'Unknown', f'No current or historical Slurm record is available for batch {batch_id}; cannot tell whether it will run.', log
+
+
 def task_rows(job):
     for task_id in sorted(set(job.tasks) | set(job.results)):
         definition = job.tasks.get(task_id)
         result = job.results.get(task_id)
         progress = job.call_progress.get(task_id)
-        state = 'pending' if job.active_records else 'not run'
+        state = 'pending'
+        will_run = ''
+        reason = ''
+        diagnostic = ''
         wall = None
         if result:
             state, wall = result.szs_status or result.status.replace('-', ' '), result.wall_seconds
@@ -55,14 +102,14 @@ def task_rows(job):
                 state = result.status.replace('-', ' ')
             elif result.status == 'error' and not result.szs_status:
                 state = 'execution error'
-        elif progress and progress.batch_id in job.active_batch_ids:
-            state = progress.state
-            wall = max(0, time.time() - progress.started_epoch) if progress.started_epoch else None
         else:
-            # Historical sequential-batch jobs remain inspectable.
-            progress = job.progress.get(task_id // job.batch_size)
-            if progress and progress.task_id == task_id and progress.batch_id in job.active_batch_ids:
-                state = progress.state
+            if not progress:
+                # Historical sequential-batch jobs remain inspectable.
+                legacy = job.progress.get(task_id // job.batch_size)
+                if legacy and legacy.task_id == task_id:
+                    progress = legacy
+            state, will_run, reason, diagnostic = unfinished_call(job, task_id, progress)
+            if progress and progress.state == 'running' and state == 'running':
                 wall = max(0, time.time() - progress.started_epoch) if progress.started_epoch else None
         yield dict(id=task_id, system=definition.system if definition else '',
                    problem=definition.problem if definition else '',
@@ -74,6 +121,7 @@ def task_rows(job):
                    return_code=result.return_code if result else '',
                    execution_status=result.status if result else '',
                    szs_status=result.szs_status if result else '',
+                   will_run=will_run, reason=reason, diagnostic=diagnostic,
                    output=bool(result and result.archive))
 
 

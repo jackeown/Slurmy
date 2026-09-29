@@ -133,6 +133,10 @@ resource limits, solver failures, and limiter failures. **Delete job** is
 available after its Slurm allocations finish; it permanently removes the
 cluster job directory and any locally synced results when clicked. The same
 action is available in the Job history table.
+Calls without a saved result show whether their batch is still queued or
+running, ended without a result, or cannot be located in Slurm accounting.
+The **Will run?** and **Reason** columns explain what is known; an available
+batch log can be inspected from that call. “Unknown” does not imply a retry.
 
 <details>
 <summary><strong>🖥️ Starting and stopping the app</strong></summary>

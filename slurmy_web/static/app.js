@@ -128,8 +128,16 @@ function renderJobs(){
 }
 async function fetchJobs(){const directory=document.body.dataset.directory;const data=await api('/api/jobs?'+params(directory?{directory}:{}));jobs=data.jobs;renderJobs();text('#connection',`Connected to ${host} · refreshed ${new Date(data.updated*1000).toLocaleTimeString()} · refreshes every 10 seconds`);}
 async function openOutput(task){
- const panel=$('#call-output');panel.hidden=false;text('#output-title',`Call ${task.id} · ${task.system}`);text('#command',`Solver command: ${task.command}\nLimiter command: ${task.limiter_command||'Unavailable for this older job'}\nWorking directory: ${task.directory}`);$('#command').hidden=false;text('#output-info',task.problem);text('#output-text','Loading saved output…');selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
+ const panel=$('#call-output');panel.hidden=false;$('#stream').closest('label').hidden=false;text('#output-title',`Call ${task.id} · ${task.system}`);text('#command',`Solver command: ${task.command}\nLimiter command: ${task.limiter_command||'Unavailable for this older job'}\nWorking directory: ${task.directory}`);$('#command').hidden=false;text('#output-info',task.problem);text('#output-text','Loading saved output…');selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
  try{const data=await api(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/output/${task.id}?`+params({}));selectedOutput=data;renderOutput();}catch(error){text('#output-text',error.message);}
+}
+function openDiagnostic(task){
+ const panel=$('#call-output');panel.hidden=false;$('#stream').closest('label').hidden=true;
+ text('#output-title',`Call ${task.id} · batch diagnostic`);
+ text('#command',`Solver command: ${task.command}\nLimiter command: ${task.limiter_command}\nWorking directory: ${task.directory}`);
+ $('#command').hidden=false;text('#output-info',task.reason);
+ text('#output-text',task.diagnostic||'No Slurm log is available for this batch yet.');
+ selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
 }
 function renderOutput(){if(!selectedOutput)return;const stream=selectedOutput.streams[$('#stream').value];text('#output-text',stream?.content||'(This output stream is empty or was not captured.)');text('#output-info',`${stream?memory(stream.size):'0 B'}${stream?.truncated?' · Truncated: beginning and end shown':''} · Saved output for call ${selectedOutput.task_id}`);}
 $('#stream')?.addEventListener('change',renderOutput);
@@ -140,10 +148,11 @@ async function fetchJob(){
  text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()} · completion counts finished calls, not proof-search progress`);
  text('#stat-state',data.state);text('#stat-done',`${data.completed} / ${data.total}`);text('#stat-percent',data.percent.toFixed(1)+'%');text('#stat-issues',data.issues);
  const tasks=$('#tasks-body');tasks.replaceChildren();
- for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;tasks.append(tableRow([String(task.id),task.system||'—',problem,badge(task.state),duration(task.cpu),duration(task.wall),memory(task.memory),task.output?button('Inspect →',()=>openOutput(task)):'Not saved yet']));}
- if(!data.tasks.length)tasks.append(tableRow(['No matching calls.','','','','','','','']));
+ for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):task.diagnostic?button('Inspect log →',()=>openDiagnostic(task)):'—';tasks.append(tableRow([String(task.id),task.system||'—',problem,badge(task.state),task.will_run||'—',task.reason||'—',duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
+ if(!data.tasks.length)tasks.append(tableRow(['No matching calls.','','','','','','','','','']));
  text('#page-label',`${data.matched} matching calls · page ${taskPage+1} of ${Math.max(1,Math.ceil(data.matched/100))}`);$('#previous').disabled=taskPage===0;$('#next').disabled=(taskPage+1)*100>=data.matched;
  const selected=new URLSearchParams(location.search).get('call');if(selected&&data.tasks.some(task=>String(task.id)===selected)){history.replaceState(null,'',location.pathname+'?'+params({}));openOutput(data.tasks.find(task=>String(task.id)===selected));}
+ const diagnostic=new URLSearchParams(location.search).get('diagnostic');if(diagnostic&&data.tasks.some(task=>String(task.id)===diagnostic)){history.replaceState(null,'',location.pathname+'?'+params({}));openDiagnostic(data.tasks.find(task=>String(task.id)===diagnostic));}
 }
 async function fetchProblem(){
  const jobId=document.body.dataset.job, taskId=document.body.dataset.task;
@@ -163,13 +172,13 @@ async function fetchProblem(){
  else source.textContent=data.text;
  const truncated=$('#problem-truncated');if(truncated)truncated.hidden=!data.truncated;
  const body=$('#problem-tasks-body');body.replaceChildren();
- for(const task of data.tasks){const inspect=task.output?link('Inspect →',`/jobs/${encodeURIComponent(jobId)}?`+params({call:task.id})):'Not saved yet';body.append(tableRow([String(task.id),task.system||'—',badge(task.state),duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
+ for(const task of data.tasks){const inspect=task.output?link('Inspect →',`/jobs/${encodeURIComponent(jobId)}?`+params({call:task.id})):task.diagnostic?link('Inspect log →',`/jobs/${encodeURIComponent(jobId)}?`+params({diagnostic:task.id})):'—';body.append(tableRow([String(task.id),task.system||'—',badge(task.state),task.will_run||'—',task.reason||'—',duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
  text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()} · ${data.tasks.length} calls on this problem`);
 }
 async function refresh(){
  if(refreshInFlight)return;refreshInFlight=true;beginRefresh();
  try{if(page==='jobs'||page==='workflow')await fetchJobs();else if(page==='job')await fetchJob();else if(page==='problem')await fetchProblem();hasLoadedRemote=true;finishRefresh();scheduleStaleWarning();}
- catch(error){remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check your SSH access or VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),8,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='jobs'||page==='workflow')loadingRow($('#jobs-body'),page==='jobs'?6:5,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
+ catch(error){remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check your SSH access or VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),10,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='problem')loadingRow($('#problem-tasks-body'),9,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='jobs'||page==='workflow')loadingRow($('#jobs-body'),page==='jobs'?6:5,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
  finally{refreshInFlight=false;}
 }
 $('#refresh')?.addEventListener('click',refresh);
