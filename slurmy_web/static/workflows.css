@@ -23,6 +23,11 @@
   background: var(--white);
 }
 
+.workflow-card-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 22px; }
+.workflow-card-actions .card-link { margin-top: 0; }
+.workflow-card-actions button { padding: 7px 11px; }
+.submission-phase { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.35; }
+
 .workflow-group .count {
   display: inline-grid;
   place-items: center;
@@ -34,10 +39,15 @@
   font-size: 12px;
 }
 
-.workflow-management { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 24px; margin: -10px 0 28px; padding: 17px 20px; border: 1px solid var(--line); border-radius: 9px; background: white; }
-.workflow-management > div:first-child { display: grid; gap: 4px; }
-.workflow-management span { color: var(--muted); font-size: 12px; }
+.workflow-management { display: flex; align-items: center; margin: -10px 0 28px; padding: 17px 20px; border: 1px solid var(--line); border-radius: 9px; background: white; overflow-x: auto; }
+.workflow-management > .tools { display: flex; flex-wrap: nowrap; white-space: nowrap; }
 .submission-actions { padding-left: 28px; border-left: 1px solid var(--line); }
+.split-action { position: relative; display: inline-flex; flex: none; white-space: nowrap; }
+.split-action > button:first-child { border-radius: 7px 0 0 7px; }
+.split-action > button:nth-child(2) { padding-inline: 13px; border-left: 1px solid #ffffff55; border-radius: 0 7px 7px 0; }
+.split-menu { position: absolute; z-index: 12; top: calc(100% + 7px); right: 0; min-width: 220px; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--white); box-shadow: 0 12px 32px #102e2826; }
+.split-menu button { display: block; width: 100%; padding: 10px 12px; border-radius: 5px; background: transparent; color: var(--ink); text-align: left; font-weight: 500; }
+.split-menu button:hover { background: var(--paper); }
 
 .theme-toggle {
   margin-top: 28px;

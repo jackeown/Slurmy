@@ -1,4 +1,4 @@
-bin
-build.sh
-../../building-dependencies/runsolver
-../../building-dependencies/runsolver/build.sh
+[
+  {"root": "bin", "source": "", "recipe": "build.sh", "artifact": "vampire"},
+  {"root": "../../building-dependencies/runsolver", "source": "", "recipe": "../../building-dependencies/runsolver/build.sh", "artifact": "runsolver"}
+]

@@ -2,6 +2,8 @@
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := all
 DEG_PAR ?= 1
+BATCH_SIZE ?= $(DEG_PAR)
+PAIR_ORDER ?= solver-major
 SLURMY_HOST ?= datalab
 SLURMY_PARTITION ?= CPU-amd
 SLURMY_ID ?=
@@ -12,7 +14,7 @@ LIMITER ?= resource_limiter_template.txt
 BUILD_RECIPES ?=
 AXIOMS ?=
 
-.PHONY: all prepare submit monitor sync stop clean build
+.PHONY: all prepare prepare-submit submit monitor sync stop clean build
 all: prepare
 
 # Keep the generated submission complete and current. This target is deliberately
@@ -24,19 +26,24 @@ prepare:
 	fi
 	@$(MAKE) --no-print-directory submit.sh
 
-submit.sh: $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES) $(REPO_ROOT)/slurmy.py $(REPO_ROOT)/templates/workflow.mk $(wildcard $(REPO_ROOT)/templates/*.sh)
+submit.sh: Makefile $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES) $(REPO_ROOT)/slurmy.py $(REPO_ROOT)/templates/workflow.mk $(wildcard $(REPO_ROOT)/templates/*.sh)
 	@if [ -e submit.sh ] || [ -d submit.sh.files ]; then \
 		printf '♻️  Inputs changed; refreshing generated submission files.\n'; \
 		rm -f -- submit.sh; rm -rf -- submit.sh.files; \
 	fi
-	python '$(REPO_ROOT)/slurmy.py' '$(JOBPAIRS)' '$(BUILDING)' '$(LIMITER)' --deg_par '$(DEG_PAR)' $(if $(AXIOMS),--axioms-file '$(AXIOMS)')
-	@printf '\n✅ Prepared the explicit jobpairs. Inspect submit.sh.files/.\n👉 make submit builds resources on the cluster, fetches them, and submits the calls.\n'
+	python '$(REPO_ROOT)/slurmy.py' '$(JOBPAIRS)' '$(BUILDING)' '$(LIMITER)' --deg_par '$(DEG_PAR)' --batch-size '$(BATCH_SIZE)' $(if $(AXIOMS),--axioms-file '$(AXIOMS)')
+	@printf '\n✅ Prepared the explicit jobpairs. Inspect submit.sh.files/.\n👉 make prepare-submit prepares again and dispatches; make submit dispatches these prepared files as-is.\n'
 
 build: prepare
 	bash ./submit.sh.files/builds/run.sh
 	@printf '✅ Built and downloaded the declared resources.\n'
 
-submit: prepare
+prepare-submit: prepare
+	@$(MAKE) --no-print-directory submit
+
+# Dispatch exactly the prepared submission; never regenerate submit.sh here.
+submit:
+	@test -f submit.sh && test -d submit.sh.files || { printf 'No prepared submission found. Run make prepare or make prepare-submit first.\n' >&2; exit 1; }
 	bash ./submit.sh
 	@printf '✅ Submitted. Next: make monitor, make sync, or make stop.\n'
 

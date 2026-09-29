@@ -10,10 +10,11 @@ from pathlib import Path
 import sys
 import tempfile
 
-from slurmy import COLUMNS, SlurmyError, path_at, read_pairs
+from slurmy import COLUMNS, PAIR_ORDERS, SlurmyError, order_jobpairs, path_at, read_pairs
 
 
-def expand(configurations: list[Path], patterns: list[str], output: Path) -> int:
+def expand(configurations: list[Path], patterns: list[str], output: Path,
+           order: str = "solver-major") -> int:
     problems: set[Path] = set()
     for pattern in patterns:
         matches = [Path(os.path.abspath(p)) for p in glob.glob(os.path.expanduser(pattern), recursive=True) if Path(p).is_file()]
@@ -36,6 +37,7 @@ def expand(configurations: list[Path], patterns: list[str], output: Path) -> int
                     rows.append({**row, "problem": str(problem)})
     if not rows:
         raise SlurmyError("no solver configurations")
+    rows = order_jobpairs(rows, order)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
@@ -60,6 +62,8 @@ def main() -> int:
     parser.add_argument("--problems", action="append", nargs="+", default=[])
     parser.add_argument("--problem-globs-file", type=Path, help="one glob per line, relative to this file")
     parser.add_argument("--output", type=Path, default=Path("jobpairs.csv"))
+    parser.add_argument("--order", choices=PAIR_ORDERS, default="solver-major",
+                        help="jobpair order; random is reproducible for unchanged inputs")
     args = parser.parse_args()
     try:
         patterns = [p for group in args.problems for p in group]
@@ -68,7 +72,7 @@ def main() -> int:
                             for line in args.problem_globs_file.read_text().splitlines() if line.strip())
         if not patterns:
             raise SlurmyError("provide --problems or --problem-globs-file")
-        count = expand(args.configurations, patterns, args.output)
+        count = expand(args.configurations, patterns, args.output, args.order)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
     print(f"Wrote {count} explicit jobpairs to {args.output}")

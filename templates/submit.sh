@@ -11,9 +11,11 @@ HOST=${SLURMY_HOST:-datalab}
 [[ "$SLURMY_PARTITION" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo 'Invalid partition' >&2; exit 1; }
 
 # 1. Build each non-empty building.txt recipe remotely and fetch its outputs.
+echo 'Submission phase: Building dependencies on cluster compute nodes'
 bash "$ASSETS/builds/run.sh"
 
 # 2. Package declared resources and problems with their local path layout.
+echo 'Submission phase: Packaging inputs'
 # Both BSD tar on macOS and GNU tar support these options.
 TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/slurmy-submit.XXXXXXXX")
 trap 'rm -rf -- "$TEMP_DIR"' EXIT
@@ -24,8 +26,10 @@ REMOTE_USER=$(ssh -T -G -- "$HOST" | awk 'tolower($1)=="user" && !seen++ {print 
 JOB_ID="${REMOTE_USER}_$(date +%s)_$$"
 
 # 3. Transfer archives. Remote shell logic lives in readable helper files.
+echo 'Submission phase: Uploading inputs to cluster'
 ssh -T -- "$HOST" bash -s -- "$JOB_ID" < "$ASSETS/remote_prepare.sh"
 scp -- "$TEMP_DIR/inputs.tar.gz" "$TEMP_DIR/job-files.tar.gz" "$HOST:Slurmy/$JOB_ID/incoming/"
 
 # 4. Calculate allocations using cluster topology, then submit each batch.
-ssh -T -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" < "$ASSETS/remote_submit.sh"
+echo 'Submission phase: Submitting Slurm batches'
+ssh -T -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "${SLURMY_MAX_OUTSTANDING:-32}" < "$ASSETS/remote_submit.sh"

@@ -14,7 +14,8 @@ Solver and problem resources stay at their existing paths until submission.
 User workflow folders are ignored by Git.
 
 Use the workflow page to edit, duplicate, prepare, and dispatch jobs. Its Makefile
-also supports `make`, `make build`, `make submit`, `make monitor`, `make sync`,
+also supports `make`, `make build`, `make prepare-submit` (refresh and dispatch),
+`make submit` (dispatch already-prepared files), `make monitor`, `make sync`,
 `make stop`, and `make clean`. A manually copied
 [template](../ExampleRuns/example-template/README.md) uses `REPO_ROOT := ../..`.
 

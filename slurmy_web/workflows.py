@@ -5,14 +5,14 @@ import csv
 import glob
 import io
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shlex
 import shutil
 import tempfile
 import time
 
-from slurmy import COLUMNS, generate, path_at, positive, read_builds, read_pairs
+from slurmy import COLUMNS, PAIR_ORDERS, generate, order_jobpairs, path_at, positive, read_builds, read_pairs
 
 REPO = Path(__file__).resolve().parents[1]
 USER_RUNS = REPO / 'YourRuns'
@@ -93,6 +93,10 @@ def specification(data, destination_override=None):
         raise ValueError(f'Workflow already exists: {destination}')
     host, partition = alias(data.get('host')), alias(data.get('partition'))
     degree = positive(str(data.get('degree', '')), 'parallel calls per batch')
+    batch_size = positive(str(data.get('batch_size') or degree), 'jobpairs per Slurm task')
+    pair_order = data.get('pair_order') or 'solver-major'
+    if pair_order not in PAIR_ORDERS:
+        raise ValueError('Choose Problem Major, Solver Major, or random jobpair order.')
     mode = data.get('mode')
     configs, patterns = [], []
     if mode == 'jobpairs':
@@ -119,6 +123,7 @@ def specification(data, destination_override=None):
         rows = [{**row, 'problem': problem} for row in configs for problem in sorted(problems)]
     else:
         raise ValueError('Choose how to define solver/problem calls.')
+    rows = order_jobpairs(rows, pair_order)
     axiom_patterns = []
     for value in data.get('axiom_globs', []):
         pattern, _ = problem_glob(value)
@@ -130,7 +135,7 @@ def specification(data, destination_override=None):
         builds = []
         for index, entry in enumerate(data.get('resources', [])):
             root = existing(entry.get('root'), 'directory')
-            if any(root == previous for previous, _ in builds):
+            if any(root == previous.root for previous in builds):
                 raise ValueError(f'Duplicate resource root: {root}')
             choice = entry.get('mode')
             if choice == 'none':
@@ -145,7 +150,13 @@ def specification(data, destination_override=None):
                 recipes[recipe.name] = '#!/usr/bin/env bash\nset -euo pipefail\n' + commands + '\n'
             else:
                 raise ValueError('Choose whether and how to build each resource.')
-            builds.append((root, recipe))
+            source = existing(entry.get('source'), 'directory') if entry.get('source', '').strip() and recipe else None
+            artifact = entry.get('artifact', '').strip() if recipe else ''
+            artifact_path = PurePosixPath(artifact) if artifact else None
+            if artifact_path and (artifact_path.is_absolute() or not artifact_path.parts or '..' in artifact_path.parts or '\n' in artifact):
+                raise ValueError('Expected executable must be a relative path inside the solver root.')
+            from slurmy import BuildSpec
+            builds.append(BuildSpec(root, recipe, source or (root if recipe and not artifact else None), artifact or None))
     else:
         raise ValueError('Choose how to define resource builds.')
     if data.get('limiter_mode') == 'existing':
@@ -167,8 +178,11 @@ def specification(data, destination_override=None):
     if axiom_patterns:
         files['axiom-globs.txt'] = '\n'.join(axiom_patterns) + '\n'
     def building_text(staged=None):
-        return ''.join(str(root) + '\n' + (str(staged / recipe.name) if staged and recipe and recipe.name in recipes and recipe.parent == destination
-                      else str(recipe) if recipe else '') + '\n' for root, recipe in builds)
+        if data.get('building_mode') == 'existing' and not any(build.artifact for build in builds):
+            return ''.join(str(build.root) + '\n' + (str(build.recipe) if build.recipe else '') + '\n' for build in builds)
+        return json.dumps([{'root': str(build.root), 'source': str(build.source) if build.source else '',
+                            'recipe': str(staged / build.recipe.name) if staged and build.recipe and build.recipe.name in recipes and build.recipe.parent == destination else str(build.recipe) if build.recipe else '',
+                            'artifact': build.artifact or '', 'legacy': bool(build.recipe and not build.artifact)} for build in builds], indent=2) + '\n'
     files['building.txt'] = building_text()
     # Reuse the core validator/planner. Preview never builds, submits or keeps files.
     with tempfile.TemporaryDirectory(prefix='slurmy-preview-') as folder:
@@ -177,8 +191,10 @@ def specification(data, destination_override=None):
             (staging / filename).write_text(body, encoding='utf-8')
         (staging / 'building.txt').write_text(building_text(staging))
         generate(staging / 'jobpairs.csv', staging / 'building.txt', staging / 'resource_limiter_template.txt',
-                 degree, staging / 'axiom-globs.txt' if axiom_patterns else None)
-    files['Makefile'] = (f'REPO_ROOT := ../..\nDEG_PAR := {degree}\nSLURMY_HOST := {host}\n'
+                 degree, staging / 'axiom-globs.txt' if axiom_patterns else None, batch_size)
+    files['Makefile'] = (f'REPO_ROOT := ../..\nDEG_PAR := {degree}\nBATCH_SIZE := {batch_size}\n'
+                         + (f'PAIR_ORDER := {pair_order}\n' if configs else '') +
+                         f'SLURMY_HOST := {host}\n'
                          f'SLURMY_PARTITION := {partition}\ninclude $(REPO_ROOT)/templates/workflow.mk\n')
     if axiom_patterns:
         files['Makefile'] = 'AXIOMS := axiom-globs.txt\n' + files['Makefile']
@@ -188,7 +204,7 @@ def specification(data, destination_override=None):
         files['Makefile'] += ('\n.PHONY: pairs\npairs: jobpairs.csv\n\n'
                              'jobpairs.csv: configurations.csv problem-globs.txt\n'
                              '\tpython "$(REPO_ROOT)/slurmy-pairs.py" --configurations configurations.csv '
-                             '--problem-globs-file problem-globs.txt --output $@\n')
+                             '--problem-globs-file problem-globs.txt --order "$(PAIR_ORDER)" --output $@\n')
     files['.slurmy-workflow.json'] = json.dumps(data, indent=2, sort_keys=True) + '\n'
     return destination, files, len(rows)
 
@@ -411,9 +427,22 @@ def resource_roles(data):
     resources = []
     for entry in data.get('resources', []):
         entry = dict(entry)
+        root = path_at(entry.get('root', ''), BASE)
         if entry.get('role') not in {'prover', 'limiter'}:
-            root = path_at(entry.get('root', ''), BASE)
             entry['role'] = 'limiter' if limiter_path and limiter_path.is_relative_to(root) else 'prover'
+        if entry.get('mode') in {'script', 'commands'} and not entry.get('artifact'):
+            executable = limiter_path if entry['role'] == 'limiter' else None
+            if executable is None:
+                for config in data.get('configurations', []):
+                    if path_at(config.get('solver_directory', ''), BASE) != root:
+                        continue
+                    words = shlex.split(config.get('command', ''))
+                    if words:
+                        executable = path_at(words[0], root)
+                        break
+            if executable and executable.is_relative_to(root):
+                entry['artifact'] = str(executable.relative_to(root))
+                entry['source'] = ''  # Existing recipes fetch source themselves.
         resources.append(entry)
     data['resources'] = resources
     return data
@@ -436,7 +465,7 @@ def decisions(directory, check_paths=True):
                    for line in axiom_file.read_text().splitlines() if line.strip()] if axiom_file.is_file() else []
     glob_values = [line.strip() for line in globs_file.read_text().splitlines() if line.strip()] if globs_file.is_file() else []
     if not glob_values:
-        match = re.search(r'--problems\s+(.+?)\s+--output(?:\s|$)', makefile)
+        match = re.search(r'--problems\s+(.+?)\s+--(?:order|output)(?:\s|$)', makefile)
         if match:
             glob_values = shlex.split(match.group(1))
     if config_file.is_file() and glob_values:
@@ -446,15 +475,10 @@ def decisions(directory, check_paths=True):
         jobpairs = ''
     else:
         configs, globs, mode, jobpairs = [], [], 'jobpairs', str(directory / 'jobpairs.csv')
-    if check_paths:
-        builds = read_builds(directory / 'building.txt')
-    else:
-        lines = (directory / 'building.txt').read_text().splitlines()
-        builds = [(path_at(lines[i].strip(), directory),
-                   path_at(lines[i + 1].strip(), directory) if lines[i + 1].strip() else None)
-                  for i in range(0, len(lines), 2)]
-    resources = [dict(root=str(root), mode='script' if recipe else 'none',
-                      script=str(recipe) if recipe else '', commands='') for root, recipe in builds]
+    builds = read_builds(directory / 'building.txt', check_paths=check_paths)
+    resources = [dict(root=str(build.root), mode='script' if build.recipe else 'none',
+                      script=str(build.recipe) if build.recipe else '', commands='',
+                      source=str(build.source) if build.source else '', artifact=build.artifact or '') for build in builds]
     limiter = (directory / 'resource_limiter_template.txt').read_text(encoding='utf-8').strip()
     lexer = shlex.shlex(limiter, posix=True)
     lexer.whitespace_split = True
@@ -463,7 +487,8 @@ def decisions(directory, check_paths=True):
     if executable_word:
         limiter = shlex.quote(str(path_at(executable_word, directory))) + ' ' + limiter[lexer.instream.tell():]
     return resource_roles(dict(name=directory.name, host=setting('SLURMY_HOST', 'datalab'),
-                partition=setting('SLURMY_PARTITION', 'CPU-amd'), degree=setting('DEG_PAR', '1'),
+                partition=setting('SLURMY_PARTITION', 'CPU-amd'), degree=setting('DEG_PAR', '1'), batch_size=setting('BATCH_SIZE', setting('DEG_PAR', '1')),
+                pair_order=setting('PAIR_ORDER', 'solver-major'),
                 mode=mode, jobpairs=jobpairs, configurations_file='', configurations=configs,
                 globs=globs, axiom_globs=axiom_globs, building_mode='create', building_file='', resources=resources,
                 limiter_mode='inline', limiter_file='', limiter=limiter))

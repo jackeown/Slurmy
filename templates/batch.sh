@@ -31,8 +31,13 @@ if (( ! EXCLUSIVE_NODE && ${#CORE_CPU[@]} > RESERVED_CORES )); then
     echo 'CPU containment exposes more cores than requested. Ask the administrator to enable ConstrainCores=yes; no calls started.' >&2
     exit 1
 fi
+failed=0
+for ((first=0; first<${#TASK_IDS[@]}; first+=PARALLEL)); do
+USED=()
 MASKS=()
-for index in "${!TASK_IDS[@]}"; do
+last=$((first + PARALLEL))
+(( last <= ${#TASK_IDS[@]} )) || last=${#TASK_IDS[@]}
+for ((index=first; index<last; index++)); do
     need=${TASK_CORES[$index]}; socket_limit=${TASK_CPUS[$index]}
     selected=(); reserved=(); used_sockets=0
     for socket in "${sockets[@]}"; do
@@ -71,10 +76,10 @@ stop() {
     exit 143
 }
 trap stop TERM INT
-for index in "${!TASK_IDS[@]}"; do
-    taskset -c "${MASKS[$index]}" bash "$JOB_DIR/call.sh" "${TASK_IDS[$index]}" "$BATCH_ID" &
+for ((index=first; index<last; index++)); do
+    taskset -c "${MASKS[$((index-first))]}" bash "$JOB_DIR/call.sh" "${TASK_IDS[$index]}" "$BATCH_ID" &
     PIDS+=("$!")
 done
-failed=0
 for pid in "${PIDS[@]}"; do wait "$pid" || failed=1; done
+done
 exit "$failed"

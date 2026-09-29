@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import http.cookiejar
 import importlib.util
 import json
@@ -18,6 +19,35 @@ import urllib.request
 import webbrowser
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def web_version():
+    """Fingerprint files loaded into the web server at startup."""
+    paths = [REPO / 'slurmy-web.py', *sorted((REPO / 'slurmy_web').glob('*.py')),
+             *sorted((REPO / 'slurmy_web' / 'templates').glob('*.html')),
+             *sorted((REPO / 'slurmy_web' / 'static').glob('*'))]
+    digest = hashlib.sha256()
+    for path in paths:
+        if path.is_file():
+            digest.update(str(path.relative_to(REPO)).encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def stop_server(url):
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    with opener.open(url + '/') as response:
+        html = response.read().decode()
+    token = re.search(r'name="csrf-token" content="([a-f0-9]+)"', html)[1]
+    request = urllib.request.Request(url + '/api/shutdown', data=b'{}', headers={
+        'Content-Type': 'application/json', 'X-CSRF-Token': token, 'Origin': url})
+    with opener.open(request) as response:
+        response.read()
+    deadline = time.monotonic() + 10
+    while health(url):
+        if time.monotonic() >= deadline:
+            raise RuntimeError('Shutdown requested, but the server has not stopped yet.')
+        time.sleep(0.1)
 
 
 def health(url):
@@ -92,21 +122,13 @@ def main(argv=None):
         if not existing:
             print('Slurmy web app is not running.')
             return 0
-        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-        with opener.open(url + '/') as response:
-            html = response.read().decode()
-        token = re.search(r'name="csrf-token" content="([a-f0-9]+)"', html)[1]
-        request = urllib.request.Request(url + '/api/shutdown', data=b'{}', headers={
-            'Content-Type': 'application/json', 'X-CSRF-Token': token, 'Origin': url})
-        with opener.open(request) as response:
-            response.read()
-        deadline = time.monotonic() + 10
-        while health(url):
-            if time.monotonic() >= deadline:
-                raise RuntimeError('Shutdown requested, but the server has not stopped yet.')
-            time.sleep(0.1)
+        stop_server(url)
         print('Stopped the local web app. Submitted Slurm jobs are unaffected.')
         return 0
+    if existing and args.background and existing.get('web_version') != web_version():
+        stop_server(url)
+        existing = None
+        print('Restarted the local web app to load changed code.')
     if not existing:
         state = REPO / '.slurmy-web'
         state.mkdir(exist_ok=True)

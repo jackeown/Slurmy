@@ -77,20 +77,24 @@ Binaries are built and run on the cluster; the laptop architecture may differ.
 
 <blockquote>
 
-The guided setup follows **Basics → Provers → Problems → Limiter → Review**.
+The guided setup follows **Basics → Provers → Problems → Limiter → Review and Slurm Settings**.
 
 - **Basics:** name the workflow, choose the SSH host and Slurm partition,
   and set the maximum concurrent calls within each batch.
-- **Provers:** enter commands and per-call limits or import a CSV. Describe
-  optional prover build recipes alongside the commands. Each root is built
-  once per submission, even when multiple configurations use it.
+- **Provers:** each prover has a runtime solver root (containing its executable)
+  and optional building details: a source directory, build script or commands,
+  and expected executable relative to the runtime root. Recipes run on cluster
+  compute nodes; only declared build outputs are fetched to the runtime root.
 - **Problems:** select one or more globs. Their union is paired with every
   configuration; duplicate problem paths are removed. An explicit jobpairs CSV
-  already supplies its problems. Optionally add globs for included TPTP axioms.
+  already supplies its problems. Custom TPTP axiom globs override the default
+  shared TPTP library at `/share/Slurmy-TPTP-v9.2.1`.
 - **Limiter:** enter or import the limiter invocation and describe its resource
   root and optional build recipe. Both invocation sections have collapsible
   placeholder references and editable examples.
-- **Review:** validate and inspect the resulting specification, then save it.
+- **Review and Slurm Settings:** choose Problem Major, Solver Major, or random
+  jobpair order, set jobpairs per Slurm task (batch size), inspect the generated
+  files, then save.
   Saving does not build or submit anything.
 
 Path fields have a local file browser and are checked when you leave them.
@@ -102,8 +106,9 @@ On a workflow page:
 
 | Action | Effect |
 | --- | --- |
-| Prepare Slurm submission | Create or refresh submission scripts and helper files locally. |
-| Dispatch new Slurm job | Prepare scripts, build declared resources on compute nodes, download and package them, then submit the batches. |
+| Prepare & dispatch job (main button) | Refresh submission scripts, build declared resources on compute nodes, download them, then submit the batches. |
+| Dispatch prepared job (arrow menu) | Use the existing `submit.sh` and helper files as-is; do not regenerate them. |
+| Prepare only (arrow menu) | Create or refresh submission scripts locally without dispatching. |
 | Edit settings | Revisit the saved form choices, including the name. |
 | Duplicate workflow | Create an independent user workflow from an example or an existing workflow. |
 | Delete workflow | Move a user workflow to `YourRuns/.deleted-workflows/` for recovery. |
@@ -196,7 +201,7 @@ command line. Solver and problem files remain in their original locations.
 YourRuns/my-workflow/
   Makefile                       # Prepare, build, submit, monitor, sync, stop, clean.
   jobpairs.csv                   # One explicit solver–problem call per row.
-  building.txt                   # Resource roots and optional remote build scripts.
+  building.txt                   # Runtime roots, optional source roots, recipes, expected outputs.
   resource_limiter_template.txt  # How to wrap each solver command.
   .slurmy-workflow.json           # Saved form choices for editing and duplication.
   configurations.csv             # Present for configuration × problem workflows.
@@ -205,12 +210,25 @@ YourRuns/my-workflow/
   build-resource-0.sh            # Present when build commands were entered in the form.
 ```
 
-The core runner expects the three specification files and `--deg_par`.
-An optional `--axioms-file axiom-globs.txt` packages TPTP axiom files and sets
-`TPTP` to their shared library root for each call.
+The core runner expects the three specification files and `--deg_par`;
+`--batch-size` separately sets how many calls each Slurm task owns (default:
+the degree of parallelism). Calls beyond `--deg_par` run in later waves.
+An optional `--axioms-file axiom-globs.txt` packages TPTP axiom files under a
+job-local `Axioms/` and sets `TPTP` to its parent. Otherwise, if present on
+the cluster, `TPTP` defaults to `/share/Slurmy-TPTP-v9.2.1`; set
+`SLURMY_TPTP_ROOT` before preparing to use a different installation.
 The Makefile and saved form choices support the web interface; they are not
 additional inputs to the core runner. An explicit jobpairs workflow does not
 need configurations or globs.
+
+For browser-created workflows, `building.txt` is a JSON list. Each entry has
+`root` (local runtime directory), optional `source` (local build context),
+`recipe` (Bash script, or empty), and `artifact` (expected path relative to
+`root`). The build script receives `$SLURMY_BUILD_WORK` and
+`$SLURMY_BUILD_OUTPUT` on the compute node. It must put the declared artifact
+under the latter; Slurmy checks for it, then downloads the output directory
+into `root`. A blank source is useful when the recipe downloads its own source.
+Older two-line-per-resource `building.txt` files still work.
 
 A generated Makefile uses the shared targets:
 
@@ -277,45 +295,61 @@ limiter and Slurm allocations. Ensure hard-coded solver limits agree with them.
 
 <blockquote>
 
-Each resource takes exactly two lines: its existing local root directory,
-then a Bash build-script path. A blank second line means “package as-is.”
+The current format is a JSON list. Every resource names its existing local
+runtime `root`. A resource with a recipe also names the expected `artifact`
+relative to that root. `source` is an optional directory to copy to the build
+node; leave it empty when the script downloads its own source.
 
-```text
-/home/me/provers/solver-a
-/home/me/recipes/build-solver-a.sh
-/home/me/provers/solver-b
-
-/home/me/provers/runsolver
-/home/me/recipes/build-runsolver.sh
+```json
+[
+  {
+    "root": "/home/me/provers/solver-a/bin",
+    "source": "/home/me/provers/solver-a/src",
+    "recipe": "/home/me/recipes/build-solver-a.sh",
+    "artifact": "solver-a"
+  },
+  {
+    "root": "/home/me/provers/solver-b/bin",
+    "source": "",
+    "recipe": "",
+    "artifact": ""
+  },
+  {
+    "root": "/home/me/provers/runsolver",
+    "source": "",
+    "recipe": "/home/me/recipes/build-runsolver.sh",
+    "artifact": "runsolver"
+  }
+]
 ```
 
 Paths resolve relative to `building.txt`. List the limiter's root here too.
-Keep the blank recipe line even for the final resource. Empty resource roots
-are allowed when a recipe clones the sources remotely.
+The runtime root may initially be empty, but must exist. A blank recipe means
+“package the root as-is.” The older two-line format remains accepted.
 
 Each non-empty recipe runs in a separate Slurm build job, in a disposable copy
-of its resource root. `SLURMY_BUILD_WORK` points to that copy;
-`SLURMY_BUILD_OUTPUT` points to the same directory for these generated recipes.
-Build in place or install outputs there, preserving the layout expected by your
-commands. For example:
+of its optional source directory. `SLURMY_BUILD_WORK` points to that copy;
+`SLURMY_BUILD_OUTPUT` is a separate empty directory. Put the expected executable
+there, preserving the layout expected by your commands. For example:
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 cmake -S "$SLURMY_BUILD_WORK" -B "$SLURMY_BUILD_WORK/build"
 cmake --build "$SLURMY_BUILD_WORK/build" --parallel "${SLURM_CPUS_PER_TASK:-1}"
+install -m 0755 "$SLURMY_BUILD_WORK/build/solver-a" "$SLURMY_BUILD_OUTPUT/solver-a"
 ```
 
-The resulting tree is downloaded back into its declared local root (merging
+The output directory is downloaded back into its declared local root (merging
 and replacing matching files), then packaged for the submitted job. Use dedicated
-resource directories: downloaded build outputs may overwrite files there.
+runtime directories: downloaded build outputs may overwrite files there.
 Recipes run again on each submission; no build cache is implied.
 
 Build jobs currently use the shared builder's defaults: 4 cores, 4 GiB, and
 30 minutes, on the selected partition. These are separate from per-call
 limits. For unusual build requirements, use
 [the standalone builder](building-dependencies/README.md), then leave the
-resource's recipe line blank.
+resource's recipe empty.
 
 </blockquote>
 </details>
@@ -375,10 +409,13 @@ embedded inside arguments such as `--file=/local/path`, configuration files,
 or shell-generated strings are **not** rewritten. Prefer relative paths inside
 your solver directory and `{{problem}}` for the selected input.
 
-A problem's containing directory is not automatically included. In the web
-builder's Problems step, add axiom globs for files referenced by TPTP
-`include(...)` directives; the selected files retain their paths in the cluster
-copy, and Slurmy sets `TPTP` to the shared library root. For other dependencies,
+A problem's containing directory is not automatically included. TPTP
+`include('Axioms/NAME.ax')` searches beneath the `TPTP` environment variable.
+By default Slurmy points it at the shared library; adding custom axiom globs
+instead copies selected files under a job-local `Axioms/` and points `TPTP`
+at its parent. Subpaths below a source `Axioms/` are preserved; other files
+are placed by basename, and duplicate destinations are rejected. The two
+sources are not combined. For other dependencies,
 list their root in `building.txt` with a blank recipe. Package needed scripts, data, shared
 libraries, and interpreter environments similarly; a laptop's Python environment
 or system libraries are not copied automatically.
@@ -401,6 +438,7 @@ Create `configurations.csv` with the same columns as `jobpairs.csv`, except
 python /path/to/Slurmy/slurmy-pairs.py \
     --configurations configurations.csv \
     --problems 'problems/easy/*.p' 'problems/hard/**/*.p' \
+    --order problem-major \
     --output jobpairs.csv
 ```
 
@@ -410,6 +448,11 @@ expands them; an unmatched glob is an error. Repeat `--configurations` for more
 configuration tables. CLI globs resolve from your current directory; alternatively
 use `--problem-globs-file` with one glob per line, relative to that file.
 The output is properly escaped CSV with absolute directory/problem paths.
+`--order problem-major` groups calls by problem; `solver-major` groups by
+solver configuration and is the default. `random` shuffles all calls
+reproducibly for unchanged inputs. The core runner executes an explicit
+`jobpairs.csv` in its row order; the web builder applies the selected order
+even when you import an explicit CSV.
 
 For arbitrary pairings or per-problem limits, edit or generate `jobpairs.csv`
 directly. The core never expands it into additional calls.
@@ -425,24 +468,25 @@ directly. The core never expands it into additional calls.
 
 <blockquote>
 
-A **jobpair** is one solver call. A **batch** is one concurrent wave of calls
-on one node. A **Slurmy job** is the whole submission, which can contain many
+A **jobpair** is one solver call. A **batch** is one Slurm array task on one node;
+it can run several sequential waves of calls. A **Slurmy job** is the whole submission, which can contain many
 Slurm jobs/array tasks.
 
 `--deg_par 4` permits at most four calls simultaneously **in each batch**.
-It does not limit how many batches Slurm runs across the cluster.
+`--batch-size 20` puts up to 20 calls in each batch, in five or more waves.
+Neither setting limits how many batches Slurm runs across the cluster.
 Input order is preserved when forming groups; socket-exclusive and ordinary
 calls are separated. Node-exclusive calls always get singleton batches.
-Groups are split further if the partition's cores, sockets, or memory cannot
-hold them; a call too large for one node is rejected.
+The concurrent wave is capped further by the partition's cores, sockets, and
+memory; a call too large for one node is rejected.
 
-For a batch containing P calls:
+For a batch with multiple calls:
 
 | Resource | Slurm reservation |
 | --- | --- |
 | Wall time | 60 seconds + sum of each call's wall limit + 30 seconds per call, rounded up to minutes. |
-| Memory | P × (largest call memory, rounded up to MiB + 128 MiB). |
-| Ordinary cores | P × largest call core count. |
+| Memory | Concurrent calls × (largest call memory, rounded up to MiB + 128 MiB). |
+| Ordinary cores | Concurrent calls × largest call core count. |
 | Socket-exclusive cores | P × largest call socket count × physical cores per socket. |
 | Node exclusivity | `--exclusive`, always for a single call. |
 
@@ -464,6 +508,14 @@ only; different architectures/topologies should use separate submissions.
 Exclusivity excludes other scheduled workloads, not operating-system services.
 Each batch is currently submitted as a one-element Slurm array, allowing different
 resource requests without reserving the largest request for every batch.
+Submission keeps at most 32 batches pending or running at once, submitting later
+batches as earlier ones finish. Set `SLURMY_MAX_OUTSTANDING` before dispatching to
+change that window (for example, `SLURMY_MAX_OUTSTANDING=8 make submit`). If the
+cluster's submitted-job limit is already full, Slurmy waits and retries instead
+of leaving the remaining calls unsubmitted. The submission command stays active
+until every batch has been accepted; the web interface shows build and submission
+phases while it runs. A lost connection can still interrupt submission, and the
+job page then identifies batches that were never submitted.
 `allocations.csv` records the actual batches and reservations after hardware-based
 splitting.
 
@@ -478,18 +530,20 @@ splitting.
 The same specifications work without the web app:
 
 ```bash
-python /path/to/Slurmy/slurmy.py jobpairs.csv building.txt resource_limiter_template.txt --deg_par 4
-# Maximum simultaneous calls within each batch.
+python /path/to/Slurmy/slurmy.py jobpairs.csv building.txt resource_limiter_template.txt --deg_par 4 --batch-size 20
+# Up to 20 calls per Slurm task, with at most four running at once in each task.
 bash ./submit.sh  # Build remotely, fetch artifacts, package inputs, and submit.
 ```
 
 Generation does not connect to the cluster. It writes `submit.sh` and
 `submit.sh.files/` beside `jobpairs.csv` and refuses to overwrite them.
 Workflow Makefiles handle regeneration automatically when inputs or templates
-change. After changing `DEG_PAR`, run `make clean`, then `make`, so the new
-degree reaches the generated scripts.
+change. Editing `DEG_PAR` or `BATCH_SIZE` in the workflow Makefile refreshes the
+scripts on the next `make`. For a one-off command-line override of either value,
+run `make clean` first because an override alone does not change file timestamps.
 
-The shared Makefile supports `make` (prepare), `make build`, `make submit`,
+The shared Makefile supports `make` (prepare), `make build`, `make prepare-submit`
+(prepare and dispatch), `make submit` (dispatch previously prepared files only),
 `make monitor`, `make sync`, `make stop`, and `make clean`.
 `make clean` removes submission scripts/helpers, retaining specification files
 and downloaded binaries. Submission builds resources again, even if you ran
@@ -526,7 +580,7 @@ submit.sh.files/
 
 Remote jobs live under `~/Slurmy/USER_TIMESTAMP_PID/`; builds use
 `~/Slurmy-builds/`. Remote job directories also contain `batches/`,
-`allocations.csv`, `submission.csv`, `progress/`, `logs/`, and `results/`.
+`allocations.csv`, `submission.csv`, `submission.state`, `progress/`, `logs/`, and `results/`.
 Each call publishes a CSV result and compressed output archive independently,
 so completed calls can be synced while other calls continue.
 

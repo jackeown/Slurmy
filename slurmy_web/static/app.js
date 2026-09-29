@@ -15,7 +15,7 @@ async function api(path, data) {
 function notice(text){const node=$('#notice');node.textContent=text;node.hidden=false;setTimeout(()=>node.hidden=true,6500);}
 function duration(value){if(value==null)return '—';if(value===0)return '0 s';if(value<1)return `${(value*1000).toFixed(value<.01?1:0)} ms`;if(value<60)return `${value.toFixed(2)} s`;if(value<3600)return `${Math.floor(value/60)}m ${(value%60).toFixed(0)}s`;return `${Math.floor(value/3600)}h ${Math.floor(value%3600/60)}m`;}
 function memory(value){if(value==null)return '—';let i=0;const units=['B','KiB','MiB','GiB','TiB'];while(value>=1024&&i<units.length-1){value/=1024;i++;}return `${value.toFixed(i===0?0:1)} ${units[i]}`;}
-function badge(state){const value=state.toLowerCase();let cls='';if(/error|fail|incomplete|interrupted|cancel|not run/.test(value))cls='bad';else if(/limit|timeout/.test(value))cls='limit';else if(/run|pending|submitted|completing/.test(value))cls='active';else if(/done|ok|completed|theorem|unsatisfiable|satisfiable|counter/.test(value))cls='good';return el('span',state,`badge ${cls}`);}
+function badge(state){const value=state.toLowerCase();let cls='';if(/error|fail|incomplete|interrupted|cancel|not run/.test(value))cls='bad';else if(/limit|timeout/.test(value))cls='limit';else if(/run|pending|submit|dispatch|completing/.test(value))cls='active';else if(/done|ok|completed|theorem|unsatisfiable|satisfiable|counter/.test(value))cls='good';return el('span',state,`badge ${cls}`);}
 function text(id, value){const node=$(id);if(node)node.textContent=value;}
 function button(label, action, cls='secondary'){const node=el('button',label,cls);node.type='button';node.addEventListener('click',action);return node;}
 function tableRow(cells){const tr=el('tr');for(const cell of cells){const td=el('td');td.append(cell instanceof Node?cell:document.createTextNode(cell??'—'));tr.append(td);}return tr;}
@@ -70,11 +70,11 @@ themeToggle?.addEventListener('click',()=>{const theme=document.documentElement.
 $('#host-form')?.addEventListener('submit',event=>{event.preventDefault();const url=new URL(location.href);url.searchParams.set('host',$('#host').value);location.href=url;});
 
 let operationTimer;
-function lockWorkflowActions(locked){if(page!=='workflow')return;for(const id of ['prepare','submit']){const control=$('#'+id);if(control)control.disabled=locked;}}
+function lockWorkflowActions(locked){if(page!=='workflow')return;for(const id of ['prepare','submit','submit-only','submit-menu-toggle']){const control=$('#'+id);if(control)control.disabled=locked;}}
 async function watchOperation(id){
   clearTimeout(operationTimer);$('#operation').hidden=false;sessionStorage.setItem('slurmy-operation',id);
   try{
-    const op=await api('/api/operations/'+encodeURIComponent(id));text('#operation-title',`${op.label} · ${op.state}`);text('#operation-log',op.log||'Starting…');
+    const op=await api('/api/operations/'+encodeURIComponent(id));text('#operation-title',`${op.phase} · ${op.state}`);text('#operation-log',op.log||'Starting…');
     const match=op.log.match(/Slurmy job ID: ([A-Za-z0-9._-]+)/);
     $('#submitted-link')?.remove();
     if(match){announceJob(match[1]);renderJobs();const node=link('View submitted job →','/jobs/'+encodeURIComponent(match[1])+'?'+params({}));node.id='submitted-link';$('#operation').append(node);refresh();}
@@ -116,6 +116,8 @@ function renderJobs(){
  for(const job of filtered){
   const title=job.provisional?el('div',job.id,'job-link'):link(job.id,'/jobs/'+encodeURIComponent(job.id)+'?'+params({}));title.className='job-link';title.append(el('small',job.name));
   const progress=el('div');if(job.total){progress.append(el('span',`${job.completed} / ${job.total} · ${job.percent.toFixed(1)}%`,'progress-label'));const bar=el('progress');bar.max=100;bar.value=job.percent;bar.setAttribute('aria-label',`${job.percent.toFixed(1)} percent complete`);progress.append(bar);}else progress.append(el('span','Awaiting cluster metadata…','progress-label'));
+  if(job.phase)progress.append(el('small',job.phase,'submission-phase'));
+  else if(job.submission_state==='submitting')progress.append(el('small',`Submitting batches: ${job.submitted_batches} / ${job.batch_count} accepted`,'submission-phase'));
   const cells=[title,badge(job.state),progress,job.issues?el('strong',job.issues,'error'):'—',new Date(job.created*1000).toLocaleString()];
   if(page==='jobs'){
    const action=job.provisional?'Awaiting submission':button('Delete',event=>deleteJob(job.id,event.currentTarget),'danger');
@@ -124,7 +126,7 @@ function renderJobs(){
   body.append(tableRow(cells));
  }
  $('#empty').hidden=filtered.length!==0;
- text('#stat-total',visible.length);text('#stat-active',visible.filter(j=>['RUNNING','PENDING','SUBMITTED'].includes(j.state)).length);text('#stat-done',visible.reduce((a,j)=>a+j.completed,0).toLocaleString());text('#stat-issues',visible.reduce((a,j)=>a+j.issues,0));
+ text('#stat-total',visible.length);text('#stat-active',visible.filter(j=>['RUNNING','PENDING','SUBMITTED','SUBMITTING','DISPATCHING'].includes(j.state)).length);text('#stat-done',visible.reduce((a,j)=>a+j.completed,0).toLocaleString());text('#stat-issues',visible.reduce((a,j)=>a+j.issues,0));
 }
 async function fetchJobs(){const directory=document.body.dataset.directory;const data=await api('/api/jobs?'+params(directory?{directory}:{}));jobs=data.jobs;renderJobs();text('#connection',`Connected to ${host} · refreshed ${new Date(data.updated*1000).toLocaleTimeString()} · refreshes every 10 seconds`);}
 async function openOutput(task){
@@ -145,7 +147,8 @@ $('#close-output')?.addEventListener('click',()=>{$('#call-output').hidden=true;
 async function fetchJob(){
  const jobId=document.body.dataset.job;
  const data=await api(`/api/jobs/${encodeURIComponent(jobId)}?`+params({page:taskPage,q:$('#task-filter').value}));jobData=data;
- text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()} · completion counts finished calls, not proof-search progress`);
+ const submission=data.submission_state==='submitting'?` · submitting batches ${data.submitted_batches}/${data.batch_count}`:data.submission_state==='failed'?' · batch submission stopped before all calls were queued':'';
+ text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()}${submission} · completion counts finished calls, not proof-search progress`);
  text('#stat-state',data.state);text('#stat-done',`${data.completed} / ${data.total}`);text('#stat-percent',data.percent.toFixed(1)+'%');text('#stat-issues',data.issues);
  const tasks=$('#tasks-body');tasks.replaceChildren();
  for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):task.diagnostic?button('Inspect log →',()=>openDiagnostic(task)):'—';tasks.append(tableRow([String(task.id),task.system||'—',problem,badge(task.state),task.will_run||'—',task.reason||'—',duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
@@ -187,8 +190,15 @@ let searchTimer;$('#task-filter')?.addEventListener('input',()=>{taskPage=0;clea
 $('#previous')?.addEventListener('click',()=>{taskPage--;refresh();});$('#next')?.addEventListener('click',()=>{taskPage++;refresh();});
 $('#sync')?.addEventListener('click',()=>startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'sync'}));
 $('#delete-job')?.addEventListener('click',event=>deleteJob(document.body.dataset.job,event.currentTarget,true));
-$('#prepare')?.addEventListener('click',()=>startOperation('/api/workflow/action?'+params({directory:document.body.dataset.directory}),{action:'all'}));
-$('#submit')?.addEventListener('click',()=>startOperation('/api/workflow/action?'+params({directory:document.body.dataset.directory}),{action:'submit'}));
+const submitMenu=$('#submit-menu'),submitMenuToggle=$('#submit-menu-toggle');
+function closeSubmitMenu(){if(!submitMenu)return;submitMenu.hidden=true;submitMenuToggle.setAttribute('aria-expanded','false');}
+submitMenuToggle?.addEventListener('click',()=>{submitMenu.hidden=!submitMenu.hidden;submitMenuToggle.setAttribute('aria-expanded',String(!submitMenu.hidden));});
+document.addEventListener('click',event=>{if(submitMenu&&!event.target.closest('.split-action'))closeSubmitMenu();});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!submitMenu?.hidden){closeSubmitMenu();submitMenuToggle.focus();}});
+function workflowAction(action){closeSubmitMenu();startOperation('/api/workflow/action?'+params({directory:document.body.dataset.directory}),{action});}
+$('#prepare')?.addEventListener('click',()=>workflowAction('prepare'));
+$('#submit')?.addEventListener('click',()=>workflowAction('prepare-submit'));
+$('#submit-only')?.addEventListener('click',()=>workflowAction('submit'));
 $('#duplicate')?.addEventListener('click',async()=>{
  const suggested=(document.querySelector('h1')?.textContent||'workflow')+'-copy';
  const name=prompt('Name the workflow copy (lowercase letters, numbers, and hyphens):',suggested);
@@ -196,11 +206,16 @@ $('#duplicate')?.addEventListener('click',async()=>{
  try{const data=await api('/api/workflows/duplicate?'+params({directory:document.body.dataset.directory}),{name:name.trim()});location.href='/workflow?'+params({directory:data.directory});}
  catch(error){notice(error.message);}
 });
-$('#delete-workflow')?.addEventListener('click',async()=>{
- const name=document.querySelector('h1')?.textContent||'';
- const confirmation=prompt(`Delete “${name}”?\n\nIts submitted jobs will remain in Job history. The workflow will be moved to the local recovery archive.\n\nType the workflow name to confirm:`,'');
- if(confirmation===null)return;
- try{await api('/api/workflows/delete?'+params({directory:document.body.dataset.directory}),{name:confirmation});location.href='/workflows?'+params({deleted:name});}
- catch(error){notice(error.message);}
+async function deleteWorkflow(directory,name,control){
+ if(!confirm(`Delete “${name}”?\n\nIts submitted jobs will remain in Job history. The workflow will be moved to the local recovery archive.`))return;
+ control.disabled=true;
+ try{await api('/api/workflows/delete?'+params({directory}),{name});location.href='/workflows?'+params({deleted:name});}
+ catch(error){control.disabled=false;notice(error.message);}
+}
+$('#delete-workflow')?.addEventListener('click',event=>{
+ deleteWorkflow(document.body.dataset.directory,document.querySelector('h1')?.textContent||'',event.currentTarget);
 });
+document.querySelectorAll('.delete-workflow-card').forEach(control=>control.addEventListener('click',()=>{
+ deleteWorkflow(control.dataset.directory,control.dataset.name,control);
+}));
 async function poll(){await refresh();setTimeout(poll,10000);}if(['jobs','job','workflow','problem'].includes(page))poll();

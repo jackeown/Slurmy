@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -97,6 +98,8 @@ for directory in "${job_dirs[@]}"; do
                 id = value($1)
                 complete[id] = value($2)
                 result_status[id] = value($3)
+                if (result_status[id] == "solver-error" && value($16) == "Timeout")
+                    result_status[id] = "time-limit"
                 wall[id] = value($5)
             }
             END {
@@ -184,6 +187,11 @@ for directory in "${job_dirs[@]}"; do
     elif [[ -f "$directory/submission.tsv" ]]; then
         printf 'SUBMISSION_TSV\0%s\0' "$job"
         cat "$directory/submission.tsv"
+        printf '\0'
+    fi
+    if [[ -f "$directory/submission.state" ]]; then
+        printf 'SUBMISSION_STATE\0%s\0' "$job"
+        cat "$directory/submission.state"
         printf '\0'
     fi
 
@@ -426,6 +434,8 @@ class JobSnapshot:
     task_batches: dict[int, int] = field(default_factory=dict)
     submission_offsets: dict[str, int] = field(default_factory=dict)
     submitted_batches: set[int] = field(default_factory=set)
+    submission_state: str = ""
+    submission_count: int = 0
     slurm: list[SlurmRecord] = field(default_factory=list)
     logs: dict[str, str] = field(default_factory=dict)
 
@@ -472,7 +482,12 @@ class JobSnapshot:
             )
         )
         setup_incomplete = not self.metadata and not self.submission_offsets and not self.slurm
-        return task_issues + int(unresolved_slurm_failure) + int(setup_incomplete)
+        submission_incomplete = (self.submission_state == 'failed' or
+                                 (self.submission_state != 'submitting' and
+                                  bool(self.submitted_batches) and
+                                  self.batch_count > len(self.submitted_batches) and
+                                  not self.active_records))
+        return task_issues + int(unresolved_slurm_failure) + int(setup_incomplete) + int(submission_incomplete)
 
     @property
     def percent(self) -> float:
@@ -515,6 +530,8 @@ class JobSnapshot:
             return "PENDING"
         if self.task_count and self.completed >= self.task_count:
             return "DONE" if not self.issue_count else "DONE · ERRORS"
+        if self.submission_state == 'submitting':
+            return 'SUBMITTING'
         historical_states = {slurm_state_code(record.state) for record in self.slurm}
         if historical_states & SLURM_INCOMPLETE_STATES:
             return "INCOMPLETE"
@@ -547,6 +564,7 @@ PROTOCOL_ARITY = {
     "PROGRESS_CSV": 2,
     "PROGRESS_TSV": 2,
     "SUBMISSION_CSV": 2,
+    "SUBMISSION_STATE": 2,
     "SUBMISSION_TSV": 2,
     "RESULTS_CSV": 2,
     "RESULTS_TSV": 2,
@@ -582,6 +600,19 @@ def as_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def inferred_system_name(command: str) -> str:
+    """Give older calls without a recorded system a readable fallback name."""
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = command.split()
+    for word in words:
+        if word in {'env', 'exec'} or (word.find('=') > 0 and '/' not in word.split('=', 1)[0]):
+            continue
+        return PurePosixPath(word).name or 'Unknown solver'
+    return 'Unknown solver'
 
 
 def parse_result_rows(rows: Any) -> dict[int, ResultRecord]:
@@ -646,7 +677,8 @@ def summarize_results(job: JobSnapshot, results: dict[int, ResultRecord]) -> Non
     unresolved: dict[str, int] = {}
     for result in results.values():
         target = counts if result.complete else unresolved
-        target[result.status] = target.get(result.status, 0) + 1
+        status = 'time-limit' if result.status == 'solver-error' and result.szs_status.lower() == 'timeout' else result.status
+        target[status] = target.get(status, 0) + 1
     job.status_counts = counts
     job.unresolved_counts = unresolved
 
@@ -725,6 +757,7 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
     call_payloads: dict[str, list[str]] = {}
     batch_tasks: dict[str, list[tuple[str, str]]] = {}
     submissions: dict[str, tuple[str, str]] = {}
+    submission_states: dict[str, str] = {}
     logs: dict[str, dict[str, str]] = {}
     queue_payload = ""
     accounting_payload = ""
@@ -755,6 +788,8 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
             progress_payloads[fields[0]] = (kind, fields[1])
         elif kind in {"SUBMISSION_CSV", "SUBMISSION_TSV"}:
             submissions[fields[0]] = (kind, fields[1])
+        elif kind == "SUBMISSION_STATE":
+            submission_states[fields[0]] = fields[1]
         elif kind == "RESULTS_CSV":
             detail_csv[fields[0]] = fields[1]
         elif kind == "RESULTS_TSV":
@@ -773,6 +808,10 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
             accounting_payload = fields[0]
 
     for job_id, job in jobs.items():
+        state_fields = submission_states.get(job_id, '').split()
+        if len(state_fields) >= 2 and state_fields[0] in {'submitting', 'complete', 'failed'}:
+            job.submission_state = state_fields[0]
+            job.submission_count = int(state_fields[1]) if state_fields[1].isdigit() else 0
         try:
             job.metadata = json.loads(pending_metadata.get(job_id, "{}"))
         except json.JSONDecodeError:

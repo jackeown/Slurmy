@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import dataclass
 import glob
 import hashlib
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import random
 import re
 import shlex
 import shutil
@@ -25,10 +27,29 @@ RESULT_COLUMNS = ("task_id", "complete", "status", "return_code", "wall_seconds"
                   "task_key", "archive", "szs_status")
 REPO = Path(__file__).resolve().parent
 PLACEHOLDER = re.compile(r"\{\{([a-z_]+)\}\}")
+PAIR_ORDERS = ("problem-major", "solver-major", "random")
 
 
 class SlurmyError(ValueError):
     pass
+
+
+def order_jobpairs(rows: list[dict], order: str) -> list[dict]:
+    """Order calls reproducibly without changing their contents."""
+    if order not in PAIR_ORDERS:
+        raise SlurmyError(f"jobpair order must be one of: {', '.join(PAIR_ORDERS)}")
+    result = list(rows)
+    if order == "problem-major":
+        result.sort(key=lambda row: row["problem"])
+    elif order == "solver-major":
+        configurations = {}
+        for row in result:
+            key = tuple(row.get(column, "") for column in COLUMNS if column != "problem")
+            configurations.setdefault(key, len(configurations))
+        result.sort(key=lambda row: configurations[tuple(row.get(column, "") for column in COLUMNS if column != "problem")])
+    else:
+        random.Random(0).shuffle(result)
+    return result
 
 
 def path_at(value: str, base: Path) -> Path:
@@ -93,28 +114,62 @@ def read_pairs(filename: Path) -> list[dict]:
     return tasks
 
 
-def read_builds(filename: Path) -> list[tuple[Path, Path | None]]:
-    lines = filename.read_text(encoding="utf-8").splitlines()
+@dataclass(frozen=True)
+class BuildSpec:
+    root: Path
+    recipe: Path | None
+    source: Path | None = None
+    artifact: str | None = None
+
+
+def read_builds(filename: Path, check_paths: bool = True) -> list[BuildSpec]:
+    content = filename.read_text(encoding="utf-8")
+    if content.lstrip().startswith('['):
+        records = json.loads(content)
+        if not isinstance(records, list):
+            raise SlurmyError('building.txt JSON must be a list of resources')
+        builds = []
+        for record in records:
+            if not isinstance(record, dict):
+                raise SlurmyError('each build resource must be an object')
+            root = path_at(record.get('root', ''), filename.parent)
+            source = path_at(record['source'], filename.parent) if record.get('source') else None
+            recipe = path_at(record['recipe'], filename.parent) if record.get('recipe') else None
+            artifact = record.get('artifact') or None
+            if check_paths and (not root.is_dir() or (source and not source.is_dir()) or (recipe and not recipe.is_file())):
+                raise SlurmyError(f'build root, source, or recipe does not exist: {record}')
+            artifact_path = PurePosixPath(artifact) if artifact else None
+            if artifact_path and (artifact_path.is_absolute() or not artifact_path.parts or '..' in artifact_path.parts or '\n' in artifact):
+                raise SlurmyError(f'expected artifact must be relative to the runtime root: {artifact}')
+            if recipe and not artifact and not record.get('legacy'):
+                raise SlurmyError(f'expected artifact is required for build: {root}')
+            if recipe and not artifact and source is None:
+                source = root
+            if any(root == previous.root for previous in builds):
+                raise SlurmyError(f'duplicate resource root: {root}')
+            builds.append(BuildSpec(root, recipe, source, artifact))
+        return builds
+    lines = content.splitlines()
     if len(lines) % 2:
         raise SlurmyError("building.txt must have an even number of lines; retain the empty recipe line")
     builds = []
     for i in range(0, len(lines), 2):
         root = path_at(lines[i].strip(), filename.parent)
-        if not lines[i].strip() or not root.is_dir():
+        if not lines[i].strip() or (check_paths and not root.is_dir()):
             raise SlurmyError(f"building.txt line {i + 1}: resource root is not an existing directory: {root}")
         recipe = path_at(lines[i + 1].strip(), filename.parent) if lines[i + 1].strip() else None
-        if recipe is not None and not recipe.is_file():
+        if check_paths and recipe is not None and not recipe.is_file():
             raise SlurmyError(f"build script does not exist: {recipe}")
-        if any(root == other for other, _ in builds):
+        if any(root == previous.root for previous in builds):
             raise SlurmyError(f"duplicate resource root: {root}")
-        builds.append((root, recipe))
+        builds.append(BuildSpec(root, recipe, root, None))
     return builds
 
 
-def read_axioms(filename: Path | None) -> tuple[list[Path], Path | None]:
-    """Expand optional axiom globs and find their single TPTP library root."""
+def read_axioms(filename: Path | None) -> tuple[list[Path], dict[Path, Path]]:
+    """Expand globs and map files into one job-local Axioms/ directory."""
     if filename is None:
-        return [], None
+        return [], {}
     files = set()
     for line in filename.read_text(encoding='utf-8').splitlines():
         if not line.strip():
@@ -126,13 +181,14 @@ def read_axioms(filename: Path | None) -> tuple[list[Path], Path | None]:
         files.update(matches)
     if not files:
         raise SlurmyError('axiom-globs.txt contains no axiom files')
-    roots = set()
+    destinations = {}
     for file in files:
         parts = file.parts
-        roots.add(Path(*parts[:parts.index('Axioms')]) if 'Axioms' in parts else file.parent)
-    if len(roots) != 1:
-        raise SlurmyError('axiom globs must share one TPTP root; put included files under one Axioms directory')
-    return sorted(files), roots.pop()
+        relative = Path(*parts[parts.index('Axioms') + 1:]) if 'Axioms' in parts else Path(file.name)
+        if relative in destinations.values():
+            raise SlurmyError(f'custom axioms would overwrite the same Axioms/{relative}; choose one source')
+        destinations[file] = relative
+    return sorted(files), destinations
 
 
 def remote_path(path: Path) -> str:
@@ -171,10 +227,12 @@ def write_script(path: Path, content: str) -> None:
 
 
 def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int,
-             axioms_file: Path | None = None) -> Path:
+             axioms_file: Path | None = None, batch_size: int | None = None) -> Path:
     tasks = read_pairs(jobpairs)
+    batch_size = batch_size or degree
+    positive(str(batch_size), 'batch size')
     builds = read_builds(building)
-    axioms, tptp_root = read_axioms(axioms_file)
+    axioms, axiom_destinations = read_axioms(axioms_file)
     limiter = limiter_file.read_text(encoding="utf-8").strip()
     if not limiter or "{{solver_command}}" not in limiter:
         raise SlurmyError("resource_limiter_template.txt must contain {{solver_command}}")
@@ -194,10 +252,10 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int,
             if option not in words:
                 limiter = limiter.replace("{{solver_command}}", option + " " + placeholder + " {{solver_command}}", 1)
         words = shlex.split(limiter)
-    roots = [root for root, _ in builds]
+    roots = [build.root for build in builds]
     if not any(limiter_path.is_relative_to(root) for root in roots):
         raise SlurmyError("limiter executable must be inside a building.txt resource root")
-    if not limiter_path.is_file() and not any(recipe and limiter_path.is_relative_to(root) for root, recipe in builds):
+    if not limiter_path.is_file() and not any(build.recipe and limiter_path.is_relative_to(build.root) for build in builds):
         raise SlurmyError(f"limiter does not exist and no recipe builds it: {limiter_path}")
     limiter = re.sub(r"^\s*(?:'[^']*'|\"[^\"]*\"|\S+)", lambda _: remote_path(limiter_path), limiter, count=1)
     # Every command runs in its explicitly selected, mirrored solver directory.
@@ -219,12 +277,12 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int,
             values[name] = '"${' + name.upper() + '}"'
         task["limiter_command"] = render(limiter, values)
     batches: list[list[dict]] = []
-    # Never mix node-exclusive calls with other calls on their node. Apart from
-    # this exception, one batch is one wave of at most degree concurrent calls.
+    # Node-exclusive calls get their own batch. Other batches may contain
+    # several sequential waves of at most degree concurrent calls.
     for task in tasks:
         if task["exclusive_node"]:
             batches.append([task])
-        elif (not batches or len(batches[-1]) >= degree or batches[-1][0]["exclusive_node"]
+        elif (not batches or len(batches[-1]) >= batch_size or batches[-1][0]["exclusive_node"]
               or batches[-1][0]["exclusive_cpu"] != task["exclusive_cpu"]):
             batches.append([task])
         else:
@@ -240,9 +298,9 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int,
         (assets / "plans").mkdir()
         (assets / "builds").mkdir()
         metadata = {"slurmy_version": VERSION, "workflow_directory": str(jobpairs.parent), "task_count": len(tasks), "batch_count": len(batches),
-                    "batch_size": degree, "deg_par": degree, "result_columns": RESULT_COLUMNS,
+                    "batch_size": batch_size, "deg_par": degree, "result_columns": RESULT_COLUMNS,
                     "planned_batch_tasks": [[t["task_id"] for t in batch] for batch in batches],
-                    "batch_policy": "one concurrent wave; node-exclusive calls get a batch of their own",
+                    "batch_policy": "sequential waves up to deg_par; node-exclusive calls get a batch of their own",
                     "buffers": {"per_call_seconds": 30, "per_call_memory_mib": 128, "batch_seconds": 60}}
         (assets / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
         (assets / "manifest.jsonl").write_text("".join(json.dumps(t) + "\n" for t in tasks))
@@ -275,14 +333,15 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int,
                 "task_id": task["task_id"], "task_key": task["task_key"], "batch_id": task["batch_id"],
                 "cores": task["cores"], "cpus": task["cpus"], "wc_limit": task["wc_limit"],
                     "solver_root_rel": task['solver_root'].lstrip("/"),
-                    "tptp_root_rel": str(tptp_root).lstrip('/') or '.' if tptp_root else ''}.items())
+                    "tptp_root_rel": '.slurmy-tptp' if axioms else '',
+                    "tptp_default_root": os.environ.get('SLURMY_TPTP_ROOT', '/share/Slurmy-TPTP-v9.2.1')}.items())
             (call / "config.sh").write_text(config)
         for i, batch in enumerate(batches):
             config = shell_array("TASK_IDS", [t["task_id"] for t in batch])
             for name, key in (("TASK_CORES", "cores"), ("TASK_CPUS", "cpus"), ("TASK_WALL", "wc_limit")):
                 config += shell_array(name, [t[key] for t in batch])
             config += shell_array("TASK_MEMORY", [math.ceil(t['mem_limit'] / 2**20) for t in batch])
-            config += f"BATCH_ID={i}\nEXCLUSIVE_CPU={int(batch[0]['exclusive_cpu'])}\nEXCLUSIVE_NODE={int(batch[0]['exclusive_node'])}\n"
+            config += f"BATCH_ID={i}\nDEG_PAR={degree}\nEXCLUSIVE_CPU={int(batch[0]['exclusive_cpu'])}\nEXCLUSIVE_NODE={int(batch[0]['exclusive_node'])}\n"
             config += f"MEMORY_MIB={len(batch) * (max(math.ceil(t['mem_limit'] / 2**20) for t in batch) + 128)}\n"
             config += f"WALL_SECONDS={60 + sum(t['wc_limit'] + 30 for t in batch)}\n"
             config += f"MAX_CORES={max(t['cores'] for t in batch)}\nMAX_CPUS={max(t['cpus'] for t in batch)}\n"
@@ -297,17 +356,39 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int,
         # Reuse the local build driver. Remote recipes build in a disposable
         # copy of the declared root; downloaded files preserve that layout.
         shutil.copy2(REPO / "building-dependencies/slurmy-build.py", assets / "builds/driver.py")
+        if axioms:
+            axiom_lines = ['#!/usr/bin/env bash', 'set -euo pipefail',
+                           'JOB_DIR=${JOB_DIR:?}', 'TPTP_DIR="$JOB_DIR/rootfs/.slurmy-tptp"',
+                           'mkdir -p -- "$TPTP_DIR/Axioms"']
+            for source, relative in axiom_destinations.items():
+                target = 'Axioms/' + relative.as_posix()
+                axiom_lines.append(f'mkdir -p -- "$TPTP_DIR"/{shlex.quote(str(Path(target).parent))}')
+                axiom_lines.append(f'cp -- "$JOB_DIR/rootfs"/{shlex.quote(str(source).lstrip("/"))} '
+                                   f'"$TPTP_DIR"/{shlex.quote(target)}')
+            write_script(assets / 'prepare_axioms.sh', '\n'.join(axiom_lines) + '\n')
         build_lines = ["#!/usr/bin/env bash", "set -euo pipefail", 'HERE=$(cd -- "$(dirname -- "$0")" && pwd)']
-        for i, (root, recipe) in enumerate(builds):
-            if recipe is None:
+        build_total = sum(build.recipe is not None for build in builds)
+        build_number = 0
+        for i, build in enumerate(builds):
+            if build.recipe is None:
                 continue
+            build_number += 1
+            build_lines.append(f'echo "Build progress: {build_number}/{build_total} resources (resource-{i})"')
             wrapper = assets / "builds" / f"recipe_{i}.sh"
-            body = recipe.read_text(encoding="utf-8")
-            write_script(wrapper, '#!/usr/bin/env bash\nset -euo pipefail\nOUTPUT_DEST=$SLURMY_BUILD_OUTPUT\nexport SLURMY_BUILD_OUTPUT=$SLURMY_BUILD_WORK\n(\n' + body + '\n)\ncp -a "$SLURMY_BUILD_WORK/." "$OUTPUT_DEST/"\ntouch "$OUTPUT_DEST/.slurmy-built"\n')
+            if build.artifact:
+                # Use the original script at submission time, so editing a
+                # recipe cannot leave a stale copy in submit.sh.files.
+                recipe_arg = shlex.quote(str(build.recipe))
+            else:
+                body = build.recipe.read_text(encoding="utf-8")
+                write_script(wrapper, '#!/usr/bin/env bash\nset -euo pipefail\nOUTPUT_DEST=$SLURMY_BUILD_OUTPUT\nexport SLURMY_BUILD_OUTPUT=$SLURMY_BUILD_WORK\n(\n' + body + '\n)\ncp -a "$SLURMY_BUILD_WORK/." "$OUTPUT_DEST/"\ntouch "$OUTPUT_DEST/.slurmy-built"\n')
+                recipe_arg = f'"$HERE/recipe_{i}.sh"'
             build_lines.append('python "$HERE/driver.py" --host "${SLURMY_HOST:-datalab}" '
-                               f'--name resource-{i} --recipe "$HERE/recipe_{i}.sh" '
-                               f'--context {shlex.quote(str(root))} --output {shlex.quote(str(root))} '
-                               '--artifact=.slurmy-built --sbatch-option="--partition=${SLURMY_PARTITION:?Set SLURMY_PARTITION}"')
+                               f'--name resource-{i} --recipe {recipe_arg} '
+                               + (f'--context {shlex.quote(str(build.source))} ' if build.source else '')
+                               + f'--output {shlex.quote(str(build.root))} '
+                               + f'--artifact={shlex.quote(build.artifact or ".slurmy-built")} '
+                               + '--sbatch-option="--partition=${SLURMY_PARTITION:?Set SLURMY_PARTITION}"')
         write_script(assets / "builds/run.sh", "\n".join(build_lines) + "\n")
         # NUL-separated paths allow spaces, commas, quotes and newlines.
         entries = sorted(set([*roots, *axioms, *(Path(t['solver_root']) for t in tasks), *(Path(t["problem"]) for t in tasks)]))
@@ -327,11 +408,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("resource_limiter_template", type=Path)
     parser.add_argument('--axioms-file', type=Path, help='optional file with one TPTP axiom path or glob per line')
     parser.add_argument("--deg_par", required=True, type=int, help="maximum concurrent jobpairs within one batch")
+    parser.add_argument("--batch-size", type=int, help="maximum jobpairs owned by one Slurm array task (default: degree of parallelism)")
     args = parser.parse_args(argv)
     try:
         positive(str(args.deg_par), "--deg_par")
         output = generate(args.jobpairs.resolve(), args.building.resolve(), args.resource_limiter_template.resolve(),
-                          args.deg_par, args.axioms_file.resolve() if args.axioms_file else None)
+                          args.deg_par, args.axioms_file.resolve() if args.axioms_file else None, args.batch_size)
     except (SlurmyError, OSError, ValueError) as exc:
         parser.error(str(exc))
     print(f"Prepared {output}. Inspect its companion files, then run it to build and submit.")

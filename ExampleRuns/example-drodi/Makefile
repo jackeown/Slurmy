@@ -4,7 +4,7 @@ BUILD_RECIPES := build.sh ../../building-dependencies/runsolver/build.sh
 include $(REPO_ROOT)/templates/workflow.mk
 
 jobpairs.csv: Makefile configurations.csv $(REPO_ROOT)/slurmy-pairs.py $(wildcard problems/*.p)
-	python '$(REPO_ROOT)/slurmy-pairs.py' --configurations configurations.csv --problems 'problems/*.p' --output $@
+	python '$(REPO_ROOT)/slurmy-pairs.py' --configurations configurations.csv --problems 'problems/*.p' --order '$(PAIR_ORDER)' --output $@
 
 .PHONY: pairs-clean
 pairs-clean: clean

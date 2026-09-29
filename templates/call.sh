@@ -6,6 +6,8 @@ export CALL_DIR="$JOB_DIR/calls/$1"
 source "$CALL_DIR/config.sh"
 if [[ -n ${TPTP_ROOT_REL:-} ]]; then
     export TPTP="$JOB_DIR/rootfs/$TPTP_ROOT_REL"
+elif [[ -d ${TPTP_DEFAULT_ROOT:-} ]]; then
+    export TPTP="$TPTP_DEFAULT_ROOT"
 fi
 BATCH_ID=$2
 source "$JOB_DIR/csv.sh"
@@ -84,6 +86,7 @@ szs_status=$(sed -nE 's/.*SZS[[:space:]]+status[[:space:]]+([A-Za-z][A-Za-z0-9_-
 if (( interrupted )); then status=interrupted; complete=false
 elif [[ "$memory_out" == true ]]; then status=memory-limit
 elif [[ "$timed_out" == true ]]; then status=time-limit
+elif [[ "${szs_status,,}" == timeout ]]; then status=time-limit
 elif (( code == 124 || code == 137 )); then status=worker-error; complete=false
 elif (( limiter_code != 0 )) && [[ -z "$child" ]]; then status=resource-limiter-error
 elif (( code != 0 )); then status=solver-error

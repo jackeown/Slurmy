@@ -18,6 +18,7 @@ from flask import Flask, abort, jsonify, redirect, render_template, request, ses
 from werkzeug.exceptions import HTTPException
 
 from .monitor import RemoteCollector
+from .launcher import web_version
 from . import workflows
 
 REPO = workflows.REPO
@@ -39,7 +40,21 @@ def summary(job):
                 total=job.task_count, completed=job.effective_completed,
                 percent=job.percent, issues=job.issue_count, created=job.created_epoch,
                 directory=workflow_directory,
+                submission_state=job.submission_state, submitted_batches=job.submission_count,
+                batch_count=job.batch_count,
                 statuses=job.status_counts)
+
+
+def submission_phase(log):
+    """Summarize the newest visible step of a web-triggered submission."""
+    phase = 'Preparing submission files…'
+    for line in log.splitlines():
+        if line.startswith(('Build progress: ', 'Submission phase: ', 'Submission waiting: ',
+                            'Submission progress: ', 'Submission complete: ')):
+            phase = line
+        elif match := re.fullmatch(r'Batch \d+: Slurm \d+ \((\d+/\d+) accepted\)', line):
+            phase = f'Submitting batches: {match.group(1)} accepted'
+    return phase
 
 
 def unfinished_call(job, task_id, progress):
@@ -78,6 +93,8 @@ def unfinished_call(job, task_id, progress):
     if progress and progress.state != 'running':
         return 'result missing', 'No', f'Call recorded {progress.state}, but no result was saved. Slurm no longer reports batch {batch_id}.', log
     if batch_id not in job.submitted_batches and job.submitted_batches:
+        if job.submission_state == 'submitting':
+            return 'awaiting submission', 'Yes', f'Batch {batch_id} is waiting for a free Slurm submission slot.', log
         return 'not submitted', 'No', f'Batch {batch_id} was planned but has no Slurm submission. Submission may have stopped partway through.', log
     if not job.submission_offsets and not job.slurm:
         recent = time.time() - job.created_epoch < 180
@@ -128,6 +145,7 @@ def task_rows(job):
 def create_app():
     workflows.migrate_user_runs()
     app = Flask(__name__)
+    startup_web_version = web_version()
     app.config.update(SECRET_KEY=secrets.token_hex(32), MAX_CONTENT_LENGTH=2 * 1024 * 1024,
                       SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
                       TRUSTED_HOSTS=['127.0.0.1', 'localhost'])
@@ -213,7 +231,8 @@ def create_app():
 
     @app.get('/health')
     def health():
-        return jsonify(app='slurmy-web', repository=str(REPO), pid=os.getpid())
+        return jsonify(app='slurmy-web', repository=str(REPO), pid=os.getpid(),
+                       web_version=startup_web_version)
 
     @app.get('/')
     def index():
@@ -287,7 +306,16 @@ def create_app():
             cached = cache.get((host(), None))
         # Once dispatch has started, do not make the user wait for the first
         # SSH snapshot just to see it.  A later poll merges in remote history.
-        local = [item for (item_host, _), item in announced if item_host == host()]
+        local = [item.copy() for (item_host, _), item in announced if item_host == host()]
+        for item in local:
+            if not item.get('provisional'):
+                continue
+            operation_key = item['id'].removeprefix('dispatching-')
+            operation = operations.get(operation_key)
+            log_path = STATE / (operation_key + '.log')
+            if operation and log_path.is_file():
+                item['phase'] = submission_phase(log_path.read_text(encoding='utf-8', errors='replace')[-16384:])
+                item['state'] = 'DISPATCHING' if operation['state'] == 'running' else operation['state'].upper()
         if local and not cached:
             items = local
             updated = time.time()
@@ -296,8 +324,7 @@ def create_app():
             items = [summary(job) for job in value.jobs]
             updated = value.fetched_epoch
         remote_ids = {item['id'] for item in items}
-        items.extend(item for (item_host, job_id), item in announced
-                     if item_host == host() and job_id not in remote_ids)
+        items.extend(item for item in local if item['id'] not in remote_ids)
         folder = request.args.get('directory')
         if folder:
             linked = {folder}
@@ -403,7 +430,7 @@ def create_app():
             raise ValueError('Example workflows cannot be deleted. Duplicate one to customize it.')
         expected = path.name.removeprefix('example-')
         if (request.get_json() or {}).get('name') != expected:
-            raise ValueError(f'Type {expected} exactly to confirm deletion.')
+            raise ValueError('Workflow name does not match the workflow being deleted.')
         with guard:
             if any(op['scope'] == str(path) and op['state'] == 'running' for op in operations.values()):
                 raise ValueError('Wait for the active workflow operation to finish before deleting it.')
@@ -470,7 +497,7 @@ def create_app():
             operations[key] = dict(id=key, label=label, scope=scope, state='running',
                                    code=None, started=time.time(), operation_cwd=str(cwd),
                                    operation_host=environment.get('SLURMY_HOST', 'datalab'))
-            show_dispatching = label == 'build resources & dispatch Slurm job'
+            show_dispatching = label in {'prepare and dispatch Slurm job', 'dispatch prepared Slurm job'}
         if show_dispatching:
             announce_dispatching(operations[key], cwd, environment)
         def run():
@@ -496,14 +523,17 @@ def create_app():
     @app.post('/api/experiment/action')
     def experiment_action():
         path = directory()
-        action = request.get_json().get('action')
-        if action not in {'all', 'submit'}:
+        action = (request.get_json() or {}).get('action')
+        if action not in {'all', 'prepare', 'prepare-submit', 'submit'}:
             raise ValueError('Unknown workflow action.')
         environment = {**os.environ, 'SLURMY_HOST': host(),
                        'PATH': str(Path(sys.executable).parent) + os.pathsep + os.environ.get('PATH', '')}
         # Makefiles are trusted user workflows; only this explicit click executes them.
-        label = 'prepare Slurm submission' if action == 'all' else 'build resources & dispatch Slurm job'
-        return operation(['make', action, 'SLURMY_HOST=' + host()], path, environment, label, str(path))
+        target = 'prepare' if action == 'all' else action
+        label = {'prepare': 'prepare Slurm submission',
+                 'prepare-submit': 'prepare and dispatch Slurm job',
+                 'submit': 'dispatch prepared Slurm job'}[target]
+        return operation(['make', target, 'SLURMY_HOST=' + host()], path, environment, label, str(path))
 
     @app.post('/api/jobs/<job_id>/action')
     def job_action(job_id):
@@ -572,7 +602,7 @@ rm -r -- "$job"
             if operation.get('job_id') != match.group(1):
                 announce_operation_job(operation, match.group(1), Path(operation['operation_cwd']),
                                        {'SLURMY_HOST': operation['operation_host']})
-        return jsonify(**operations[key], log=content)
+        return jsonify(**operations[key], log=content, phase=submission_phase(content))
 
     @app.post('/api/shutdown')
     def shutdown():
