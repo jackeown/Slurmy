@@ -22,7 +22,8 @@ TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/slurmy-submit.XXXXXXXX")
 trap 'rm -rf -- "$TEMP_DIR"' EXIT
 COPYFILE_DISABLE=1 tar -chzf "$TEMP_DIR/inputs.tar.gz" -C / --null -T "$ASSETS/archive-paths.txt"
 COPYFILE_DISABLE=1 tar -czf "$TEMP_DIR/job-files.tar.gz" -C "$ASSETS" .
-JOB_ID="${WORKFLOW_NAME}_$(date +%s)_$$"
+JOB_ID="${JOB_PREFIX}_$(date +%s)_$$"
+JOB_NAME_B64=$(printf '%s' "$JOB_DISPLAY_NAME" | base64 | tr -d '\r\n')
 
 # 3. Transfer archives. Remote shell logic lives in readable helper files.
 echo 'Submission phase: Uploading inputs to cluster'
@@ -31,4 +32,4 @@ scp -- "$TEMP_DIR/inputs.tar.gz" "$TEMP_DIR/job-files.tar.gz" "$HOST:Slurmy/$JOB
 
 # 4. Calculate allocations using cluster topology, then submit each batch.
 echo 'Submission phase: Submitting Slurm batches'
-ssh -T -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "${SLURMY_MAX_OUTSTANDING:-32}" "$WORKFLOW_NAME" < "$ASSETS/remote_submit.sh"
+ssh -T -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "${SLURMY_MAX_OUTSTANDING:-32}" "$JOB_PREFIX" "$JOB_NAME_B64" < "$ASSETS/remote_submit.sh"

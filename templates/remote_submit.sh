@@ -4,14 +4,31 @@ set -euo pipefail
 JOB_DIR="$HOME/Slurmy/$1"
 export JOB_DIR
 PARTITION=$2
-WORKFLOW_NAME=$4
-[[ "$WORKFLOW_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || {
-    echo 'Invalid workflow name.' >&2; exit 1;
+JOB_PREFIX=$4
+[[ "$JOB_PREFIX" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || {
+    echo 'Invalid job prefix.' >&2; exit 1;
 }
 mkdir -p "$JOB_DIR/rootfs" "$JOB_DIR/results" "$JOB_DIR/progress" "$JOB_DIR/logs"
 tar -xzf "$JOB_DIR/incoming/job-files.tar.gz" -C "$JOB_DIR"
 tar -xzf "$JOB_DIR/incoming/inputs.tar.gz" -C "$JOB_DIR/rootfs"
 cd "$JOB_DIR"
+python3 - "${5:-}" <<'PY'
+import base64
+import json
+from pathlib import Path
+import sys
+
+name = base64.b64decode(sys.argv[1], validate=True).decode('utf-8')
+if not name.strip() or len(name) > 100 or any(ord(char) < 32 or ord(char) == 127 for char in name):
+    raise SystemExit('Invalid job name.')
+path = Path('metadata.json')
+metadata = json.loads(path.read_text(encoding='utf-8'))
+metadata['job_name'] = name.strip()
+metadata['job_id'] = Path.cwd().name
+temporary = path.with_suffix('.tmp')
+temporary.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+temporary.replace(path)
+PY
 if [[ -f ./prepare_axioms.sh ]]; then bash ./prepare_axioms.sh; fi
 source ./csv.sh
 
@@ -119,7 +136,7 @@ for batch in batches/batch_*.sh; do
     if (( EXCLUSIVE_CPU )); then SLOT_CORES=$((MAX_CPUS * CORES_PER_SOCKET)); fi
     # A first-wave placement mismatch may be explicitly requeued five times by batch.sh.
     # Append output so the log retains diagnostics from each placement attempt.
-    OPTIONS=(--parsable --partition="$PARTITION" --job-name="$WORKFLOW_NAME" --requeue --open-mode=append
+    OPTIONS=(--parsable --partition="$PARTITION" --job-name="$JOB_PREFIX" --requeue --open-mode=append
         --nodes=1 --ntasks="$PARALLEL" --cpus-per-task="$SLOT_CORES"
         --threads-per-core=1 --distribution=block:block
         --mem="${MEMORY_MIB}M" --time="$(( (WALL_SECONDS + 59) / 60 ))"

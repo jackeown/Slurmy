@@ -156,10 +156,11 @@ async function renameJob(id,current){
  if(proposed===null)return;
  try{
   const result=await api(`/api/jobs/${encodeURIComponent(id)}/name?`+params({}),{name:proposed});
-  const item=jobs.find(job=>job.id===id);if(item)item.name=result.name;
-  if(document.body.dataset.job===id){text('#job-display-name',result.name);document.title=`${result.name} · Slurmy`;}
+  const item=jobs.find(job=>job.id===id);if(item){item.id=result.id;item.name=result.name;}
+  savePendingJobs(pendingJobs().map(job=>job.id===id?{...job,id:result.id,name:result.name}:job));
+  if(document.body.dataset.job===id){const url=new URL(location.href);url.pathname='/jobs/'+encodeURIComponent(result.id);location.href=url.href;return;}
   if($('#jobs-body'))renderJobs();
-  notice(`Job renamed to ${result.name}.`);
+  notice(result.warning||`Job renamed to ${result.name}.`);
  }catch(error){notice(error.message);}
 }
 function announceJob(id,name){const known=pendingJobs();if(!known.some(job=>job.id===id))known.push({id,host,directory:document.body.dataset.directory||'',name:name||document.querySelector('h1')?.textContent||'Slurmy',state:'SUBMITTED',total:0,completed:0,percent:0,issues:0,created:Date.now()});savePendingJobs(known);}

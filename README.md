@@ -136,9 +136,12 @@ The app provides a dark-mode toggle and collapsible section headers.
 Workflow pages list linked jobs; older submissions without a workflow path
 remain available under Job history.
 You can optionally name a job when dispatching it, then rename it from its job
-page or the jobs table. This is a local display name (stored in
-`.slurmy-web/job-names.json`), separate from the immutable job ID and the
-Slurm allocation names. It is retained when the web app restarts.
+page or the jobs table once its Slurm allocations finish. A new job uses that
+name as the prefix of its ID, cluster directory, and Slurm batch names; its
+full name is stored in the job's `metadata.json`. Renaming a finished job
+moves its cluster directory and any locally synced results and updates their
+metadata. Slurm's numeric allocation IDs and historical accounting records do
+not change.
 
 On a job page, **Sync/Download** fetches new results without re-downloading
 unchanged files. Problem names open a page with the packaged problem text and
@@ -597,9 +600,10 @@ submit.sh.files/
   manifest.jsonl                  # Full per-call definitions.
 ```
 
-Remote jobs live under `~/Slurmy/WORKFLOW_TIMESTAMP_PID/`, where the prefix is
-the workflow folder name (safely shortened if needed). Slurm batch and build
-job names use that prefix too. Existing username-prefixed jobs remain readable.
+Remote jobs live under `~/Slurmy/NAME_TIMESTAMP_PID/`, where the prefix comes
+from the chosen job name or, by default, the workflow folder name (safely
+shortened if needed). Slurm batch names use that prefix; build jobs use the
+workflow name. Existing username-prefixed jobs remain readable.
 Builds use `~/Slurmy-builds/`. Remote job directories also contain `batches/`,
 `allocations.csv`, `submission.csv`, `submission.state`, `progress/`, `logs/`, and `results/`.
 Each call publishes a CSV result and compressed output archive independently,

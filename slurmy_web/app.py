@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from collections import Counter
+import base64
 import json
 import os
 from pathlib import Path
@@ -41,12 +42,18 @@ def display_name(value):
     return value
 
 
+def renamed_job_id(old_id, name):
+    prefix = re.sub(r'[^A-Za-z0-9_.-]', '-', display_name(name)).lstrip('._-')[:48] or 'job'
+    suffix = re.search(r'(_[0-9]{9,}(?:_[0-9]+)?)$', old_id)
+    return safe_job(prefix + (suffix.group(1) if suffix else '_' + old_id))
+
+
 def summary(job):
     workflow_directory = job.metadata.get('workflow_directory', '')
     workflow_name = Path(workflow_directory).name if workflow_directory else ''
     if workflow_name.startswith('example-') and Path(workflow_directory).parent == workflows.USER_RUNS:
         workflow_name = workflow_name.removeprefix('example-')
-    return dict(id=job.job_id, name=workflow_name or job.job_name, state=job.state,
+    return dict(id=job.job_id, name=job.metadata.get('job_name') or workflow_name or job.job_name, state=job.state,
                 total=job.task_count, completed=job.effective_completed,
                 percent=job.percent, issues=job.issue_count, created=job.created_epoch,
                 directory=workflow_directory,
@@ -212,31 +219,6 @@ def create_app():
                       TRUSTED_HOSTS=['127.0.0.1', 'localhost'])
     cache, locks, operations, announced_jobs = {}, {}, {}, {}
     guard = threading.Lock()
-    names_file = STATE / 'job-names.json'
-
-    def saved_names():
-        try:
-            value = json.loads(names_file.read_text(encoding='utf-8'))
-            return value if isinstance(value, dict) else {}
-        except (OSError, json.JSONDecodeError):
-            return {}
-
-    def save_name(ssh_host, job_id, name, only_if_absent=False):
-        key = ssh_host + ':' + safe_job(job_id)
-        with guard:
-            names = saved_names()
-            if only_if_absent and key in names:
-                return
-            names[key] = display_name(name)
-            STATE.mkdir(exist_ok=True)
-            temporary = names_file.with_suffix('.tmp')
-            temporary.write_text(json.dumps(names, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-            temporary.replace(names_file)
-
-    def named_summary(job):
-        item = summary(job)
-        item['name'] = saved_names().get(host() + ':' + job.job_id, item['name'])
-        return item
 
     @app.before_request
     def local_only():
@@ -411,9 +393,6 @@ def create_app():
             updated = value.fetched_epoch
         remote_ids = {item['id'] for item in items}
         items.extend(item for item in local if item['id'] not in remote_ids)
-        names = saved_names()
-        for item in items:
-            item['name'] = names.get(host() + ':' + item['id'], item['name'])
         folder = request.args.get('directory')
         if folder:
             linked = {folder}
@@ -430,20 +409,64 @@ def create_app():
         rows = [row for row in task_rows(job) if query in ' '.join(str(v) for v in row.values()).lower()]
         page_number, per_page, sort, direction = call_page_args()
         rows = sorted_call_rows(rows, sort, direction)
-        return jsonify(**named_summary(job), outcomes=outcome_breakdown(job),
+        return jsonify(**summary(job), outcomes=outcome_breakdown(job),
                        tasks=rows[page_number*per_page:(page_number+1)*per_page], matched=len(rows))
 
     @app.post('/api/jobs/<job_id>/name')
     def rename_job(job_id):
         job_id = safe_job(job_id)
         name = display_name((request.get_json() or {}).get('name', ''))
-        # A freshly dispatched job may not have reached the remote collector yet.
+        job = job_snapshot(job_id)
+        if job.active_records or job.submission_state == 'submitting':
+            abort(409, 'Wait until every Slurm allocation for this job has finished before renaming its directory.')
         with guard:
-            announced = (host(), job_id) in announced_jobs
-        if not announced:
-            job_snapshot(job_id)
-        save_name(host(), job_id, name)
-        return jsonify(id=job_id, name=name)
+            if any(op['state'] == 'running' and
+                   (op['scope'] == host() + ':' + job_id or op.get('job_id') == job_id)
+                   for op in operations.values()):
+                abort(409, 'Wait for the active job operation to finish before renaming it.')
+        new_id = renamed_job_id(job_id, name)
+        local_old = REPO / 'slurmy-results' / job_id
+        local_new = REPO / 'slurmy-results' / new_id
+        if local_old.is_symlink() or (new_id != job_id and (local_new.exists() or local_new.is_symlink())):
+            abort(409, 'The local result directory is a symlink or the new job ID already exists locally.')
+        script = (REPO / 'templates/remote_rename_job.sh').read_text(encoding='utf-8')
+        encoded = base64.b64encode(name.encode('utf-8')).decode('ascii')
+        result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '--', host(),
+                                 'bash', '-s', '--', job_id, new_id, encoded],
+                                input=script, text=True, capture_output=True, timeout=90, check=False)
+        if result.returncode:
+            abort(409, result.stderr.strip() or 'Could not rename the cluster job directory.')
+        warning = ''
+        try:
+            if local_old.is_dir() and new_id != job_id:
+                local_old.rename(local_new)
+            local = local_new if new_id != job_id else local_old
+            if local.is_dir():
+                for filename in ('metadata.json', 'sync-metadata.json'):
+                    path = local / filename
+                    if not path.is_file():
+                        continue
+                    data = json.loads(path.read_text(encoding='utf-8'))
+                    if filename == 'metadata.json':
+                        history = data.get('previous_job_ids', [])
+                        if job_id != new_id and job_id not in history:
+                            history.append(job_id)
+                        data.update(job_id=new_id, job_name=name, previous_job_ids=history)
+                    else:
+                        data.update(slurmy_job_id=new_id, remote_directory=f'$HOME/Slurmy/{new_id}',
+                                    local_directory=str(local.resolve()))
+                    temporary = path.with_suffix(path.suffix + '.tmp')
+                    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+                    temporary.replace(path)
+        except (OSError, ValueError, TypeError) as exc:
+            warning = f'Cluster job renamed, but local synced results need attention: {exc}'
+        with guard:
+            announced = announced_jobs.pop((host(), job_id), None)
+            if announced:
+                announced.update(id=new_id, name=name)
+                announced_jobs[(host(), new_id)] = announced
+            cache.clear()
+        return jsonify(id=new_id, name=name, warning=warning)
 
     @app.get('/api/jobs/<job_id>/output/<int:task_id>')
     def output(job_id, task_id):
@@ -560,13 +583,11 @@ def create_app():
             if provisional:
                 announced_jobs.pop((environment['SLURMY_HOST'], provisional), None)
             announced_jobs[(environment['SLURMY_HOST'], job_id)] = dict(
-                id=job_id, name=Path(directory).name, state='SUBMITTED',
+                id=job_id, name=operation.get('requested_name') or Path(directory).name, state='SUBMITTED',
                 total=int(details.get('task_count', 0) or 0), completed=0,
                 percent=0.0, issues=0, created=time.time(), directory=directory,
                 statuses={}, provisional=False)
             operation['job_id'] = job_id
-        if operation.get('requested_name'):
-            save_name(environment['SLURMY_HOST'], job_id, operation['requested_name'], only_if_absent=True)
 
     def announce_dispatching(operation, cwd, environment):
         """Show a dispatching row while submit.sh is still running."""
@@ -643,6 +664,13 @@ def create_app():
                  'prepare-submit': 'prepare and dispatch Slurm job',
                  'submit': 'dispatch prepared Slurm job'}[target]
         requested_name = display_name(data['name']) if target != 'prepare' and data.get('name', '').strip() else None
+        if requested_name and target == 'submit' and (path / 'submit.sh').is_file() and \
+                'JOB_NAME_B64' not in (path / 'submit.sh').read_text(encoding='utf-8'):
+            raise ValueError('Prepared submission files predate job naming. Use Prepare & dispatch job to refresh them.')
+        if requested_name:
+            environment['SLURMY_JOB_NAME'] = requested_name
+        else:
+            environment.pop('SLURMY_JOB_NAME', None)
         return operation(['make', target, 'SLURMY_HOST=' + host()], path, environment, label, str(path), requested_name)
 
     @app.post('/api/jobs/<job_id>/action')
@@ -691,13 +719,6 @@ rm -r -- "$job"
         with guard:
             announced_jobs.pop((host(), job_id), None)
             cache.clear()
-        with guard:
-            names = saved_names()
-            names.pop(host() + ':' + job_id, None)
-            STATE.mkdir(exist_ok=True)
-            temporary = names_file.with_suffix('.tmp')
-            temporary.write_text(json.dumps(names, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-            temporary.replace(names_file)
         return jsonify(deleted=job_id)
 
     @app.get('/api/operations/<key>')

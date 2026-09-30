@@ -976,8 +976,14 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
     all_slurm = parse_slurm_lines(queue_payload, "queue") + parse_slurm_lines(
         accounting_payload, "accounting"
     )
+    previous_ids = {}
+    for job in jobs.values():
+        history = job.metadata.get('previous_job_ids', [])
+        for old_id in history if isinstance(history, list) else []:
+            if isinstance(old_id, str):
+                previous_ids[old_id] = job.job_id
     for record in all_slurm:
-        job_id = PurePosixPath(record.workdir).name
+        job_id = previous_ids.get(PurePosixPath(record.workdir).name, PurePosixPath(record.workdir).name)
         if job_id in jobs:
             jobs[job_id].slurm.append(record)
 
