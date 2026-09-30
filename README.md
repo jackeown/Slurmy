@@ -135,6 +135,10 @@ a running proof search. **Sync results** downloads the saved results once;
 The app provides a dark-mode toggle and collapsible section headers.
 Workflow pages list linked jobs; older submissions without a workflow path
 remain available under Job history.
+You can optionally name a job when dispatching it, then rename it from its job
+page or the jobs table. This is a local display name (stored in
+`.slurmy-web/job-names.json`), separate from the immutable job ID and the
+Slurm allocation names. It is retained when the web app restarts.
 
 On a job page, **Sync/Download** fetches new results without re-downloading
 unchanged files. Problem names open a page with the packaged problem text and
@@ -511,10 +515,14 @@ Before starting any call, the batch checks its Linux CPU allocation and assigns
 disjoint physical cores. Socket-exclusive batches request the full core count
 per socket and enough sockets for their calls, then verify complete
 sockets, including sibling hardware threads, dedicated to each call.
-If Slurm returns an unsuitable or fragmented placement, the batch fails with
-a diagnostic **before running any solver**. It does not silently weaken isolation
-or automatically retry. The current scheduler supports homogeneous partitions
-only; different architectures/topologies should use separate submissions.
+If Slurm returns an unsuitable or fragmented placement, Slurmy checks before
+starting that wave of calls. When this happens in the first wave, it requeues
+the same Slurm batch up to five times for a fresh allocation, without weakening
+isolation. If placement still fails, the batch ends with a diagnostic. A later
+wave is not requeued because earlier calls may already have completed. Requests
+that cannot fit the chosen socket/core constraints will not be fixed by a retry.
+The current scheduler supports homogeneous partitions only; different
+architectures/topologies should use separate submissions.
 
 Exclusivity excludes other scheduled workloads, not operating-system services.
 Each batch is currently submitted as a one-element Slurm array, allowing different

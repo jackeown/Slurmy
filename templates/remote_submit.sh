@@ -117,7 +117,9 @@ for batch in batches/batch_*.sh; do
     PARALLEL=${PARALLEL:-${#TASK_IDS[@]}}
     SLOT_CORES=$MAX_CORES
     if (( EXCLUSIVE_CPU )); then SLOT_CORES=$((MAX_CPUS * CORES_PER_SOCKET)); fi
-    OPTIONS=(--parsable --partition="$PARTITION" --job-name="$WORKFLOW_NAME"
+    # A first-wave placement mismatch may be explicitly requeued five times by batch.sh.
+    # Append output so the log retains diagnostics from each placement attempt.
+    OPTIONS=(--parsable --partition="$PARTITION" --job-name="$WORKFLOW_NAME" --requeue --open-mode=append
         --nodes=1 --ntasks="$PARALLEL" --cpus-per-task="$SLOT_CORES"
         --threads-per-core=1 --distribution=block:block
         --mem="${MEMORY_MIB}M" --time="$(( (WALL_SECONDS + 59) / 60 ))"

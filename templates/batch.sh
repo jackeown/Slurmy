@@ -31,6 +31,20 @@ if (( ! EXCLUSIVE_NODE && ${#CORE_CPU[@]} > RESERVED_CORES )); then
     echo 'CPU containment exposes more cores than requested. Ask the administrator to enable ConstrainCores=yes; no calls started.' >&2
     exit 1
 fi
+placement_failure() {
+    local task_id=$1 need=$2 socket_limit=$3 wave_start=$4
+    if (( wave_start == 0 )) && [[ ${SLURM_RESTART_COUNT:-0} =~ ^[0-9]+$ ]] && (( ${SLURM_RESTART_COUNT:-0} < 5 )); then
+        local array_id="${SLURM_ARRAY_JOB_ID:?}_${SLURM_ARRAY_TASK_ID:?}"
+        echo "Batch $BATCH_ID: allocated cores cannot satisfy jobpair $task_id (cores=$need sockets=$socket_limit exclusive_cpu=$EXCLUSIVE_CPU). No calls started; requeuing $array_id for another placement (retry $((${SLURM_RESTART_COUNT:-0} + 1))/5)." >&2
+        if scontrol requeue "$array_id"; then exit 0; fi
+        echo "Batch $BATCH_ID: Slurm refused the requeue; no calls started." >&2
+    elif (( wave_start == 0 )); then
+        echo "Batch $BATCH_ID: allocated cores still cannot satisfy jobpair $task_id (cores=$need sockets=$socket_limit exclusive_cpu=$EXCLUSIVE_CPU) after placement retries. No calls started; adjust the call's socket/core request or batch concurrency." >&2
+    else
+        echo "Batch $BATCH_ID: allocated cores cannot satisfy jobpair $task_id (cores=$need sockets=$socket_limit exclusive_cpu=$EXCLUSIVE_CPU). Earlier waves may have completed, so this batch will not be requeued." >&2
+    fi
+    exit 1
+}
 failed=0
 for ((first=0; first<${#TASK_IDS[@]}; first+=PARALLEL)); do
 USED=()
@@ -59,8 +73,7 @@ for ((index=first; index<last; index++)); do
         if (( ! EXCLUSIVE_CPU && ${#selected[@]} == need )); then break; fi
     done
     if (( ${#selected[@]} != need || (EXCLUSIVE_CPU && used_sockets != socket_limit) )); then
-        echo "Batch $BATCH_ID: Slurm's CPU placement cannot satisfy jobpair ${TASK_IDS[$index]} (cores=$need sockets=$socket_limit exclusive_cpu=$EXCLUSIVE_CPU). No calls started." >&2
-        exit 1
+        placement_failure "${TASK_IDS[$index]}" "$need" "$socket_limit" "$first"
     fi
     if (( ! EXCLUSIVE_CPU )); then reserved=("${selected[@]}"); fi
     mask=

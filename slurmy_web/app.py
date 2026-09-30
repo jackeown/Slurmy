@@ -32,6 +32,15 @@ def safe_job(value):
     return value
 
 
+def display_name(value):
+    if not isinstance(value, str):
+        raise ValueError('Job name must be text.')
+    value = value.strip()
+    if not value or len(value) > 100 or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError('Job name must be 1–100 characters with no control characters.')
+    return value
+
+
 def summary(job):
     workflow_directory = job.metadata.get('workflow_directory', '')
     workflow_name = Path(workflow_directory).name if workflow_directory else ''
@@ -203,6 +212,31 @@ def create_app():
                       TRUSTED_HOSTS=['127.0.0.1', 'localhost'])
     cache, locks, operations, announced_jobs = {}, {}, {}, {}
     guard = threading.Lock()
+    names_file = STATE / 'job-names.json'
+
+    def saved_names():
+        try:
+            value = json.loads(names_file.read_text(encoding='utf-8'))
+            return value if isinstance(value, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def save_name(ssh_host, job_id, name, only_if_absent=False):
+        key = ssh_host + ':' + safe_job(job_id)
+        with guard:
+            names = saved_names()
+            if only_if_absent and key in names:
+                return
+            names[key] = display_name(name)
+            STATE.mkdir(exist_ok=True)
+            temporary = names_file.with_suffix('.tmp')
+            temporary.write_text(json.dumps(names, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+            temporary.replace(names_file)
+
+    def named_summary(job):
+        item = summary(job)
+        item['name'] = saved_names().get(host() + ':' + job.job_id, item['name'])
+        return item
 
     @app.before_request
     def local_only():
@@ -377,6 +411,9 @@ def create_app():
             updated = value.fetched_epoch
         remote_ids = {item['id'] for item in items}
         items.extend(item for item in local if item['id'] not in remote_ids)
+        names = saved_names()
+        for item in items:
+            item['name'] = names.get(host() + ':' + item['id'], item['name'])
         folder = request.args.get('directory')
         if folder:
             linked = {folder}
@@ -393,8 +430,20 @@ def create_app():
         rows = [row for row in task_rows(job) if query in ' '.join(str(v) for v in row.values()).lower()]
         page_number, per_page, sort, direction = call_page_args()
         rows = sorted_call_rows(rows, sort, direction)
-        return jsonify(**summary(job), outcomes=outcome_breakdown(job),
+        return jsonify(**named_summary(job), outcomes=outcome_breakdown(job),
                        tasks=rows[page_number*per_page:(page_number+1)*per_page], matched=len(rows))
+
+    @app.post('/api/jobs/<job_id>/name')
+    def rename_job(job_id):
+        job_id = safe_job(job_id)
+        name = display_name((request.get_json() or {}).get('name', ''))
+        # A freshly dispatched job may not have reached the remote collector yet.
+        with guard:
+            announced = (host(), job_id) in announced_jobs
+        if not announced:
+            job_snapshot(job_id)
+        save_name(host(), job_id, name)
+        return jsonify(id=job_id, name=name)
 
     @app.get('/api/jobs/<job_id>/output/<int:task_id>')
     def output(job_id, task_id):
@@ -516,6 +565,8 @@ def create_app():
                 percent=0.0, issues=0, created=time.time(), directory=directory,
                 statuses={}, provisional=False)
             operation['job_id'] = job_id
+        if operation.get('requested_name'):
+            save_name(environment['SLURMY_HOST'], job_id, operation['requested_name'], only_if_absent=True)
 
     def announce_dispatching(operation, cwd, environment):
         """Show a dispatching row while submit.sh is still running."""
@@ -529,7 +580,7 @@ def create_app():
         operation['provisional_job_id'] = provisional
         with guard:
             announced_jobs[(environment['SLURMY_HOST'], provisional)] = dict(
-                id=provisional, name=Path(directory).name, state='DISPATCHING',
+                id=provisional, name=operation.get('requested_name') or Path(directory).name, state='DISPATCHING',
                 total=int(details.get('task_count', 0) or 0), completed=0,
                 percent=0.0, issues=0, created=time.time(), directory=directory,
                 statuses={}, provisional=True)
@@ -541,7 +592,7 @@ def create_app():
         with guard:
             announced_jobs.pop((operation['operation_host'], provisional), None)
 
-    def operation(argv, cwd, environment, label, scope):
+    def operation(argv, cwd, environment, label, scope, requested_name=None):
         with guard:
             if app.config.get('SHUTTING_DOWN'):
                 abort(409, 'The server is stopping. Reopen the app to continue.')
@@ -552,7 +603,8 @@ def create_app():
             log = STATE / (key + '.log')
             operations[key] = dict(id=key, label=label, scope=scope, state='running',
                                    code=None, started=time.time(), operation_cwd=str(cwd),
-                                   operation_host=environment.get('SLURMY_HOST', 'datalab'))
+                                   operation_host=environment.get('SLURMY_HOST', 'datalab'),
+                                   requested_name=requested_name)
             show_dispatching = label in {'prepare and dispatch Slurm job', 'dispatch prepared Slurm job'}
         if show_dispatching:
             announce_dispatching(operations[key], cwd, environment)
@@ -579,7 +631,8 @@ def create_app():
     @app.post('/api/experiment/action')
     def experiment_action():
         path = directory()
-        action = (request.get_json() or {}).get('action')
+        data = request.get_json() or {}
+        action = data.get('action')
         if action not in {'all', 'prepare', 'prepare-submit', 'submit'}:
             raise ValueError('Unknown workflow action.')
         environment = {**os.environ, 'SLURMY_HOST': host(),
@@ -589,7 +642,8 @@ def create_app():
         label = {'prepare': 'prepare Slurm submission',
                  'prepare-submit': 'prepare and dispatch Slurm job',
                  'submit': 'dispatch prepared Slurm job'}[target]
-        return operation(['make', target, 'SLURMY_HOST=' + host()], path, environment, label, str(path))
+        requested_name = display_name(data['name']) if target != 'prepare' and data.get('name', '').strip() else None
+        return operation(['make', target, 'SLURMY_HOST=' + host()], path, environment, label, str(path), requested_name)
 
     @app.post('/api/jobs/<job_id>/action')
     def job_action(job_id):
@@ -637,6 +691,13 @@ rm -r -- "$job"
         with guard:
             announced_jobs.pop((host(), job_id), None)
             cache.clear()
+        with guard:
+            names = saved_names()
+            names.pop(host() + ':' + job_id, None)
+            STATE.mkdir(exist_ok=True)
+            temporary = names_file.with_suffix('.tmp')
+            temporary.write_text(json.dumps(names, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+            temporary.replace(names_file)
         return jsonify(deleted=job_id)
 
     @app.get('/api/operations/<key>')

@@ -3,7 +3,7 @@
 {% block data %}data-page="job" data-job="{{ job_id }}"{% endblock %}
 {% block content %}
 <a class="back" href="{{ url_for('index', host=host) }}">← All jobs</a>
-<div class="heading"><div><p class="eyebrow">JOB</p><h1 class="job-title">{{ job_id }}</h1><p id="connection" class="muted" role="status">Loading live and historical records…</p></div><div class="tools"><button id="sync">↓ Sync/Download</button><button id="refresh" class="secondary">↻ Refresh</button><button id="delete-job" class="danger">Delete job</button></div></div>
+<div class="heading"><div><p class="eyebrow">JOB</p><h1 id="job-display-name" class="job-title">{{ job_id }}</h1><p class="muted path">ID: {{ job_id }}</p><p id="connection" class="muted" role="status">Loading live and historical records…</p></div><div class="tools"><button id="rename-job" class="secondary">Rename job</button><button id="sync">↓ Sync/Download</button><button id="refresh" class="secondary">↻ Refresh</button><button id="delete-job" class="danger">Delete job</button></div></div>
 <section id="results-overview" class="panel" aria-label="Job results overview"><div class="section-heading"><h2>Results overview</h2></div>
 <div class="stats"><article><span>Status</span><strong id="stat-state">—</strong></article><article><span>Finished calls</span><strong id="stat-done">—</strong></article><article><span>Complete</span><strong id="stat-percent">—</strong></article><article><span>Execution issues</span><strong id="stat-issues">—</strong></article></div>
 <div class="outcome-heading"><h3>Call outcomes</h3><p class="muted">Percentages are of all calls in this job. “Prover” means an SZS status from solver output; “resource limiter” means a limit detected by the limiter.</p></div>

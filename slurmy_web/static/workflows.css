@@ -41,6 +41,11 @@
 
 .workflow-management { display: flex; align-items: center; margin: -10px 0 28px; padding: 17px 20px; border: 1px solid var(--line); border-radius: 9px; background: white; overflow-x: auto; }
 .workflow-management > .tools { display: flex; flex-wrap: nowrap; white-space: nowrap; }
+.dispatch-controls { display: flex; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: 12px; }
+.dispatch-name { margin: 0; min-width: 220px; }
+.dispatch-name input { width: 250px; }
+.job-row-actions { display: flex; gap: 6px; white-space: nowrap; }
+.job-row-actions button { padding: 7px 9px; }
 .submission-actions { padding-left: 28px; border-left: 1px solid var(--line); }
 .split-action { position: relative; display: inline-flex; flex: none; white-space: nowrap; }
 .split-action > button:first-child { border-radius: 7px 0 0 7px; }
