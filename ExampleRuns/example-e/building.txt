@@ -1,4 +1,0 @@
-[
-  {"root": "bin", "source": "../../prover-sources/e", "recipe": "build.sh", "artifact": "eprover"},
-  {"root": "../../building-dependencies/runsolver", "source": "", "recipe": "../../building-dependencies/runsolver/build.sh", "artifact": "runsolver"}
-]

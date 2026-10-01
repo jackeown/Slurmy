@@ -1,0 +1,4 @@
+[
+  {"root": "bin", "source": "", "recipe": "", "artifact": ""},
+  {"root": "../../../build/runsolver", "source": "", "recipe": "../../../build/runsolver/build.sh", "artifact": "runsolver"}
+]

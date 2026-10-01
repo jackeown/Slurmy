@@ -1,0 +1,6 @@
+[
+  {"root": "../example-vampire/bin", "source": "../../example-solvers/vampire", "recipe": "../example-vampire/build.sh", "artifact": "vampire"},
+  {"root": "../example-e/bin", "source": "../../example-solvers/e", "recipe": "../example-e/build.sh", "artifact": "eprover"},
+  {"root": "../example-drodi/bin", "source": "../../example-solvers/drodi", "recipe": "../example-drodi/build.sh", "artifact": "drodi"},
+  {"root": "../../../build/runsolver", "source": "", "recipe": "../../../build/runsolver/build.sh", "artifact": "runsolver"}
+]
