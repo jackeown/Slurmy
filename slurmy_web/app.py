@@ -371,7 +371,6 @@ def create_app():
     def jobs():
         with guard:
             announced = list(announced_jobs.items())
-            cached = cache.get((host(), None))
         # Once dispatch has started, do not make the user wait for the first
         # SSH snapshot just to see it.  A later poll merges in remote history.
         local = [item.copy() for (item_host, _), item in announced if item_host == host()]
@@ -384,13 +383,9 @@ def create_app():
             if operation and log_path.is_file():
                 item['phase'] = submission_phase(log_path.read_text(encoding='utf-8', errors='replace')[-16384:])
                 item['state'] = 'DISPATCHING' if operation['state'] == 'running' else operation['state'].upper()
-        if local and not cached:
-            items = local
-            updated = time.time()
-        else:
-            value = snapshot()
-            items = [summary(job) for job in value.jobs]
-            updated = value.fetched_epoch
+        value = snapshot()
+        items = [summary(job) for job in value.jobs]
+        updated = value.fetched_epoch
         remote_ids = {item['id'] for item in items}
         items.extend(item for item in local if item['id'] not in remote_ids)
         folder = request.args.get('directory')
@@ -475,7 +470,28 @@ def create_app():
         if not result or not result.archive:
             abort(404, 'Output is available after this call saves its result archive.')
         value = app.config.get('COLLECTOR', RemoteCollector)(host(), 10).fetch_task_output(job_id, result)
-        return jsonify(asdict(value))
+        payload = asdict(value)
+        command = job.tasks.get(task_id).limiter_command if task_id in job.tasks else ''
+        expected = {
+            'solver': ('${SOLVER_LOG}', '--solver-data'),
+            'watcher': ('${WATCHER_LOG}', '--watcher-data'),
+            'variables': ('${VAR_FILE}', '--var'),
+        }
+        for kind, stream in payload['streams'].items():
+            if stream['exists']:
+                stream['explanation'] = ('Saved, but empty. This can be normal if nothing was written.'
+                                         if not stream['size'] else 'Saved output.')
+            elif kind in expected:
+                destination, option = expected[kind]
+                if not command:
+                    stream['explanation'] = 'Not saved. The limiter command is unavailable for this older job, so its cause cannot be determined.'
+                elif destination not in command or option not in command:
+                    stream['explanation'] = f'Not captured: the configured limiter command does not direct {option} to {destination}. Check the workflow invocation.'
+                else:
+                    stream['explanation'] = 'Expected but missing: the limiter may have failed before writing this file. Inspect controller diagnostics; if those show no cause, this may be a capture bug.'
+            else:
+                stream['explanation'] = 'Unexpectedly missing from the saved result archive. This stream is captured by Slurmy; inspect controller diagnostics or report a capture bug.'
+        return jsonify(payload)
 
     @app.get('/api/jobs/<job_id>/problems/<int:task_id>')
     def problem_data(job_id, task_id):

@@ -211,7 +211,7 @@ function openDiagnostic(task){
  text('#output-text',task.diagnostic||'No Slurm log is available for this batch yet.');
  selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
 }
-function renderOutput(){if(!selectedOutput)return;const stream=selectedOutput.streams[$('#stream').value];text('#output-text',stream?.content||'(This output stream is empty or was not captured.)');text('#output-info',`${stream?memory(stream.size):'0 B'}${stream?.truncated?' · Truncated: beginning and end shown':''} · Saved output for call ${selectedOutput.task_id}`);}
+function renderOutput(){if(!selectedOutput)return;const stream=selectedOutput.streams[$('#stream').value];text('#output-text',stream?.exists?(stream.content||'(Empty file)'):'(No file was saved)');text('#output-info',`${stream?.explanation||'Stream unavailable.'}${stream?.exists?` · ${memory(stream.size)}`:''}${stream?.truncated?' · Truncated: beginning and end shown':''}`);}
 $('#stream')?.addEventListener('change',renderOutput);
 $('#close-output')?.addEventListener('click',()=>{$('#call-output').hidden=true;selectedOutput=null;});
 async function fetchJob(){

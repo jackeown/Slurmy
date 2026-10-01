@@ -386,8 +386,7 @@ root has a build recipe.
 ```
 
 All solver placeholders are available, plus `{{solver_command}}`,
-`{{watcher_log}}`, `{{var_file}}`, `{{solver_log}}`, and
-`{{controller_log}}`. Leave these bare too. `{{solver_command}}` is a
+`{{watcher_log}}`, `{{var_file}}`, and `{{solver_log}}`. Leave these bare too. `{{solver_command}}` is a
 shell invocation of the generated solver script, not a quoted command string.
 
 The template must enforce the per-call time and memory limits. A separate
@@ -397,10 +396,11 @@ limits; those outcomes are not infrastructure issues. Other limiters can be
 invoked, but their tool-specific exit codes and output formats are not
 automatically interpreted as runsolver results.
 
-For a runsolver executable, Slurmy adds any missing `--watcher-data`, `--var`,
-and `--solver-data` capture options when preparing the call scripts. The saved
+Slurmy runs the limiter invocation exactly as configured; it does not add
+capture options. Include `--watcher-data {{watcher_log}}`, `--var {{var_file}}`,
+and `--solver-data {{solver_log}}` to retain those runsolver outputs. The saved
 call output separates solver stdout, solver stderr, limiter stdout,
-runsolver's watcher log, its measurement variables, and controller diagnostics. The job page shows the
+runsolver's watcher log, its measurement variables, and Slurmy controller diagnostics. The controller log is stderr from Slurmy's timeout wrapper and the limiter invocation; it may normally be empty. The job page distinguishes an empty file from a missing file and explains when an output path was omitted from the configured limiter invocation. The job page shows the
 rendered limiter command for each call.
 
 </blockquote>

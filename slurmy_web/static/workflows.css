@@ -259,6 +259,11 @@ summary::before { flex: 0 0 auto; color: var(--muted); }
 summary:hover::before { color: var(--green); }
 summary .count { margin-left: auto; }
 
+.limiter-placeholders > p { margin: 10px 0 14px; color: var(--muted); }
+.limiter-placeholders > details { margin: 0 0 6px 18px; border-left: 1px solid var(--line); padding: 5px 0 5px 14px; }
+.limiter-placeholders > details > summary { cursor: pointer; font-weight: 600; }
+.limiter-placeholders > details > p { margin: 9px 0 8px 17px; line-height: 1.6; }
+
 @media (prefers-reduced-motion: reduce) {
   .collapse-toggle::before, summary::before { transition: none; }
 }

@@ -337,7 +337,7 @@ emit_member() {
     if ! tar -tzf "$archive_path" "$member" >/dev/null 2>&1; then
         member="./$member"
         if ! tar -tzf "$archive_path" "$member" >/dev/null 2>&1; then
-            printf 'TASK_OUTPUT\0%s\00\0false\0\0' "$kind"
+            printf 'TASK_OUTPUT\0%s\0-1\0false\0\0' "$kind"
             return
         fi
     fi
@@ -431,6 +431,7 @@ class OutputStream:
     content: str
     size: int
     truncated: bool
+    exists: bool
 
 
 @dataclass
@@ -1003,7 +1004,7 @@ def parse_task_output(job_id: str, task_id: int, archive: str, data: bytes) -> T
         "solver": "Solver stdout",
         "solver_stderr": "Solver stderr",
         "limiter_stdout": "Limiter stdout",
-        "controller": "Runsolver controller",
+        "controller": "Slurmy controller diagnostics",
         "watcher": "Runsolver watcher",
         "variables": "Runsolver variables",
     }
@@ -1031,6 +1032,7 @@ def parse_task_output(job_id: str, task_id: int, archive: str, data: bytes) -> T
             content=raw.decode("utf-8", "replace"),
             size=int(size_text) if size_text.isdigit() else len(raw),
             truncated=truncated_text == "true",
+            exists=size_text != "-1",
         )
     return TaskOutput(job_id=job_id, task_id=task_id, archive=archive, streams=streams)
 

@@ -239,19 +239,6 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int,
     # First word is an executable path, not an arbitrary shell expression.
     words = shlex.split(limiter)
     limiter_path = path_at(words[0], limiter_file.parent)
-    if limiter_path.name == "runsolver":
-        # Older web forms suggested only limits and the solver command. Supply
-        # runsolver's output paths so result inspection and limit diagnosis work
-        # for those workflows too. Options must precede the solver invocation.
-        capture_options = (
-            ("--watcher-data", "{{watcher_log}}"),
-            ("--var", "{{var_file}}"),
-            ("--solver-data", "{{solver_log}}"),
-        )
-        for option, placeholder in capture_options:
-            if option not in words:
-                limiter = limiter.replace("{{solver_command}}", option + " " + placeholder + " {{solver_command}}", 1)
-        words = shlex.split(limiter)
     roots = [build.root for build in builds]
     if not any(limiter_path.is_relative_to(root) for root in roots):
         raise SlurmyError("limiter executable must be inside a building.txt resource root")
@@ -273,7 +260,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path, degree: int,
                       problem=remote_path(Path(task["problem"])))
         task["remote_command"] = render(relocate(task["command"], command_paths), values)
         values["solver_command"] = '/bin/bash "$CALL_DIR/solver.sh"'
-        for name in ("watcher_log", "var_file", "solver_log", "controller_log"):
+        for name in ("watcher_log", "var_file", "solver_log"):
             values[name] = '"${' + name.upper() + '}"'
         task["limiter_command"] = render(limiter, values)
     batches: list[list[dict]] = []
