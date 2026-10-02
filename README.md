@@ -89,7 +89,9 @@ The guided setup follows **Basics → Solvers → Problems → Limiter → Revie
 - **Basics:** name the workflow and choose the SSH host and Slurm partition.
 - **Solvers:** each solver has a runtime root (containing its executable).
   To build on the cluster, provide its source directory and Bash build script;
-  the executable path is inferred from the solver command.
+  the executable path is inferred from the solver command. In interactive mode,
+  **Copy from workflow…** adds an editable solver configuration (including its
+  build settings) from an example or one of your saved workflows.
 - **Problems:** select files, globs, or ZIP/tar archives. Their union is paired with every
   configuration; duplicate problem paths are removed. An explicit jobpairs CSV
   already supplies its problems. The shared TPTP library at
@@ -125,7 +127,10 @@ contains their particular runs.
 
 The job page has a collapsible results overview with a pie chart and percentages
 for every call outcome, labeled by whether the status came from the solver or
-resource limiter. It also shows searchable, sortable calls and progress. Select a completed
+resource limiter. Select a status to compare solvers, or open the interactive
+3D comparison to see counts for every solver and status together; an exact-count
+table is available beneath it. The page also shows searchable, sortable calls
+and progress. Select a completed
 call to inspect solver stdout/stderr, limiter output, watcher measurements, and
 controller diagnostics, including the exact solver and limiter commands.
 Ordinary time or memory limits and SZS answers such as `Satisfiable` or
@@ -285,14 +290,15 @@ Every CSV row describes exactly one call.
 <blockquote>
 
 ```csv
-command,solver_directory,problem,wc_limit,cpu_limit,mem_limit,cores,cpus,exclusive_cpu,exclusive_node
-./solver --time {{cpu_limit}} {{problem}},/home/me/solvers/solver-a,/home/me/problems/easy.p,70,60,2GiB,1,1,false,false
-./solver --threads {{cores}} {{problem}},/home/me/solvers/solver-b,/home/me/problems/hard.p,130,120,4GiB,4,1,true,false
-./solver fixed-input.p,/home/me/solvers/solver-a,/home/me/solvers/solver-a/fixed-input.p,70,60,2GiB,1,1,false,true
+solver_name,command,solver_directory,problem,wc_limit,cpu_limit,mem_limit,cores,cpus,exclusive_cpu,exclusive_node
+SolverA,./solver --time {{cpu_limit}} {{problem}},/home/me/solvers/solver-a,/home/me/problems/easy.p,70,60,2GiB,1,1,false,false
+SolverB,./solver --threads {{cores}} {{problem}},/home/me/solvers/solver-b,/home/me/problems/hard.p,130,120,4GiB,4,1,true,false
+SolverA,./solver fixed-input.p,/home/me/solvers/solver-a,/home/me/solvers/solver-a/fixed-input.p,70,60,2GiB,1,1,false,true
 ```
 
 | Column | Meaning for this single call |
 | --- | --- |
+| `solver_name` | Optional configuration label shown in calls and solver outcome comparisons. Older CSVs without it use the executable name. |
 | `command` | Bash command, with or without placeholders. |
 | `solver_directory` | Existing local directory whose cluster copy is the working directory. |
 | `problem` | Existing local problem file, also used to identify the call's problem. |

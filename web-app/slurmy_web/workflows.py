@@ -59,7 +59,7 @@ def csv_text(rows, columns=COLUMNS):
     stream = io.StringIO(newline='')
     writer = csv.DictWriter(stream, fieldnames=columns)
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows([{**row, 'solver_name': row.get('solver_name', '')} for row in rows])
     return stream.getvalue()
 
 
@@ -115,6 +115,15 @@ def specification(data, destination_override=None):
             for row in configs:
                 row['solver_directory'] = str(existing(row.get('solver_directory'), 'directory'))
                 row['cpus'] = 'auto'
+                solver_name = str(row.get('solver_name') or '').strip()
+                if not solver_name:
+                    raise ValueError('Give each solver configuration a name.')
+                if any(ord(char) < 32 or ord(char) == 127 for char in solver_name) or len(solver_name) > 80:
+                    raise ValueError('Solver configuration names must be at most 80 characters and contain no control characters.')
+                row['solver_name'] = solver_name
+            names = [row['solver_name'].casefold() for row in configs]
+            if len(names) != len(set(names)):
+                raise ValueError('Give each solver configuration a distinct name.')
         problems = set()
         for value in data.get('globs', []):
             pattern, matches = problem_glob(value)
@@ -529,6 +538,71 @@ def decisions(directory, check_paths=True):
                 mode=mode, jobpairs=jobpairs, configurations_file='', configurations=configs,
                 globs=globs, axiom_globs=axiom_globs, axiom_mode='custom' if axiom_globs else 'cluster', building_mode='create', building_file='', resources=resources,
                 limiter_mode='inline', limiter_file='', limiter=limiter))
+
+
+def copyable_solver_configurations(directory):
+    """Return editable solver cards from a saved workflow, including build settings."""
+    data = decisions(directory, check_paths=False)
+    configs = data.get('configurations') or []
+    if not configs and (directory / 'jobpairs.csv').is_file():
+        configs = imported_rows(directory / 'jobpairs.csv', check_paths=False)
+    resources = {str(path_at(item.get('root', ''), BASE)): item
+                 for item in data.get('resources', []) if item.get('role') == 'solver'}
+    fields = ('solver_name', 'solver_directory', 'command', 'wc_limit', 'cpu_limit', 'mem_limit',
+              'cores', 'exclusive_cpu', 'exclusive_node')
+    seen = set()
+    result = []
+    for config in configs:
+        card = {name: str(config.get(name) or ('false' if name in {'exclusive_cpu', 'exclusive_node'} else ''))
+                for name in fields}
+        if not card['solver_name']:
+            card['solver_name'] = Path(shlex.split(card['command'])[0]).name if card['command'].strip() else 'Solver'
+        card['solver_directory'] = str(path_at(card['solver_directory'], directory))
+        key = tuple(card.values())
+        if key in seen:
+            continue
+        seen.add(key)
+        build = resources.get(card['solver_directory'])
+        card.update(build_mode='script' if build and build.get('mode') == 'script' else 'none',
+                    build_source=str(build.get('source') or '') if build else '',
+                    build_script=str(build.get('script') or '') if build else '')
+        result.append(card)
+    return result
+
+
+def copyable_limiter_configuration(directory):
+    """Return one editable limiter invocation with the resource that supplies it."""
+    data = decisions(directory, check_paths=False)
+    invocation = str(data.get('limiter') or '').strip()
+    base = BASE
+    if data.get('limiter_mode') == 'existing':
+        template = expand_repo_root(data.get('limiter_file', '')) or path_at(data.get('limiter_file', ''), directory)
+        invocation = template.read_text(encoding='utf-8').strip()
+        base = template.parent
+    lexer = shlex.shlex(invocation, posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ''
+    executable = lexer.get_token()
+    if not executable:
+        raise ValueError('This workflow has no limiter invocation to copy.')
+    limiter_path = expand_repo_root(executable) or path_at(executable, base)
+    invocation = shlex.quote(str(limiter_path)) + ' ' + invocation[lexer.instream.tell():].lstrip()
+    matches = []
+    for entry in data.get('resources', []):
+        root = expand_repo_root(entry.get('root', '')) or path_at(entry.get('root', ''), BASE)
+        if limiter_path.is_relative_to(root):
+            matches.append((entry.get('role') == 'limiter', len(root.parts), entry, root))
+    if not matches:
+        raise ValueError('This workflow has no build resource containing its limiter executable.')
+    _, _, entry, root = max(matches, key=lambda item: item[:2])
+    resource = {key: str(entry.get(key) or '') for key in ('mode', 'script', 'commands', 'source', 'artifact')}
+    resource['root'] = str(root)
+    for key in ('script', 'source'):
+        if resource[key]:
+            resource[key] = str(expand_repo_root(resource[key]) or path_at(resource[key], BASE))
+    if resource['mode'] in {'script', 'commands'} and not resource['artifact']:
+        resource['artifact'] = str(limiter_path.relative_to(root))
+    return {'invocation': invocation, 'resource': resource}
 
 
 def duplicate(source, name):

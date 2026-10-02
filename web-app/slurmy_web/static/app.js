@@ -17,17 +17,27 @@ function duration(value){if(value==null)return '—';if(value===0)return '0 s';i
 function memory(value){if(value==null)return '—';let i=0;const units=['B','KiB','MiB','GiB','TiB'];while(value>=1024&&i<units.length-1){value/=1024;i++;}return `${value.toFixed(i===0?0:1)} ${units[i]}`;}
 const outcomeColors={'not finished':'#87938f','theorem':'#278866','unsatisfiable':'#4479b5','satisfiable':'#9367ac','countersatisfiable':'#219a98','counter satisfiable':'#219a98','timeout':'#e7b251','time limit':'#ca842c','memory limit':'#bb684a','resourceout':'#9f5241','resource out':'#9f5241','error':'#bb555b','solver error':'#bb555b'};
 const otherOutcomeColors=['#6d70b7','#a66b8b','#628b51','#ac7650','#568d9c','#a5a047'];
+let selectedOutcome=null;
+function showOutcomeComparison(item){
+ const panel=$('#status-comparison'),bars=$('#status-bars');if(!panel||!bars)return;
+ selectedOutcome=`${item.label}\u0000${item.source}`;panel.hidden=false;text('#status-comparison-title',`${item.label}${item.source?` (${item.source})`:''} by solver`);
+ bars.replaceChildren();const solvers=[...(item.solvers||[])].sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name));const maximum=Math.max(1,...solvers.map(solver=>solver.count));
+ for(const solver of solvers){const row=el('div',undefined,'status-bar-row'),track=el('div',undefined,'status-bar-track'),fill=el('span',undefined,'status-bar-fill');fill.style.width=`${solver.count/maximum*100}%`;track.append(fill);row.append(el('span',solver.name,'status-bar-label'),track,el('strong',solver.count.toLocaleString(),'status-bar-count'));bars.append(row);}
+ if(!solvers.length)bars.append(el('p','No solver names are available for these calls.','muted'));
+}
+$('#close-status-comparison')?.addEventListener('click',()=>{$('#status-comparison').hidden=true;selectedOutcome=null;});
 function renderOutcomes(outcomes){
  const chart=$('#outcome-chart'),breakdown=$('#outcome-breakdown');if(!chart||!breakdown)return;
  const items=(outcomes||[]).filter(item=>Number.isFinite(item.count)&&item.count>0);
  const total=items.reduce((sum,item)=>sum+item.count,0);
  chart.replaceChildren();breakdown.replaceChildren();chart.classList.toggle('is-empty',total===0);
- if(!total){chart.style.background='';chart.setAttribute('aria-label','No call outcomes yet');breakdown.append(el('p','No call outcomes yet.','muted'));return;}
+ if(!total){chart.style.background='';chart.setAttribute('aria-label','No call outcomes yet');breakdown.append(el('p','No call outcomes yet.','muted'));$('#status-comparison').hidden=true;selectedOutcome=null;window.outcomeCubeData=[];window.renderOutcomeCube?.([]);return;}
  let start=0,other=0;const segments=[];const labels=[];
  for(const item of items){
   const color=outcomeColors[item.label.toLowerCase()]||otherOutcomeColors[other++%otherOutcomeColors.length];
+  item.color=color;
   const end=start+item.count/total*100;segments.push(`${color} ${start}% ${end}%`);start=end;
-  const percent=item.count/total*100;const row=el('div',undefined,'outcome-row');
+  const percent=item.count/total*100;const row=el('button',undefined,'outcome-row outcome-row-button');row.type='button';row.setAttribute('aria-label',`Compare solvers for ${item.label}${item.source?` (${item.source})`:''}`);row.addEventListener('click',()=>showOutcomeComparison(item));
   const name=el('span',undefined,'outcome-name');const swatch=el('span',undefined,'outcome-swatch');swatch.style.backgroundColor=color;swatch.setAttribute('aria-hidden','true');name.append(swatch,el('span',item.label));if(item.source)name.append(el('small',`(${item.source})`,'outcome-source'));
   row.append(name,el('span',item.count.toLocaleString(),'outcome-count'),el('strong',`${percent.toFixed(1)}%`,'outcome-percent'));breakdown.append(row);
   labels.push(`${item.label}${item.source?` (${item.source})`:''}: ${item.count} (${percent.toFixed(1)}%)`);
@@ -35,6 +45,8 @@ function renderOutcomes(outcomes){
  chart.style.background=`conic-gradient(${segments.join(',')})`;
  chart.setAttribute('aria-label',`Call outcomes for ${total} calls. ${labels.join('; ')}`);
  chart.title=labels.join('\n');
+ window.outcomeCubeData=items;window.renderOutcomeCube?.(items);
+ if(selectedOutcome){const selected=items.find(item=>`${item.label}\u0000${item.source}`===selectedOutcome);if(selected)showOutcomeComparison(selected);else{$('#status-comparison').hidden=true;selectedOutcome=null;}}
 }
 function badge(state){const value=state.toLowerCase();let cls='';if(/error|fail|incomplete|interrupted|cancel|not run/.test(value))cls='bad';else if(/limit|timeout/.test(value))cls='limit';else if(/run|pending|submit|dispatch|completing/.test(value))cls='active';else if(/done|ok|completed|theorem|unsatisfiable|satisfiable|counter/.test(value))cls='good';return el('span',state,`badge ${cls}`);}
 function text(id, value){const node=$(id);if(node)node.textContent=value;}
@@ -200,13 +212,13 @@ function renderJobs(){
 }
 async function fetchJobs(){const directory=document.body.dataset.directory;const data=await api('/api/jobs?'+params(directory?{directory}:{}));jobs=data.jobs;renderJobs();text('#connection',`Connected to ${host} · refreshed ${new Date(data.updated*1000).toLocaleTimeString()} · refreshes every 10 seconds`);}
 async function openOutput(task){
- const panel=$('#call-output');panel.hidden=false;$('#stream').closest('label').hidden=false;text('#output-title',`Call ${task.id} · ${task.solver}`);text('#command',`Solver command: ${task.command}\nLimiter command: ${task.limiter_command||'Unavailable for this older job'}\nWorking directory: ${task.directory}`);$('#command').hidden=false;text('#output-info',task.problem);text('#output-text','Loading saved output…');selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
+ const panel=$('#call-output');panel.hidden=false;$('#stream').closest('label').hidden=false;text('#output-title',`Call ${task.id} · ${task.solver}`);highlightShell($('#command'),`Solver command: ${task.command}\nLimiter command: ${task.limiter_command||'Unavailable for this older job'}\nWorking directory: ${task.directory}`);$('#command').hidden=false;text('#output-info',task.problem);text('#output-text','Loading saved output…');selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
  try{const data=await api(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/output/${task.id}?`+params({}));selectedOutput=data;renderOutput();}catch(error){text('#output-text',error.message);}
 }
 function openDiagnostic(task){
  const panel=$('#call-output');panel.hidden=false;$('#stream').closest('label').hidden=true;
  text('#output-title',`Call ${task.id} · batch diagnostic`);
- text('#command',`Solver command: ${task.command}\nLimiter command: ${task.limiter_command}\nWorking directory: ${task.directory}`);
+ highlightShell($('#command'),`Solver command: ${task.command}\nLimiter command: ${task.limiter_command}\nWorking directory: ${task.directory}`);
  $('#command').hidden=false;text('#output-info',task.reason);
  text('#output-text',task.diagnostic||'No Slurm log is available for this batch yet.');
  selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});

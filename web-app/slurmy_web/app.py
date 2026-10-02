@@ -81,7 +81,9 @@ def outcome_breakdown(job):
                 'counter-satisfiable': 'CounterSatisfiable',
                 'memory-limit': 'Memory limit'}
     counts = Counter()
-    for result in job.results.values():
+    by_solver = Counter()
+    solver_names = {definition.solver or 'Unknown solver' for definition in job.tasks.values()}
+    for task_id, result in job.results.items():
         szs = result.szs_status.strip()
         if szs:
             label, source = szs, 'solver'
@@ -92,11 +94,22 @@ def outcome_breakdown(job):
                       'controller' if result.status in {'worker-error', 'interrupted'} else
                       'execution')
         counts[(label, source)] += 1
+        solver = job.tasks.get(task_id)
+        by_solver[(label, source, solver.solver if solver and solver.solver else 'Unknown solver')] += 1
     total = max(job.task_count, len(job.tasks), len(job.results))
     unfinished = max(0, total - len(job.results))
     if unfinished:
         counts[('Not finished', '')] += unfinished
-    return [{'label': label, 'source': source, 'count': count}
+        for task_id, definition in job.tasks.items():
+            if task_id not in job.results:
+                by_solver[('Not finished', '', definition.solver or 'Unknown solver')] += 1
+        untracked = unfinished - sum(count for (label, source, _), count in by_solver.items() if label == 'Not finished')
+        if untracked > 0:
+            by_solver[('Not finished', '', 'Unknown solver')] += untracked
+    return [{'label': label, 'source': source, 'count': count,
+             'solvers': [{'name': name, 'count': by_solver[(label, source, name)]}
+                         for name in sorted(solver_names | {name for (outcome, origin, name) in by_solver
+                                                           if (outcome, origin) == (label, source)}, key=str.casefold)]}
             for (label, source), count in sorted(
                 counts.items(), key=lambda item: (-item[1], item[0][0].lower(), item[0][1]))]
 
@@ -368,12 +381,33 @@ def create_app():
     def new():
         return page('new.html', base=str(workflows.BASE), repo=str(REPO), initial=None, editing=False)
 
+    @app.get('/api/solver-configurations')
+    def solver_configurations():
+        if 'directory' in request.args:
+            path = directory()
+            return jsonify(configurations=workflows.copyable_solver_configurations(path))
+        roots = (('Example workflows', REPO / 'workflows/example-workflows'),
+                 ('My workflows', workflows.USER_RUNS))
+        items = [dict(group=group, name=path.name, directory=str(path.resolve()))
+                 for group, root in roots if root.is_dir()
+                 for path in sorted(root.iterdir()) if path.is_dir() and (path / 'Makefile').is_file()]
+        return jsonify(workflows=items)
+
+    @app.get('/api/limiter-configuration')
+    def limiter_configuration():
+        return jsonify(workflows.copyable_limiter_configuration(directory()))
+
     @app.get('/workflow/edit')
     def edit_workflow():
         path = directory()
         if path.parent != workflows.USER_RUNS.resolve():
             raise ValueError('Duplicate an example before editing it.')
-        return page('new.html', base=str(workflows.BASE), repo=str(REPO), initial=workflows.decisions(path),
+        data = workflows.decisions(path)
+        if data.get('limiter_mode') == 'existing':
+            data['limiter'] = workflows.copyable_limiter_configuration(path)['invocation']
+            data['limiter_mode'] = 'inline'
+            data['limiter_file'] = ''
+        return page('new.html', base=str(workflows.BASE), repo=str(REPO), initial=data,
                     editing=True, directory=str(path))
 
     @app.get('/logo.svg')

@@ -19,7 +19,7 @@ import sys
 from typing import Sequence
 
 VERSION = "1.0.0"
-COLUMNS = ("command", "solver_directory", "problem", "wc_limit", "cpu_limit", "mem_limit", "cores",
+COLUMNS = ("solver_name", "command", "solver_directory", "problem", "wc_limit", "cpu_limit", "mem_limit", "cores",
            "cpus", "exclusive_cpu", "exclusive_node")
 RESULT_COLUMNS = ("task_id", "complete", "status", "return_code", "wall_seconds",
                   "cpu_seconds", "user_seconds", "system_seconds", "cpu_usage_percent",
@@ -83,7 +83,7 @@ def read_pairs(filename: Path) -> list[dict]:
     with filename.open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         headers = reader.fieldnames or []
-        required = set(COLUMNS) - {"exclusive_cpu", "exclusive_node"}
+        required = set(COLUMNS) - {"solver_name", "exclusive_cpu", "exclusive_node"}
         if len(headers) != len(set(headers)) or not required <= set(headers) or set(headers) - set(COLUMNS):
             raise SlurmyError(f"{filename}: columns must be {', '.join(COLUMNS)}; exclusivity columns may be omitted")
         for row in reader:
@@ -93,6 +93,9 @@ def read_pairs(filename: Path) -> list[dict]:
             command = row["command"].strip()
             if not command or "\x00" in command:
                 raise SlurmyError(f"{label}: command is empty or contains NUL")
+            solver_name = (row.get("solver_name") or "").strip()
+            if len(solver_name) > 80 or any(ord(char) < 32 or ord(char) == 127 for char in solver_name):
+                raise SlurmyError(f"{label}: solver_name must be at most 80 characters with no control characters")
             problem = path_at(row["problem"], filename.parent)
             if not row["problem"] or not problem.is_file():
                 raise SlurmyError(f"{label}: problem does not exist: {problem}")
@@ -101,7 +104,7 @@ def read_pairs(filename: Path) -> list[dict]:
                 raise SlurmyError(f"{label}: solver_directory is not an existing directory: {solver_root}")
             task = {"task_id": len(tasks), "command": command, "problem": str(problem),
                     "solver_root": str(solver_root),
-                    "solver": Path(shlex.split(command)[0]).name}
+                    "solver": solver_name or Path(shlex.split(command)[0]).name}
             for key in ("wc_limit", "cpu_limit", "cores"):
                 task[key] = positive(row[key].strip(), f"{label}: {key}")
             task["cpus"] = 0 if row.get("cpus", "").strip().lower() in {"", "auto"} else positive(row["cpus"].strip(), f"{label}: cpus")
