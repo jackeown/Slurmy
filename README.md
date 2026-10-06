@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="logo.svg" alt="Slurmy logo" width="240">
+  <img src="implementation/logo.svg" alt="Slurmy logo" width="240">
 
 # Slurmy
 
@@ -29,7 +29,7 @@ sample TPTP inputs, `example-solvers/` holds solver source snapshots,
 `example-workflows/` holds runnable examples, and `my-workflows/` holds your
 private workflow definitions. The local UI lives in `web-app/`; runner scripts
 and submission templates live in `implementation/`. Remote build tooling is
-in `build/`, and downloaded results go to `job-results/`.
+in `implementation/build/`, and downloaded results go to `job-results/`.
 
 <details>
 <summary><strong>🚀 Requirements and setup</strong></summary>
@@ -97,7 +97,9 @@ The guided setup follows **Basics → Solvers → Problems → Limiter → Revie
   already supplies its problems. The shared TPTP library at
   `/share/Slurmy-TPTP-v9.2.1` is selected by default; custom axiom globs replace it.
 - **Limiter:** runsolver and its remote build are preconfigured. You may change
-  the invocation, resource root, or build recipe. Both invocation sections have collapsible
+  the invocation, resource root, or build recipe. New workflows include
+  `--timestamp` in the runsolver invocation so solver-output lines carry timing
+  prefixes. Both invocation sections have collapsible
   placeholder references and editable examples.
 - **Review and Slurm Settings:** choose Problem Major, Solver Major, or random
   jobpair order, set jobpairs per Slurm task (batch size), inspect the generated
@@ -387,7 +389,7 @@ Recipes run again on each submission; no build cache is implied.
 Build jobs currently use the shared builder's defaults: 4 cores, 4 GiB, and
 30 minutes, on the selected partition. These are separate from per-call
 limits. For unusual build requirements, use
-[the standalone builder](build/README.md), then leave the
+[the standalone builder](implementation/build/README.md), then leave the
 resource's recipe empty.
 
 </blockquote>

@@ -13,7 +13,7 @@ a workflow runs the declared recipes before packaging the job.
 For standalone builds or custom build allocations:
 
 ```bash
-python build/slurmy-build.py \
+python implementation/build/slurmy-build.py \
     --name my-solver \
     --context /path/to/sources \
     --recipe /path/to/build.sh \

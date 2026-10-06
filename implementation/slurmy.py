@@ -346,7 +346,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             shutil.copymode(source, destination)
         # Reuse the local build driver. Remote recipes build in a disposable
         # copy of the declared root; downloaded files preserve that layout.
-        shutil.copy2(REPO / "build/slurmy-build.py", assets / "builds/driver.py")
+        shutil.copy2(REPO / "implementation/build/slurmy-build.py", assets / "builds/driver.py")
         if axioms:
             axiom_lines = ['#!/usr/bin/env bash', 'set -euo pipefail',
                            'JOB_DIR=${JOB_DIR:?}', 'TPTP_DIR="$JOB_DIR/rootfs/.slurmy-tptp"',

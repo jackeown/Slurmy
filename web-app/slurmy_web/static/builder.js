@@ -15,7 +15,7 @@ if(document.body.dataset.page==='new'){
  function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field){field.value=value??'';field.refreshShell?.();}}if(node.matches('.configuration')){configurationTitle(node);updateSolverStatus(node);}}
  for(const name of ['name','host','partition','batch_size','pair_order','mode','jobpairs','configurations_file','limiter_mode','limiter_file','limiter']){const field=form.querySelector(`[name="${name}"]`);if(field&&initial[name]!==undefined)field.value=initial[name];}
  $('[name="limiter_mode"]').value='inline';$('[name="limiter_file"]').value='';
- if(!editing&&!initial.limiter){$('[name="limiter_mode"]').value='inline';$('[name="limiter"]').value=`${repoRoot}/build/runsolver/runsolver --cpu-limit {{cpu_limit}} --wall-clock-limit {{wc_limit}} --rss-swap-limit {{mem_limit_mib}} --watcher-data {{watcher_log}} --var {{var_file}} --solver-data {{solver_log}} {{solver_command}}`;}
+ if(!editing&&!initial.limiter){$('[name="limiter_mode"]').value='inline';$('[name="limiter"]').value=`${repoRoot}/implementation/build/runsolver/runsolver --cpu-limit {{cpu_limit}} --wall-clock-limit {{wc_limit}} --rss-swap-limit {{mem_limit_mib}} --timestamp --watcher-data {{watcher_log}} --var {{var_file}} --solver-data {{solver_log}} {{solver_command}}`;}
  for(const values of initial.configurations||[]){const card=add('configuration-template','configurations');fill(card,{...values,solver_name:values.solver_name||values.command?.trim().split(/\s+/)[0]?.split('/').pop()||''});const resource=(initial.resources||[]).find(item=>item.role==='solver'&&item.root===values.solver_directory);if(resource)fill(card,{build_mode:resource.mode,build_source:resource.source,build_script:resource.script});}
  const globs=initial.globs?.length?initial.globs:[null];for(const value of globs)fill(add('glob-template','globs'),value===null?null:{glob:value});
  for(const value of initial.axiom_globs||[])fill(add('axiom-glob-template','axiom-globs'),{axiom_glob:value});
@@ -53,7 +53,7 @@ if(document.body.dataset.page==='new'){
   catch(error){if(request!==limiterRequest)return;limiterCopyError(error.message);limiterPreview.textContent='Could not load this limiter.';}
  });
  limiterConfirm.addEventListener('click',()=>{if(!limiterChoice)return;$('[name="limiter"]').value=limiterChoice.invocation;$('[name="limiter"]').refreshShell?.();let card=$('#limiter-resources .resource');if(!card)card=addResource('limiter');fill(card,limiterChoice.resource);visibility();for(const input of card.querySelectorAll('[data-path]')){delete input.dataset.validated;if(input.value.trim())validatePath(input);}updateLimiterStatus();limiterDialog.close();});
- if(!limiterLoaded)addResource('limiter',editing?null:{root:`${repoRoot}/build/runsolver`,mode:'script',script:`${repoRoot}/build/runsolver/build.sh`,artifact:'runsolver',source:''});
+ if(!limiterLoaded)addResource('limiter',editing?null:{root:`${repoRoot}/implementation/build/runsolver`,mode:'script',script:`${repoRoot}/implementation/build/runsolver/build.sh`,artifact:'runsolver',source:''});
  $('[name="axiom_mode"]').value=initial.axiom_globs?.length?'custom':'cluster';
  prefillExamples(form);
  const picker=$('#path-browser');let pickedInput=null,pickerDirectory='',pickedPathCallback=null;

@@ -1,6 +1,6 @@
 REPO_ROOT := ../../..
 BATCH_SIZE := 2
-BUILD_RECIPES := build.sh ../../../build/runsolver/build.sh
+BUILD_RECIPES := build.sh ../../../implementation/build/runsolver/build.sh
 include $(REPO_ROOT)/implementation/templates/workflow.mk
 
 jobpairs.csv: Makefile configurations.csv $(REPO_ROOT)/implementation/slurmy-pairs.py $(wildcard ../../example-problems/basic/*.p)

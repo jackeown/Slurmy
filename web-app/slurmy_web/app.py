@@ -412,7 +412,7 @@ def create_app():
 
     @app.get('/logo.svg')
     def logo():
-        return send_file(REPO / 'logo.svg')
+        return send_file(REPO / 'implementation/logo.svg')
 
     @app.get('/api/jobs')
     def jobs():

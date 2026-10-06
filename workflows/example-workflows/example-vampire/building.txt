@@ -1,4 +1,4 @@
 [
   {"root": "bin", "source": "../../example-solvers/vampire", "recipe": "build.sh", "artifact": "vampire"},
-  {"root": "../../../build/runsolver", "source": "", "recipe": "../../../build/runsolver/build.sh", "artifact": "runsolver"}
+  {"root": "../../../implementation/build/runsolver", "source": "", "recipe": "../../../implementation/build/runsolver/build.sh", "artifact": "runsolver"}
 ]

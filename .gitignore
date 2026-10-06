@@ -4,8 +4,8 @@ __pycache__/
 /.venv/
 /submit.sh
 /job-results/
-/build/runsolver/runsolver
-/build/runsolver/.built-on-*
+/implementation/build/runsolver/runsolver
+/implementation/build/runsolver/.built-on-*
 /workflows/example-workflows/example-*/source/
 /workflows/example-workflows/example-*/bin/*
 !/workflows/example-workflows/example-*/bin/.gitkeep

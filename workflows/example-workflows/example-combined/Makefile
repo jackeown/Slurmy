@@ -1,6 +1,6 @@
 REPO_ROOT := ../../..
 BATCH_SIZE := 3
-BUILD_RECIPES := ../example-vampire/build.sh ../example-e/build.sh ../example-drodi/build.sh ../../../build/runsolver/build.sh
+BUILD_RECIPES := ../example-vampire/build.sh ../example-e/build.sh ../example-drodi/build.sh ../../../implementation/build/runsolver/build.sh
 include $(REPO_ROOT)/implementation/templates/workflow.mk
 
 jobpairs.csv: Makefile configurations.csv $(REPO_ROOT)/implementation/slurmy-pairs.py $(wildcard ../../example-problems/combined/easy/*.p ../../example-problems/combined/hard/*.p)
