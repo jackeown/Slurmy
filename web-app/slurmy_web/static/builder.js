@@ -58,16 +58,17 @@ if(document.body.dataset.page==='new'){
  prefillExamples(form);
  const picker=$('#path-browser');let pickedInput=null,pickerDirectory='',pickedPathCallback=null;
  async function browse(directory,fallback=true){
-  try{const data=await api('/api/browse-path',{directory});pickerDirectory=data.directory;$('#path-location').value=data.directory;const items=$('#path-items');items.replaceChildren();
-   for(const item of data.items){const row=button(`${item.directory?'📁':'📄'}  ${item.name}`,()=>{if(item.directory)browse(item.path);else if(pickedInput?.dataset.path==='file'){pickedInput.value=item.path;picker.close();if(pickedPathCallback){const callback=pickedPathCallback;pickedPathCallback=null;callback(item.path);}else validatePath(pickedInput);}},'path-item');row.disabled=!item.directory&&pickedInput?.dataset.path!=='file';items.append(row);}
+  try{const data=await api('/api/browse-path',{directory});pickerDirectory=data.directory;$('#path-location').value=data.directory;const ancestors=$('#path-ancestors');ancestors.replaceChildren();let current=data.directory;while(true){const option=el('option',current);option.value=current;ancestors.append(option);if(current==='/')break;current=current.replace(/\/[^/]+$/,'')||'/';}ancestors.value=data.directory;const items=$('#path-items');items.replaceChildren();
+   for(const item of data.items){const archive=/\.(?:zip|tar|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz)$/i.test(item.name);const selectable=item.directory||pickedInput?.dataset.path==='file'||pickedInput?.dataset.path==='glob'&&archive;const row=button(`${item.directory?'📁':'📄'}  ${item.name}`,()=>{if(item.directory)browse(item.path);else if(selectable){pickedInput.value=item.path;picker.close();if(pickedPathCallback){const callback=pickedPathCallback;pickedPathCallback=null;callback(item.path);}else validatePath(pickedInput);}},'path-item');row.disabled=!selectable;items.append(row);}
    text('#path-help',data.truncated?'Showing the first 1,000 entries. Type a more specific directory above.':pickedInput?.dataset.path==='file'?'Open folders or choose a file.':'Open folders, then choose the current directory.');$('#path-parent').dataset.path=data.parent;
   }catch(error){if(fallback&&directory)browse('',false);else text('#path-help',error.message);}
  }
  function setupBrowsers(root){root.querySelectorAll('[data-path]').forEach(input=>{if(input.dataset.browserReady)return;input.dataset.browserReady='true';const choose=button('Browse…',()=>{pickedInput=input;const current=input.value.trim();let start=current;
    if(input.dataset.path==='glob'){
+    if(/\.(?:zip|tar|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz)$/i.test(current))start=current.replace(/\/[^/]*$/,'');
     const cuts=['*','?','['].map(mark=>current.indexOf(mark)).filter(index=>index>=0);
     const cut=cuts.length?Math.min(...cuts):current.length;
-    start=current.slice(0,cut).replace(/\/$/,'');
+    if(cuts.length)start=current.slice(0,cut).replace(/\/$/,'');
    }
    if(input.dataset.path==='file')start=current.replace(/\/[^/]*$/,'');
    $('#path-select-directory').hidden=input.dataset.path==='file';picker.showModal();browse(start.startsWith('/')?start:'');},'secondary path-browse');
@@ -75,7 +76,7 @@ if(document.body.dataset.page==='new'){
  });}
  setupBrowsers(form);
  picker.addEventListener('close',()=>{pickedPathCallback=null;});
- $('#path-parent').addEventListener('click',()=>browse($('#path-parent').dataset.path));$('#path-go').addEventListener('click',()=>browse($('#path-location').value));$('#path-location').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();browse(event.target.value);}});
+ $('#path-parent').addEventListener('click',()=>browse($('#path-parent').dataset.path));$('#path-ancestors').addEventListener('change',event=>browse(event.target.value));$('#path-go').addEventListener('click',()=>browse($('#path-location').value));$('#path-location').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();browse(event.target.value);}});
  $('#path-select-directory').addEventListener('click',()=>{if(!pickedInput)return;const kind=pickedInput.dataset.path;if(kind==='file')return;pickedInput.value=pickerDirectory+(kind==='glob'?(pickedInput.name==='axiom_glob'?'/**/*.ax':'/**/*.p'):'');picker.close();validatePath(pickedInput);});
  $('#limiter-browse').addEventListener('click',()=>{const invocation=$('[name="limiter"]');const current=invocation.value.trim()||invocation.placeholder;const first=current.match(/^(?:'[^']*'|"[^"]*"|\S+)/)?.[0]||'';const binary=first.replace(/^['"]|['"]$/g,'');pickedInput={dataset:{path:'file'},value:binary};pickedPathCallback=path=>{const rest=current.slice(first.length).trimStart();const quoted="'"+path.replace(/'/g,"'\\''")+"'";invocation.value=quoted+(rest?' '+rest:'');invocation.refreshShell?.();updateLimiterStatus();};$('#path-select-directory').hidden=true;picker.showModal();browse(binary.startsWith('/')?binary.replace(/\/[^/]*$/,''):'');});
  // Repeated card fields are read from their card, never from a flattened form.

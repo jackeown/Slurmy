@@ -14,8 +14,6 @@ import zipfile
 ARCHIVE_SUFFIXES = ('.zip', '.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2', '.tar.xz', '.txz')
 PROBLEM_SUFFIXES = ('.p', '.tptp')
 AXIOM_SUFFIXES = ('.ax', '.p', '.tptp')
-MAX_FILES = 100_000
-MAX_UNCOMPRESSED = 4 * 1024**3
 CACHE = Path(__file__).resolve().parents[1] / 'workflows/my-workflows' / '.problem-archives'
 
 
@@ -51,12 +49,9 @@ def _members(path: Path, suffixes=PROBLEM_SUFFIXES):
 def _archive_files(path: Path, materialize: bool, suffixes: tuple[str, ...], label: str) -> list[Path]:
     identity = f'{label}:{path.resolve()}:{path.stat().st_size}:{path.stat().st_mtime_ns}'
     destination = CACHE / hashlib.sha256(identity.encode()).hexdigest()[:20]
-    names, size = [], 0
-    for name, member_size, _ in _members(path, suffixes):
+    names = []
+    for name, _, _ in _members(path, suffixes):
         names.append(name)
-        size += member_size
-        if len(names) > MAX_FILES or size > MAX_UNCOMPRESSED:
-            raise ValueError(f'{label} archive is too large to extract safely: {path}')
     if not names:
         raise ValueError(f'Archive contains no {label.lower()} files ({", ".join(suffixes)}): {path}')
     if len(names) != len(set(names)):
@@ -65,15 +60,11 @@ def _archive_files(path: Path, materialize: bool, suffixes: tuple[str, ...], lab
         CACHE.mkdir(parents=True, exist_ok=True)
         temporary = Path(tempfile.mkdtemp(prefix='.extract-', dir=CACHE))
         try:
-            extracted_bytes = 0
             for name, _, opener in _members(path, suffixes):
                 target = temporary.joinpath(*name.parts)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with opener() as source, target.open('wb') as output:
                     while chunk := source.read(1024 * 1024):
-                        extracted_bytes += len(chunk)
-                        if extracted_bytes > MAX_UNCOMPRESSED:
-                            raise ValueError(f'{label} archive is too large to extract safely: {path}')
                         output.write(chunk)
             (temporary / '.complete').write_text('')
             if destination.exists():

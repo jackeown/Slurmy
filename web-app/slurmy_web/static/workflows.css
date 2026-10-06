@@ -267,9 +267,11 @@ dialog::backdrop { background: #102e2866; }
 #copy-configuration-dialog select, #copy-limiter-dialog select { width: 100%; }
 .copy-configuration-preview { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 6px; padding: 14px; min-height: 65px; }
 .copy-configuration-actions { justify-content: flex-end; }
-.path-browser { padding: 24px; }
-.path-location { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; }
-.path-items { display: grid; margin-top: 14px; max-height: 48vh; overflow: auto; border: 1px solid var(--line); border-radius: 7px; }
+#path-browser { height: min(680px, 82vh); overflow: hidden; }
+.path-browser { box-sizing: border-box; height: 100%; min-height: 0; padding: 24px; display: flex; flex-direction: column; }
+.path-location { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(120px, 180px) auto; gap: 8px; }
+.path-location input, .path-location select { min-width: 0; }
+.path-items { display: grid; align-content: start; flex: 1; min-height: 0; margin-top: 14px; overflow: auto; border: 1px solid var(--line); border-radius: 7px; }
 button.path-item { background: white; color: var(--ink); border: 0; border-bottom: 1px solid #edf0ea; border-radius: 0; text-align: left; font-weight: 500; }
 button.path-item:hover:not(:disabled) { background: #f2f7f3; }
 .path-browse { margin: -10px 0 8px; align-self: flex-start; padding: 7px 11px; }

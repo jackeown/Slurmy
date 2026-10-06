@@ -576,7 +576,8 @@ def create_app():
         if not path.is_dir():
             raise ValueError(f'Not an existing directory: {path}')
         try:
-            children = sorted(path.iterdir(), key=lambda item: (not item.is_dir(), item.name.casefold()))
+            children = sorted((item for item in path.iterdir() if not item.name.startswith('.')),
+                              key=lambda item: (not item.is_dir(), item.name.casefold()))
         except PermissionError:
             raise ValueError(f'Permission denied: {path}')
         items = []
