@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import csv
 from dataclasses import dataclass
-import glob
 import hashlib
 import json
 import math
@@ -17,6 +16,7 @@ import shlex
 import shutil
 import sys
 from typing import Sequence
+from slurmy_archives import expand_axiom_pattern
 
 VERSION = "1.0.0"
 COLUMNS = ("solver_name", "command", "solver_directory", "problem", "wc_limit", "cpu_limit", "mem_limit", "cores",
@@ -171,28 +171,21 @@ def read_builds(filename: Path, check_paths: bool = True) -> list[BuildSpec]:
 
 
 def read_axioms(filename: Path | None) -> tuple[list[Path], dict[Path, Path]]:
-    """Expand globs and map files into one job-local Axioms/ directory."""
+    """Expand globs/archives into one job-local Axioms/ directory."""
     if filename is None:
         return [], {}
-    files = set()
+    destinations = {}
     for line in filename.read_text(encoding='utf-8').splitlines():
         if not line.strip():
             continue
         pattern = str(path_at(line.strip(), filename.parent))
-        matches = {Path(name).resolve() for name in glob.glob(pattern, recursive=True) if Path(name).is_file()}
-        if not matches:
-            raise SlurmyError(f"axiom glob matched no files: {line}")
-        files.update(matches)
-    if not files:
+        for source, relative in expand_axiom_pattern(pattern):
+            if relative in destinations.values() and destinations.get(source) != relative:
+                raise SlurmyError(f'custom axioms would overwrite the same Axioms/{relative}; choose one source')
+            destinations[source] = relative
+    if not destinations:
         raise SlurmyError('axiom-globs.txt contains no axiom files')
-    destinations = {}
-    for file in files:
-        parts = file.parts
-        relative = Path(*parts[parts.index('Axioms') + 1:]) if 'Axioms' in parts else Path(file.name)
-        if relative in destinations.values():
-            raise SlurmyError(f'custom axioms would overwrite the same Axioms/{relative}; choose one source')
-        destinations[file] = relative
-    return sorted(files), destinations
+    return sorted(destinations), destinations
 
 
 def remote_path(path: Path) -> str:

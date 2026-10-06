@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import csv
-import glob
 import io
 import json
 from pathlib import Path, PurePosixPath
@@ -13,7 +12,7 @@ import tempfile
 import time
 
 from slurmy import COLUMNS, PAIR_ORDERS, generate, order_jobpairs, path_at, positive, read_builds, read_pairs
-from slurmy_archives import expand_problem_pattern
+from slurmy_archives import expand_axiom_pattern, expand_problem_pattern
 
 REPO = Path(__file__).resolve().parents[2]
 USER_RUNS = REPO / 'workflows/my-workflows'
@@ -142,8 +141,7 @@ def specification(data, destination_override=None):
         if not isinstance(value, str) or not value.strip():
             raise ValueError('Enter an axiom path or glob.')
         pattern = str(expand_repo_root(value.strip()) or path_at(value.strip(), BASE))
-        if not any(Path(name).is_file() for name in glob.glob(pattern, recursive=True)):
-            raise ValueError(f'No axiom files matched {pattern}')
+        expand_axiom_pattern(pattern, materialize=False)
         axiom_patterns.append(pattern)
     recipes = {}
     if data.get('building_mode') == 'existing':

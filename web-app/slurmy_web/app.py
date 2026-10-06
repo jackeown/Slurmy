@@ -559,11 +559,9 @@ def create_app():
         data = request.get_json()
         if data.get('kind') == 'glob':
             if data.get('role') == 'axiom':
-                import glob
                 pattern = str(workflows.path_at(data.get('value'), workflows.BASE))
-                matches = [name for name in glob.glob(pattern, recursive=True) if Path(name).is_file()]
-                if not matches:
-                    raise ValueError(f'No axiom files matched {pattern}')
+                from slurmy_archives import expand_axiom_pattern
+                matches = [str(path) for path, _ in expand_axiom_pattern(pattern, materialize=False)]
             else:
                 pattern, matches = workflows.problem_glob(data.get('value'), materialize=False)
             return jsonify(path=pattern, count=len(matches), sample=matches[:5])

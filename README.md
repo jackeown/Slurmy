@@ -452,10 +452,12 @@ your solver directory and `{{problem}}` for the selected input.
 
 A problem's containing directory is not automatically included. TPTP
 `include('Axioms/NAME.ax')` searches beneath the `TPTP` environment variable.
-By default Slurmy points it at the shared library; adding custom axiom globs
-instead copies selected files under a job-local `Axioms/` and points `TPTP`
-at its parent. Subpaths below a source `Axioms/` are preserved; other files
-are placed by basename, and duplicate destinations are rejected. The two
+By default Slurmy points it at the shared library; adding custom axiom paths,
+globs, ZIP files, or tar archives (`.tar.gz`, `.tgz`, `.tar.bz2`, `.tar.xz`)
+instead copies selected `.ax`, `.p`, and `.tptp` files under a job-local
+`Axioms/` and points `TPTP` at its parent. Subpaths below a source or archive
+`Axioms/` are preserved; other archive paths are preserved, while standalone
+files are placed by basename. Duplicate destinations are rejected. The two
 sources are not combined. For other dependencies,
 list their root in `building.txt` with a blank recipe. Package needed scripts, data, shared
 libraries, and interpreter environments similarly; a laptop's Python environment
