@@ -338,6 +338,8 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             (assets / "plans" / f"batch_{i:06d}.sh").write_text(config)
             if progress and ((i + 1) % 100 == 0 or i + 1 == len(batches)):
                 progress('batches', 'Generating Slurm batch plans', i + 1, len(batches))
+        if progress:
+            progress('phase', 'Finalizing submission files', 0, 0)
         for name in ("submit.sh", "remote_prepare.sh", "remote_submit.sh", "batch.sh", "call.sh", "timed_call.sh", "csv.sh", "workflow_name.sh"):
             source = REPO / "implementation/templates" / name
             destination = output if name == "submit.sh" else assets / name
@@ -410,8 +412,19 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
                 build_lines += [f'echo "Build progress: {number}/{build_total} resources (resource-{i})"', command]
         write_script(assets / "builds/run.sh", "\n".join(build_lines) + "\n")
         # NUL-separated paths allow spaces, commas, quotes and newlines.
+        if progress:
+            progress('phase', 'Collecting resource paths for packaging', 0, 0)
         entries = sorted(set([*roots, *axioms, *(Path(t['solver_root']) for t in tasks), *(Path(t["problem"]) for t in tasks)]))
-        entries = [p for p in entries if not any(p != other and p.is_relative_to(other) for other in entries)]
+        entry_set = set(entries)
+        selected = []
+        for index, path in enumerate(entries, 1):
+            if not any(parent in entry_set for parent in path.parents):
+                selected.append(path)
+            if progress and (index % 1000 == 0 or index == len(entries)):
+                progress('paths', 'Collecting resource paths for packaging', index, len(entries))
+        entries = selected
+        if progress:
+            progress('phase', 'Writing resource manifest', 0, 0)
         (assets / "archive-paths.txt").write_bytes(b"".join(str(p).lstrip("/").encode() + b"\0" for p in entries))
     except Exception:
         shutil.rmtree(assets)

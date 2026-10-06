@@ -107,6 +107,9 @@ The guided setup follows **Basics → Solvers → Problems → Limiter → Revie
   Saving does not build or submit anything.
 
 Path fields have a local file browser and are checked when you leave them.
+The browser remembers the last directory you visited. Large workflow previews
+show live scanning, extraction, and generation progress; **Cancel** stops
+preparation before workflow files start being saved.
 Relative paths entered in the form resolve from `workflows/my-workflows/`; paths in imported
 files resolve from those files' directories. Saved call/resource paths are
 absolute. Selecting a path does not upload or copy its contents.

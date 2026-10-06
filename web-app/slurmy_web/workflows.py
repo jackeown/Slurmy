@@ -229,6 +229,8 @@ def specification(data, destination_override=None, progress=None):
             progress('phase', 'Checking calls and generating submission scripts', 0, 0)
         generate(staging / 'jobpairs.csv', staging / 'building.txt', staging / 'resource_limiter_template.txt',
                  staging / 'axiom-globs.txt' if axiom_patterns else None, batch_size, progress=progress)
+    if progress:
+        progress('phase', 'Preparing workflow preview', 0, 0)
     files['Makefile'] = (f'REPO_ROOT := ../../..\nBATCH_SIZE := {batch_size}\n'
                          + (f'PAIR_ORDER := {pair_order}\n' if configs else '') +
                          f'SLURMY_HOST := {host}\n'
@@ -252,7 +254,7 @@ def save(data, destination=None, progress=None):
         data['_created_at'] = time.time()
     destination, files, count = specification(data, destination, progress)
     if progress:
-        progress('phase', 'Saving workflow files', 0, 0)
+        progress('committing', 'Saving workflow files', 0, 0)
     created = not destination.exists()
     if created:
         destination.mkdir(parents=True)  # Atomic refusal if another request created it.
@@ -289,7 +291,7 @@ def rename_and_save(data, source, progress=None):
 
     _, files, count = specification(data, source, progress)
     if progress:
-        progress('phase', 'Saving workflow files', 0, 0)
+        progress('committing', 'Saving workflow files', 0, 0)
     previous = []
     old_manifest = source / '.slurmy-workflow.json'
     if old_manifest.is_file():

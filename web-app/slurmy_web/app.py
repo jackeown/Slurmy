@@ -29,6 +29,10 @@ REPO = workflows.REPO
 STATE = REPO / 'web-app/.state'
 
 
+class BuilderCancelled(Exception):
+    """A local workflow preparation was cancelled before saving began."""
+
+
 def safe_job(value):
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', value):
         raise ValueError('Invalid job ID.')
@@ -247,6 +251,8 @@ def create_app():
                       TRUSTED_HOSTS=['127.0.0.1', 'localhost'])
     cache, locks, operations, announced_jobs = {}, {}, {}, {}
     guard = threading.Lock()
+    builder_lock = threading.Lock()
+    builder_operations = {}
 
     @app.before_request
     def local_only():
@@ -596,8 +602,18 @@ def create_app():
         """Stream local builder progress without blocking its HTTP response."""
         events = queue.Queue()
         last_update = [0.0]
+        operation_id = secrets.token_urlsafe(18)
+        operation = {'cancel': threading.Event(), 'committing': False}
+        with builder_lock:
+            builder_operations[operation_id] = operation
+        events.put(dict(type='started', id=operation_id))
 
         def progress(phase, path, completed, total):
+            with builder_lock:
+                if operation['cancel'].is_set():
+                    raise BuilderCancelled()
+                if phase == 'committing':
+                    operation['committing'] = True
             now = time.monotonic()
             if phase in ('extracting', 'scanning') and completed not in (0, total) and now - last_update[0] < 0.15:
                 return
@@ -608,24 +624,44 @@ def create_app():
         def run():
             try:
                 events.put(dict(type='result', **work(progress)))
+            except BuilderCancelled:
+                events.put(dict(type='cancelled'))
             except Exception as exc:
                 events.put(dict(type='error', error=str(exc)))
+            finally:
+                with builder_lock:
+                    builder_operations.pop(operation_id, None)
 
         threading.Thread(target=run, daemon=True).start()
 
         def output():
-            while True:
-                try:
-                    event = events.get(timeout=15)
-                except queue.Empty:
-                    yield json.dumps({'type': 'heartbeat'}) + '\n'
-                    continue
-                yield json.dumps(event) + '\n'
-                if event['type'] in ('result', 'error'):
-                    break
+            try:
+                while True:
+                    try:
+                        event = events.get(timeout=15)
+                    except queue.Empty:
+                        yield json.dumps({'type': 'heartbeat'}) + '\n'
+                        continue
+                    yield json.dumps(event) + '\n'
+                    if event['type'] in ('result', 'error', 'cancelled'):
+                        break
+            finally:
+                operation['cancel'].set()
 
         return Response(output(), mimetype='application/x-ndjson',
                         headers={'X-Accel-Buffering': 'no'})
+
+    @app.post('/api/builder/cancel')
+    def cancel_builder():
+        operation_id = (request.get_json() or {}).get('id')
+        if not isinstance(operation_id, str):
+            raise ValueError('Choose a workflow preparation to cancel.')
+        with builder_lock:
+            operation = builder_operations.get(operation_id)
+            if not operation or operation['committing']:
+                return jsonify(cancelled=False)
+            operation['cancel'].set()
+        return jsonify(cancelled=True)
 
     def preview_files(data, target, progress=None):
         destination, files, count = workflows.specification(data, target, progress)
