@@ -18,6 +18,7 @@ from datetime import datetime
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, session, send_file, url_for
 from werkzeug.exceptions import HTTPException
+from slurmy_archives import is_archive
 
 from .monitor import RemoteCollector
 from .launcher import web_version
@@ -577,7 +578,7 @@ def create_app():
             raise ValueError(f'Not an existing directory: {path}')
         try:
             children = sorted((item for item in path.iterdir() if not item.name.startswith('.')),
-                              key=lambda item: (not item.is_dir(), item.name.casefold()))
+                              key=lambda item: (not item.is_dir(), not is_archive(item), item.name.casefold()))
         except PermissionError:
             raise ValueError(f'Permission denied: {path}')
         items = []
