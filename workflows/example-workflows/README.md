@@ -17,7 +17,7 @@ After completing the main README's setup, run `python web-app/main.py` from the
 repository root. Open **Workflows → Example workflows**, choose an example, and
 use **Prepare & dispatch job**, or open its arrow menu for dispatch-only or
 prepare-only. To change the
-settings, duplicate the example into `workflows/my-workflows` and select **Edit settings**.
+settings, duplicate the example into `workflows/my-workflows` and select **Edit workflow**.
 Solver commands and builds are together under Solvers; the limiter's invocation
 and build are together under Limiter.
 

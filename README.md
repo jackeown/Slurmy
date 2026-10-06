@@ -118,7 +118,7 @@ On a workflow page:
 | Prepare & dispatch job (main button) | Refresh submission scripts, build declared resources on compute nodes, download them, then submit the batches. |
 | Dispatch prepared job (arrow menu) | Use the existing `submit.sh` and helper files as-is; do not regenerate them. |
 | Prepare only (arrow menu) | Create or refresh submission scripts locally without dispatching. |
-| Edit settings | Revisit the saved form choices, including the name. |
+| Edit workflow | Revisit the saved form choices, including the name. |
 | Duplicate workflow | Create an independent user workflow from an example or an existing workflow. |
 | Delete workflow | Move a user workflow to `workflows/my-workflows/.deleted-workflows/` for recovery. |
 
