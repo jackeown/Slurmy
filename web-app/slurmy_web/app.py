@@ -7,6 +7,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import queue
 import re
 import secrets
 import shutil
@@ -16,7 +17,7 @@ import threading
 import time
 from datetime import datetime
 
-from flask import Flask, abort, jsonify, redirect, render_template, request, session, send_file, url_for
+from flask import Flask, Response, abort, jsonify, redirect, render_template, request, session, send_file, url_for
 from werkzeug.exceptions import HTTPException
 from slurmy_archives import is_archive
 
@@ -591,17 +592,69 @@ def create_app():
         return jsonify(directory=str(path), parent=str(path.parent), items=items,
                        truncated=len(children) > 1000)
 
+    def builder_stream(work):
+        """Stream local builder progress without blocking its HTTP response."""
+        events = queue.Queue()
+        last_update = [0.0]
+
+        def progress(phase, path, completed, total):
+            now = time.monotonic()
+            if phase in ('extracting', 'scanning') and completed not in (0, total) and now - last_update[0] < 0.15:
+                return
+            last_update[0] = now
+            events.put(dict(type='progress', phase=phase, path=path,
+                            completed=completed, total=total))
+
+        def run():
+            try:
+                events.put(dict(type='result', **work(progress)))
+            except Exception as exc:
+                events.put(dict(type='error', error=str(exc)))
+
+        threading.Thread(target=run, daemon=True).start()
+
+        def output():
+            while True:
+                try:
+                    event = events.get(timeout=15)
+                except queue.Empty:
+                    yield json.dumps({'type': 'heartbeat'}) + '\n'
+                    continue
+                yield json.dumps(event) + '\n'
+                if event['type'] in ('result', 'error'):
+                    break
+
+        return Response(output(), mimetype='application/x-ndjson',
+                        headers={'X-Accel-Buffering': 'no'})
+
+    def preview_files(data, target, progress=None):
+        destination, files, count = workflows.specification(data, target, progress)
+        preview_limit = 40_000
+        visible = {name: body if len(body) <= preview_limit else
+                   body[:preview_limit] + '\n… Preview truncated; the complete file will be saved.\n'
+                   for name, body in files.items()}
+        return dict(directory=str(destination), count=count, files=visible)
+
     @app.post('/api/preview')
     def preview():
         target = directory() if request.args.get('directory') else None
-        destination, files, count = workflows.specification(request.get_json(), target)
-        return jsonify(directory=str(destination), count=count, files=files)
+        data = request.get_json()
+        if request.args.get('stream') == '1':
+            return builder_stream(lambda progress: preview_files(data, target, progress))
+        return jsonify(preview_files(data, target))
 
     @app.post('/api/workflows')
     @app.post('/api/experiments')
     def save():
+        data = request.get_json()
+        if request.args.get('stream') == '1':
+            def work(progress):
+                with guard:
+                    destination, count = workflows.save(data, progress=progress)
+                return dict(directory=str(destination), count=count)
+            return builder_stream(work)
         with guard:
-            destination, count = workflows.save(request.get_json())
+            destination, count = workflows.save(data)
         return jsonify(directory=str(destination), count=count), 201
 
     @app.post('/api/workflows/update')
@@ -610,6 +663,12 @@ def create_app():
         if path.parent != workflows.USER_RUNS.resolve():
             raise ValueError('Duplicate an example before editing it.')
         data = request.get_json() or {}
+        if request.args.get('stream') == '1':
+            def work(progress):
+                with guard:
+                    destination, count = workflows.rename_and_save(data, path, progress)
+                return dict(directory=str(destination), count=count)
+            return builder_stream(work)
         with guard:
             destination, count = workflows.rename_and_save(data, path)
         return jsonify(directory=str(destination), count=count)

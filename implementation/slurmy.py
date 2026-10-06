@@ -170,16 +170,18 @@ def read_builds(filename: Path, check_paths: bool = True) -> list[BuildSpec]:
     return builds
 
 
-def read_axioms(filename: Path | None) -> tuple[list[Path], dict[Path, Path]]:
+def read_axioms(filename: Path | None, progress=None) -> tuple[list[Path], dict[Path, Path]]:
     """Expand globs/archives into one job-local Axioms/ directory."""
     if filename is None:
         return [], {}
+    if progress:
+        progress('phase', 'Finding selected axioms and inspecting archives', 0, 0)
     destinations = {}
     for line in filename.read_text(encoding='utf-8').splitlines():
         if not line.strip():
             continue
         pattern = str(path_at(line.strip(), filename.parent))
-        for source, relative in expand_axiom_pattern(pattern):
+        for source, relative in expand_axiom_pattern(pattern, progress=progress):
             if relative in destinations.values() and destinations.get(source) != relative:
                 raise SlurmyError(f'custom axioms would overwrite the same Axioms/{relative}; choose one source')
             destinations[source] = relative
@@ -224,11 +226,13 @@ def write_script(path: Path, content: str) -> None:
 
 
 def generate(jobpairs: Path, building: Path, limiter_file: Path,
-             axioms_file: Path | None = None, batch_size: int = 1) -> Path:
+             axioms_file: Path | None = None, batch_size: int = 1, progress=None) -> Path:
     tasks = read_pairs(jobpairs)
     positive(str(batch_size), 'batch size')
     builds = read_builds(building)
-    axioms, axiom_destinations = read_axioms(axioms_file)
+    axioms, axiom_destinations = read_axioms(axioms_file, progress)
+    if progress:
+        progress('phase', 'Generating submission scripts', 0, 0)
     limiter = limiter_file.read_text(encoding="utf-8").strip()
     if not limiter or "{{solver_command}}" not in limiter:
         raise SlurmyError("resource_limiter_template.txt must contain {{solver_command}}")
@@ -288,7 +292,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
                     "buffers": {"per_call_seconds": 30, "per_call_memory_mib": 128, "batch_seconds": 60}}
         (assets / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
         (assets / "manifest.jsonl").write_text("".join(json.dumps(t) + "\n" for t in tasks))
-        for task in tasks:
+        for index, task in enumerate(tasks, 1):
             call = assets / "calls" / str(task["task_id"])
             call.mkdir()
             write_script(call / "solver.sh", "#!/usr/bin/env bash\n" +
@@ -320,6 +324,8 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
                     "tptp_root_rel": '.slurmy-tptp' if axioms else '',
                     "tptp_default_root": os.environ.get('SLURMY_TPTP_ROOT', '/share/Slurmy-TPTP-v9.2.1')}.items())
             (call / "config.sh").write_text(config)
+            if progress and (index % 100 == 0 or index == len(tasks)):
+                progress('calls', 'Generating solver call scripts', index, len(tasks))
         for i, batch in enumerate(batches):
             config = shell_array("TASK_IDS", [t["task_id"] for t in batch])
             for name, key in (("TASK_CORES", "cores"), ("TASK_CPUS", "cpus"), ("TASK_WALL", "wc_limit")):
@@ -330,6 +336,8 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             config += f"WALL_SECONDS={60 + sum(t['wc_limit'] + 30 for t in batch)}\n"
             config += f"MAX_CORES={max(t['cores'] for t in batch)}\nMAX_CPUS={max(t['cpus'] for t in batch)}\n"
             (assets / "plans" / f"batch_{i:06d}.sh").write_text(config)
+            if progress and ((i + 1) % 100 == 0 or i + 1 == len(batches)):
+                progress('batches', 'Generating Slurm batch plans', i + 1, len(batches))
         for name in ("submit.sh", "remote_prepare.sh", "remote_submit.sh", "batch.sh", "call.sh", "timed_call.sh", "csv.sh", "workflow_name.sh"):
             source = REPO / "implementation/templates" / name
             destination = output if name == "submit.sh" else assets / name

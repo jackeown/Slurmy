@@ -46,11 +46,11 @@ def expand_repo_root(value):
     return None
 
 
-def problem_glob(value, materialize=True):
+def problem_glob(value, materialize=True, progress=None):
     if not isinstance(value, str) or not value.strip():
         raise ValueError('Enter a problem path or glob.')
     pattern = str(expand_repo_root(value.strip()) or path_at(value.strip(), BASE))
-    files = [str(path) for path in expand_problem_pattern(pattern, materialize)]
+    files = [str(path) for path in expand_problem_pattern(pattern, materialize, progress)]
     return pattern, files
 
 
@@ -82,7 +82,7 @@ def imported_rows(filename, configurations=False, check_paths=True):
     return rows
 
 
-def specification(data, destination_override=None):
+def specification(data, destination_override=None, progress=None):
     data = dict(data)
     data['resources'] = [{**entry, 'role': 'solver' if entry.get('role') == 'prover' else entry.get('role')}
                          for entry in data.get('resources', [])]
@@ -124,8 +124,10 @@ def specification(data, destination_override=None):
             if len(names) != len(set(names)):
                 raise ValueError('Give each solver configuration a distinct name.')
         problems = set()
+        if progress:
+            progress('phase', 'Finding selected problems and inspecting archives', 0, 0)
         for value in data.get('globs', []):
-            pattern, matches = problem_glob(value)
+            pattern, matches = problem_glob(value, progress=progress)
             patterns.append(pattern)
             problems.update(matches)
         if not problems:
@@ -223,8 +225,10 @@ def specification(data, destination_override=None):
         for filename, body in files.items():
             (staging / filename).write_text(body, encoding='utf-8')
         (staging / 'building.txt').write_text(building_text(staging))
+        if progress:
+            progress('phase', 'Checking calls and generating submission scripts', 0, 0)
         generate(staging / 'jobpairs.csv', staging / 'building.txt', staging / 'resource_limiter_template.txt',
-                 staging / 'axiom-globs.txt' if axiom_patterns else None, batch_size)
+                 staging / 'axiom-globs.txt' if axiom_patterns else None, batch_size, progress=progress)
     files['Makefile'] = (f'REPO_ROOT := ../../..\nBATCH_SIZE := {batch_size}\n'
                          + (f'PAIR_ORDER := {pair_order}\n' if configs else '') +
                          f'SLURMY_HOST := {host}\n'
@@ -242,11 +246,13 @@ def specification(data, destination_override=None):
     return destination, files, len(rows)
 
 
-def save(data, destination=None):
+def save(data, destination=None, progress=None):
     data = dict(data)
     if '_created_at' not in data:
         data['_created_at'] = time.time()
-    destination, files, count = specification(data, destination)
+    destination, files, count = specification(data, destination, progress)
+    if progress:
+        progress('phase', 'Saving workflow files', 0, 0)
     created = not destination.exists()
     if created:
         destination.mkdir(parents=True)  # Atomic refusal if another request created it.
@@ -265,7 +271,7 @@ def save(data, destination=None):
     return destination, count
 
 
-def rename_and_save(data, source):
+def rename_and_save(data, source, progress=None):
     """Validate, rename, and update a workflow while retaining its former paths."""
     name = data.get('name', '')
     if not isinstance(name, str) or not re.fullmatch(r'[a-z0-9][a-z0-9-]*', name):
@@ -277,11 +283,13 @@ def rename_and_save(data, source):
             previous = json.loads(manifest.read_text(encoding='utf-8')).get('_previous_directories', [])
             if previous:
                 data = {**data, '_previous_directories': previous}
-        return save(data, source)
+        return save(data, source, progress)
     if destination.exists():
         raise ValueError(f'Workflow already exists: {destination}')
 
-    _, files, count = specification(data, source)
+    _, files, count = specification(data, source, progress)
+    if progress:
+        progress('phase', 'Saving workflow files', 0, 0)
     previous = []
     old_manifest = source / '.slurmy-workflow.json'
     if old_manifest.is_file():
