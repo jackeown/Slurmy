@@ -44,6 +44,7 @@ REMOTE_SNAPSHOT_SCRIPT = r"""
 set -u
 
 DETAIL=${1:-}
+SINCE=${2:-}
 BASE="$HOME/slurmy/jobs"
 
 printf 'REMOTE_HOME\0%s\0' "$BASE"
@@ -54,6 +55,14 @@ if [[ ! -d "$BASE" ]]; then
 fi
 
 shopt -s nullglob
+# Progress is one small file per call. Forking `cat` for every file makes a
+# large job's refresh exceed the web request timeout even while Slurm advances.
+emit_file() {
+    local line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        printf '%s\n' "$line"
+    done < "$1"
+}
 job_dirs=("$BASE"/*)
 if [[ -z "$DETAIL" ]]; then
     for directory in "${job_dirs[@]}"; do
@@ -79,7 +88,14 @@ for directory in "${job_dirs[@]}"; do
         printf '\0'
     fi
 
-    csv_results=("$directory"/results/batch_*.csv)
+    # New jobs keep one compact index per sequential batch. Opening every
+    # per-call CSV on NFS makes a large job's refresh time out.
+    indexed_results=("$directory"/results/index-legacy/batch_*.csv "$directory"/results/index/batch_*.csv)
+    if [[ -f "$directory/results/index/.ready" ]]; then
+        csv_results=("${indexed_results[@]}")
+    else
+        csv_results=("$directory"/results/batch_*.csv)
+    fi
     # Keep TSV and pre-batch JSONL jobs readable in the historical dashboard.
     tsv_results=("$directory"/results/batch_*.tsv "$directory"/results/chunk_*.tsv)
     if (( ${#csv_results[@]} )); then
@@ -167,25 +183,27 @@ for directory in "${job_dirs[@]}"; do
         fi
     fi
 
-    for progress_file in "$directory"/progress/task_*.csv; do
-        printf 'CALL_PROGRESS\0%s\0' "$job"
-        cat "$progress_file"
-        printf '\0'
-    done
+    if [[ ! -f "$directory/results/index/.ready" ]]; then
+        for progress_file in "$directory"/progress/task_*.csv; do
+            printf 'CALL_PROGRESS\0%s\0' "$job"
+            emit_file "$progress_file"
+            printf '\0'
+        done
+    fi
     csv_progress=("$directory"/progress/batch_*.csv)
     tsv_progress=("$directory"/progress/batch_*.tsv "$directory"/progress/chunk_*.tsv)
     if (( ${#csv_progress[@]} )); then
         printf 'PROGRESS_CSV\0%s\0' "$job"
         for progress_file in "${csv_progress[@]}"; do
             printf '"%s",' "${progress_file##*/}"
-            cat "$progress_file"
+            emit_file "$progress_file"
         done
         printf '\0'
     elif (( ${#tsv_progress[@]} )); then
         printf 'PROGRESS_TSV\0%s\0' "$job"
         for progress_file in "${tsv_progress[@]}"; do
             printf '%s\t' "${progress_file##*/}"
-            cat "$progress_file"
+            emit_file "$progress_file"
         done
         printf '\0'
     fi
@@ -225,9 +243,16 @@ for directory in "${job_dirs[@]}"; do
     fi
 
     if [[ "$job" == "$DETAIL" ]]; then
+        detail_csv_results=("${csv_results[@]}")
+        if [[ -n "$SINCE" && -f "$directory/results/index/.ready" ]]; then
+            mapfile -d '' -t detail_csv_results < <(
+                find "$directory/results/index" -maxdepth 1 -type f -name 'batch_*.csv' \
+                    -newermt "@$SINCE" -print0
+            )
+        fi
         if (( ${#csv_results[@]} )); then
             printf 'RESULTS_CSV\0%s\0' "$job"
-            cat "${csv_results[@]}"
+            if (( ${#detail_csv_results[@]} )); then cat "${detail_csv_results[@]}"; fi
             printf '\0'
         elif (( ${#tsv_results[@]} )); then
             printf 'RESULTS_TSV\0%s\0' "$job"
@@ -240,14 +265,17 @@ for directory in "${job_dirs[@]}"; do
             cat "${legacy_results[@]}"
             printf '\0'
         fi
-        if [[ -f "$directory/manifest.jsonl" ]]; then
+        if [[ -f "$directory/manifest.jsonl" && ( -z "$SINCE" || ! -f "$directory/results/index/.ready" ) ]]; then
             printf 'MANIFEST\0%s\0' "$job"
             cat "$directory/manifest.jsonl"
             printf '\0'
         fi
 
-        batch_files=("$directory"/batches/batch_*.sh "$directory"/chunks/chunk_*.sh)
-        for batch_file in "${batch_files[@]}"; do
+        # Modern metadata already lists every task's batch. Legacy jobs need
+        # their batch scripts scanned to reconstruct that mapping.
+        if [[ ! -f "$directory/metadata.json" ]] || ! grep -q '"planned_batch_tasks"' "$directory/metadata.json"; then
+          batch_files=("$directory"/batches/batch_*.sh "$directory"/chunks/chunk_*.sh)
+          for batch_file in "${batch_files[@]}"; do
             (
                 set +u
                 source "$batch_file"
@@ -269,7 +297,8 @@ for directory in "${job_dirs[@]}"; do
                         "${TASK_SOLVER_ROOT_RELS[$index]}"
                 done
             )
-        done
+          done
+        fi
 
         log_count=0
         log_files=("$directory"/logs/*.out)
@@ -1042,7 +1071,7 @@ class RemoteCollector:
         self.host = host
         self.timeout = timeout
 
-    def fetch(self, detail_job: str | None) -> ClusterSnapshot:
+    def fetch(self, detail_job: str | None, since_epoch: float | None = None) -> ClusterSnapshot:
         if shutil.which("ssh") is None:
             raise RuntimeError("ssh is not installed or not on PATH")
         command = [
@@ -1058,6 +1087,7 @@ class RemoteCollector:
             "-s",
             "--",
             detail_job or "",
+            str(max(0, int(since_epoch))) if since_epoch is not None else "",
         ]
         try:
             process = subprocess.run(

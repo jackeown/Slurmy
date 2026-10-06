@@ -154,7 +154,7 @@ if(page==='workflow'){
  api('/api/workflow/active-operation?'+params({directory:document.body.dataset.directory})).then(data=>{const id=data.operation;if(id){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===id;watchOperation(id);}}).catch(()=>{if(runningOperation){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===runningOperation;watchOperation(runningOperation);}});
 }else if(runningOperation){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===runningOperation;watchOperation(runningOperation);}
 
-let jobs=[], taskPage=0, problemPage=0, jobsPage=0, jobData=null, selectedOutput=null, hasLoadedRemote=false, refreshInFlight=false, refreshQueued=false, staleTimer=null, lastLoadedAt=null;
+let jobs=[], taskPage=0, problemPage=0, jobsPage=0, jobData=null, selectedOutput=null, hasLoadedRemote=false, refreshInFlight=false, refreshQueued=false, refreshQueuedFresh=false, staleTimer=null, lastLoadedAt=null, autoRefreshTotal=0, autoRefreshPercent=0;
 restoreTableUrl();
 function pendingJobs(){try{return JSON.parse(sessionStorage.getItem('slurmy-pending-jobs')||'[]').filter(job=>job.host===host&&Date.now()-job.created<3600000);}catch{return [];}}
 function savePendingJobs(value){sessionStorage.setItem('slurmy-pending-jobs',JSON.stringify(value));}
@@ -185,7 +185,12 @@ function remoteState(state){for(const panel of [$('#remote-data'),$('#results-ov
 function loadingRow(body,columns,message,failed=false){body.replaceChildren();const row=el('tr');row.className=failed?'loading-row failed-row':'loading-row';const cell=el('td');cell.colSpan=columns;if(!failed)cell.append(el('span','', 'spinner'));cell.append(document.createTextNode(' '+message));row.append(cell);body.append(row);}
 function beginRefresh(){clearTimeout(staleTimer);remoteState(hasLoadedRemote?'refreshing':'loading');const refresh=$('#refresh');if(refresh){refresh.disabled=true;refresh.textContent='↻ Refreshing…';}if(hasLoadedRemote)text('#connection',`Refreshing data from ${host}… Previously loaded data remains visible.`);}
 function finishRefresh(){remoteState('');const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Refresh';}}
-function scheduleStaleWarning(){clearTimeout(staleTimer);lastLoadedAt=new Date();staleTimer=setTimeout(()=>{if(hasLoadedRemote&&!refreshInFlight){remoteState('stale');text('#connection',`Data may be stale · last successful refresh ${lastLoadedAt.toLocaleTimeString()} · automatic refresh is delayed`);}},25000);}
+function scheduleStaleWarning(){
+ clearTimeout(staleTimer);lastLoadedAt=new Date();
+ if((page==='job'||page==='problem')&&autoRefreshPercent>=100)return;
+ const delay=(page==='job'||page==='problem')&&autoRefreshTotal>10000?75000:25000;
+ staleTimer=setTimeout(()=>{if(hasLoadedRemote&&!refreshInFlight){remoteState('stale');text('#connection',`Data may be stale · last successful refresh ${lastLoadedAt.toLocaleTimeString()} · automatic refresh is delayed`);}},delay);
+}
 function renderJobs(){
  const query=$('#job-filter')?.value.toLowerCase()||'';
  const remoteIds=new Set(jobs.map(job=>job.id));
@@ -231,17 +236,19 @@ function openDiagnostic(task){
 function renderOutput(){if(!selectedOutput)return;const stream=selectedOutput.streams[$('#stream').value];text('#output-text',stream?.exists?(stream.content||'(Empty file)'):'(No file was saved)');text('#output-info',`${stream?.explanation||'Stream unavailable.'}${stream?.exists?` · ${memory(stream.size)}`:''}${stream?.truncated?' · Truncated: beginning and end shown':''}`);}
 $('#stream')?.addEventListener('change',renderOutput);
 $('#close-output')?.addEventListener('click',()=>{$('#call-output').hidden=true;selectedOutput=null;});
-async function fetchJob(){
+async function fetchJob(fresh=false){
  const jobId=document.body.dataset.job;
  const perPage=pageSize('#task-page-size'),requestedPage=taskPage,sort=tableSort.tasks.key,direction=tableSort.tasks.direction,query=$('#task-filter').value;
- const data=await api(`/api/jobs/${encodeURIComponent(jobId)}?`+params({page:requestedPage,per_page:perPage,sort,direction,q:query}));
+ const data=await api(`/api/jobs/${encodeURIComponent(jobId)}?`+params({page:requestedPage,per_page:perPage,sort,direction,q:query,fresh:fresh?'1':'0'}));
  if(requestedPage!==taskPage||perPage!==pageSize('#task-page-size')||sort!==tableSort.tasks.key||direction!==tableSort.tasks.direction||query!==$('#task-filter').value){refreshQueued=true;return;}
  jobData=data;
+ autoRefreshTotal=data.total;autoRefreshPercent=data.percent;
  const lastPage=Math.max(0,Math.ceil(data.matched/perPage)-1);if(taskPage>lastPage){taskPage=lastPage;syncTableUrl();return fetchJob();}
  syncTableUrl();
  const submission=data.submission_state==='submitting'?` · submitting batches ${data.submitted_batches}/${data.batch_count}`:data.submission_state==='failed'?' · batch submission stopped before all calls were queued':'';
  text('#job-display-name',data.name);document.title=`${data.name} · Slurmy`;
- text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()}${submission} · completion counts finished calls, not proof-search progress`);
+ const refreshNote=data.percent>=100?' · auto-refresh off (100% complete)':data.total>10000?' · auto-refreshes every 30 seconds':' · auto-refreshes every 10 seconds';
+ text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()}${submission}${refreshNote} · completion counts finished calls, not proof-search progress`);
  text('#stat-state',data.state);text('#stat-done',`${data.completed} / ${data.total}`);text('#stat-percent',data.percent.toFixed(1)+'%');text('#stat-issues',data.issues);
  renderOutcomes(data.outcomes);
  const tasks=$('#tasks-body');tasks.replaceChildren();
@@ -251,12 +258,13 @@ async function fetchJob(){
  const selected=new URLSearchParams(location.search).get('call');if(selected&&data.tasks.some(task=>String(task.id)===selected)){const url=new URL(location.href);url.searchParams.delete('call');history.replaceState(null,'',url);openOutput(data.tasks.find(task=>String(task.id)===selected));}
  const diagnostic=new URLSearchParams(location.search).get('diagnostic');if(diagnostic&&data.tasks.some(task=>String(task.id)===diagnostic)){const url=new URL(location.href);url.searchParams.delete('diagnostic');history.replaceState(null,'',url);openDiagnostic(data.tasks.find(task=>String(task.id)===diagnostic));}
 }
-async function fetchProblem(){
+async function fetchProblem(fresh=false){
  const jobId=document.body.dataset.job, taskId=document.body.dataset.task;
  const perPage=pageSize('#problem-page-size'),requestedPage=problemPage,sort=tableSort.problem.key,direction=tableSort.problem.direction;
- const data=await api(`/api/jobs/${encodeURIComponent(jobId)}/problems/${taskId}?`+params({page:requestedPage,per_page:perPage,sort,direction}));
+ const data=await api(`/api/jobs/${encodeURIComponent(jobId)}/problems/${taskId}?`+params({page:requestedPage,per_page:perPage,sort,direction,fresh:fresh?'1':'0'}));
  if(requestedPage!==problemPage||perPage!==pageSize('#problem-page-size')||sort!==tableSort.problem.key||direction!==tableSort.problem.direction){refreshQueued=true;return;}
  const lastPage=Math.max(0,Math.ceil(data.matched/perPage)-1);if(problemPage>lastPage){problemPage=lastPage;syncTableUrl();return fetchProblem();}
+ autoRefreshTotal=data.total;autoRefreshPercent=data.percent;
  syncTableUrl();
  text('#problem-name',data.problem.split('/').pop());text('#problem-path',data.problem);
  const source=$('#problem-text');
@@ -276,15 +284,16 @@ async function fetchProblem(){
  for(const task of data.tasks){const inspect=task.output?link('Inspect →',`/jobs/${encodeURIComponent(jobId)}?`+params({call:task.id})):task.diagnostic?link('Inspect log →',`/jobs/${encodeURIComponent(jobId)}?`+params({diagnostic:task.id})):'—';body.append(tableRow([String(task.id),task.solver||'—',badge(task.state),task.will_run||'—',task.reason||'—',duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
  text('#problem-page-label',`${data.matched} calls ·`);$('#problem-page').value=problemPage+1;$('#problem-page').max=lastPage+1;text('#problem-page-count',lastPage+1);
  $('#problem-previous').disabled=problemPage===0;$('#problem-next').disabled=(problemPage+1)*perPage>=data.matched;
- text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()} · ${data.matched} calls on this problem`);
+ const refreshNote=data.percent>=100?'auto-refresh off (100% complete)':data.total>10000?'auto-refreshes every 30 seconds':'auto-refreshes every 10 seconds';
+ text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()} · ${data.matched} calls on this problem · ${refreshNote}`);
 }
-async function refresh(){
- if(refreshInFlight){refreshQueued=true;return;}refreshInFlight=true;beginRefresh();
- try{if(page==='jobs'||page==='workflow')await fetchJobs();else if(page==='job')await fetchJob();else if(page==='problem')await fetchProblem();hasLoadedRemote=true;finishRefresh();scheduleStaleWarning();}
+async function refresh(fresh=false){
+ if(refreshInFlight){refreshQueued=true;refreshQueuedFresh ||= fresh;return;}refreshInFlight=true;beginRefresh();
+ try{if(page==='jobs'||page==='workflow')await fetchJobs();else if(page==='job')await fetchJob(fresh);else if(page==='problem')await fetchProblem(fresh);hasLoadedRemote=true;finishRefresh();scheduleStaleWarning();}
  catch(error){remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check your SSH access or VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),10,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='problem')loadingRow($('#problem-tasks-body'),9,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='jobs'||page==='workflow')loadingRow($('#jobs-body'),6,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
- finally{refreshInFlight=false;if(refreshQueued){refreshQueued=false;queueMicrotask(refresh);}}
+ finally{refreshInFlight=false;if(refreshQueued){const queuedFresh=refreshQueuedFresh;refreshQueued=false;refreshQueuedFresh=false;queueMicrotask(()=>refresh(queuedFresh));}}
 }
-$('#refresh')?.addEventListener('click',refresh);
+$('#refresh')?.addEventListener('click',()=>refresh(true));
 $('#job-filter')?.addEventListener('input',()=>{jobsPage=0;syncTableUrl();if(hasLoadedRemote)renderJobs();});
 let searchTimer;$('#task-filter')?.addEventListener('input',()=>{taskPage=0;syncTableUrl();clearTimeout(searchTimer);searchTimer=setTimeout(refresh,300);});
 for(const [id,kind] of [['#task-page-size','tasks'],['#problem-page-size','problem'],['#jobs-page-size','jobs']])$(id)?.addEventListener('change',event=>{event.currentTarget.value=pageSize(id);if(kind==='tasks'){taskPage=0;syncTableUrl(true);refresh();}else if(kind==='problem'){problemPage=0;syncTableUrl(true);refresh();}else{jobsPage=0;syncTableUrl(true);renderJobs();}});
@@ -326,4 +335,9 @@ $('#delete-workflow')?.addEventListener('click',event=>{
 document.querySelectorAll('.delete-workflow-card').forEach(control=>control.addEventListener('click',()=>{
  deleteWorkflow(control.dataset.directory,control.dataset.name,control);
 }));
-async function poll(){await refresh();setTimeout(poll,10000);}if(['jobs','job','workflow','problem'].includes(page))poll();
+async function poll(){
+ await refresh(true);
+ if((page==='job'||page==='problem')&&autoRefreshPercent>=100)return;
+ const interval=(page==='job'||page==='problem')&&autoRefreshTotal>10000?30000:10000;
+ setTimeout(poll,interval);
+}if(['jobs','job','workflow','problem'].includes(page))poll();

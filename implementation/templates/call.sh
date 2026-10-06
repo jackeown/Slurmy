@@ -26,10 +26,13 @@ export VAR_FILE="$work/$stem.var"
 export CONTROLLER_LOG="$work/$stem.controller.log"
 export TIMING_LOG="$work/time"
 progress="$JOB_DIR/progress/task_$TASK_ID.csv"
+batch_progress=$(printf '%s/progress/batch_%06d.csv' "$JOB_DIR" "$BATCH_ID")
 started=$(date +%s)
 publish_progress() {
     csv_row "$1" "$TASK_ID" "$started" "$(date +%s)" "$BATCH_ID" > "$progress.tmp"
     mv "$progress.tmp" "$progress"
+    csv_row "$1" "$TASK_ID" "$started" "$(date +%s)" 0 > "$batch_progress.tmp"
+    mv "$batch_progress.tmp" "$batch_progress"
 }
 publish_progress running
 active=
@@ -108,10 +111,27 @@ archive="batch_${BATCH_ID}_${stem}_${SLURM_JOB_ID:-local}_$(date +%s).tar.gz"
 tar -czf "$JOB_DIR/results/.$archive.tmp" -C "$work" .
 mv "$JOB_DIR/results/.$archive.tmp" "$JOB_DIR/results/$archive"
 result=$(printf '%s/results/batch_%06d_task_%09d.csv' "$JOB_DIR" "$BATCH_ID" "$TASK_ID")
+result_row=$(csv_row "$TASK_ID" "$complete" "$status" "$code" "$wall" "$cpu" "$user" "$system" "$cpu_usage" "$max_vm" "$memory" "${timed_out:-false}" "${memory_out:-false}" "$TASK_KEY" "$archive" "$szs_status")
 {
     csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status
-    csv_row "$TASK_ID" "$complete" "$status" "$code" "$wall" "$cpu" "$user" "$system" "$cpu_usage" "$max_vm" "$memory" "${timed_out:-false}" "${memory_out:-false}" "$TASK_KEY" "$archive" "$szs_status"
+    printf '%s\n' "$result_row"
 } > "$result.tmp"
 mv "$result.tmp" "$result"
+# One small, atomically replaced index per sequential batch keeps monitoring
+# fast on NFS; individual result files remain available for sync and recovery.
+index=$(printf '%s/results/index/batch_%06d.csv' "$JOB_DIR" "$BATCH_ID")
+if {
+    if [[ -f "$index" ]]; then
+        cat "$index"
+    else
+        csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status
+    fi
+    printf '%s\n' "$result_row"
+} > "$index.tmp" && mv "$index.tmp" "$index"; then
+    :
+else
+    printf 'Warning: could not update result index for batch %s. Individual result is saved.\n' "$BATCH_ID" >&2
+    rm -f -- "$index.tmp" "$JOB_DIR/results/index/.ready" || true
+fi
 publish_progress "$status"
 [[ "$complete" == true ]]

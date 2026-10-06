@@ -6,7 +6,7 @@ set -euo pipefail
 export JOB_DIR=${SLURM_SUBMIT_DIR:?}
 cd "$JOB_DIR"
 source ./csv.sh
-BATCH_ID=${SLURM_ARRAY_TASK_ID:?}
+BATCH_ID=${SLURMY_BATCH_ID:-${SLURM_ARRAY_TASK_ID:?}}
 source "$(printf 'batches/batch_%06d.sh' "$BATCH_ID")"
 (( PARALLEL == 1 )) || { echo 'Slurmy batches must run one call at a time.' >&2; exit 1; }
 declare -A ALLOWED=() CORE_CPU=() CORE_SOCKET=() SOCKET_TOTAL=() SOCKET_ALLOWED=() USED=()

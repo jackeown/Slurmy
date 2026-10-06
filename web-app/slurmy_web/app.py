@@ -21,7 +21,7 @@ from flask import Flask, Response, abort, jsonify, redirect, render_template, re
 from werkzeug.exceptions import HTTPException
 from slurmy_archives import is_archive
 
-from .monitor import RemoteCollector
+from .monitor import RemoteCollector, summarize_results
 from .launcher import web_version
 from . import workflows
 
@@ -293,22 +293,32 @@ def create_app():
     def host():
         return workflows.alias(request.args.get('host') or os.environ.get('SLURMY_HOST', 'datalab'))
 
-    def snapshot(detail=None):
+    def snapshot(detail=None, force=False):
         key = (host(), detail)
         with guard:
             lock = locks.setdefault(key, threading.Lock())
         with lock:
             cached = cache.get(key)
-            if cached and time.monotonic() - cached[0] < 5:
+            previous = cached[1].find_job(detail) if cached and detail else None
+            cache_seconds = 30 if previous and previous.task_count > 10000 else 5
+            if cached and not force and time.monotonic() - cached[0] < cache_seconds:
                 return cached[1]
-            value = app.config.get('COLLECTOR', RemoteCollector)(key[0], 10).fetch(detail)
+            since = (max(0, cached[1].fetched_epoch - 60)
+                     if previous and previous.task_count > 10000 and previous.tasks else None)
+            value = app.config.get('COLLECTOR', RemoteCollector)(key[0], 10).fetch(detail, since)
+            if since is not None:
+                current = value.find_job(detail)
+                if current:
+                    current.tasks = previous.tasks
+                    current.results = {**previous.results, **current.results}
+                    summarize_results(current, current.results)
             cache[key] = (time.monotonic(), value)
             if len(cache) > 32:
                 cache.pop(next(iter(cache)))
             return value
 
-    def job_snapshot(job_id):
-        job = snapshot(safe_job(job_id)).find_job(job_id)
+    def job_snapshot(job_id, force=False):
+        job = snapshot(safe_job(job_id), force=force).find_job(job_id)
         if not job:
             abort(404, 'Job not found on this SSH host.')
         return job
@@ -454,7 +464,7 @@ def create_app():
 
     @app.get('/api/jobs/<job_id>')
     def job_data(job_id):
-        job = job_snapshot(job_id)
+        job = job_snapshot(job_id, force=request.args.get('fresh') == '1')
         query = request.args.get('q', '').lower()
         rows = [row for row in task_rows(job) if query in ' '.join(str(v) for v in row.values()).lower()]
         page_number, per_page, sort, direction = call_page_args()
@@ -550,7 +560,7 @@ def create_app():
 
     @app.get('/api/jobs/<job_id>/problems/<int:task_id>')
     def problem_data(job_id, task_id):
-        job = job_snapshot(job_id)
+        job = job_snapshot(job_id, force=request.args.get('fresh') == '1')
         definition = job.tasks.get(task_id)
         if not definition:
             abort(404, 'Call not found in this job.')
@@ -560,6 +570,7 @@ def create_app():
         rows = sorted_call_rows(rows, sort, direction)
         content, truncated = app.config.get('COLLECTOR', RemoteCollector)(host(), 10).fetch_problem_text(job_id, path)
         return jsonify(problem=path, text=content, truncated=truncated,
+                       total=job.task_count, percent=job.percent,
                        tasks=rows[page_number*per_page:(page_number+1)*per_page], matched=len(rows))
 
     @app.post('/api/validate-path')

@@ -8,11 +8,16 @@ JOB_PREFIX=$4
 [[ "$JOB_PREFIX" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || {
     echo 'Invalid job prefix.' >&2; exit 1;
 }
-mkdir -p "$JOB_DIR/rootfs" "$JOB_DIR/results" "$JOB_DIR/progress" "$JOB_DIR/logs"
-tar -xzf "$JOB_DIR/incoming/job-files.tar.gz" -C "$JOB_DIR"
-tar -xzf "$JOB_DIR/incoming/inputs.tar.gz" -C "$JOB_DIR/rootfs"
+mkdir -p "$JOB_DIR/rootfs" "$JOB_DIR/results/index" "$JOB_DIR/progress" "$JOB_DIR/logs"
+if [[ ! -f "$JOB_DIR/metadata.json" ]]; then
+    : > "$JOB_DIR/results/index/.ready"
+    tar -xzf "$JOB_DIR/incoming/job-files.tar.gz" -C "$JOB_DIR"
+    tar -xzf "$JOB_DIR/incoming/inputs.tar.gz" -C "$JOB_DIR/rootfs"
+else
+    echo "Resuming batch submission for $1; preserving existing results and inputs."
+fi
 cd "$JOB_DIR"
-python3 - "${5:-}" <<'PY'
+if [[ ! -f submission.csv ]]; then python3 - "${5:-}" <<'PY'
 import base64
 import json
 from pathlib import Path
@@ -29,7 +34,8 @@ temporary = path.with_suffix('.tmp')
 temporary.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 temporary.replace(path)
 PY
-if [[ -f ./prepare_axioms.sh ]]; then bash ./prepare_axioms.sh; fi
+    if [[ -f ./prepare_axioms.sh ]]; then bash ./prepare_axioms.sh; fi
+fi
 source ./csv.sh
 
 # Physical core isolation requires allocation at core granularity and cgroups.
@@ -116,7 +122,27 @@ for batch in batches/batch_*.sh; do
     }
     csv_row "$BATCH_ID" "$PARALLEL" "$((PARALLEL * SLOT_CORES))" "$MEMORY_MIB" "$WALL_SECONDS" "$EXCLUSIVE_CPU" "$EXCLUSIVE_NODE" >> allocations.csv
 done
-csv_row slurm_job_id offset array_size submitted_epoch batch_id > submission.csv
+if [[ -f submission.csv ]]; then
+    prior_ids=$(python3 - <<'PY'
+import csv
+from pathlib import Path
+
+with Path('submission.csv').open(newline='', encoding='utf-8') as stream:
+    rows = list(csv.DictReader(stream))
+for expected, row in enumerate(rows):
+    if int(row['batch_id']) != expected or not row['slurm_job_id'].isdigit():
+        raise SystemExit('Cannot resume: submission.csv is not a contiguous batch prefix.')
+    print(row['slurm_job_id'])
+PY
+    )
+    OUTSTANDING_IDS=()
+    if [[ -n "$prior_ids" ]]; then mapfile -t OUTSTANDING_IDS <<< "$prior_ids"; fi
+    submitted=${#OUTSTANDING_IDS[@]}
+else
+    csv_row slurm_job_id offset array_size submitted_epoch batch_id > submission.csv
+    OUTSTANDING_IDS=()
+    submitted=0
+fi
 # Keep this controller connected until every batch is accepted. A modest window
 # leaves room for the user's other jobs; Slurm's association limit may be lower,
 # so an explicit submit-limit rejection is retried after jobs finish.
@@ -124,13 +150,11 @@ MAX_OUTSTANDING=${3:-32}
 [[ "$MAX_OUTSTANDING" =~ ^[1-9][0-9]*$ ]] || {
     echo 'SLURMY_MAX_OUTSTANDING must be a positive integer.' >&2; exit 1;
 }
-submitted=0
 printf 'submitting %s %s\n' "$submitted" "$next_batch" > submission.state
 trap 'rc=$?; if (( rc != 0 )); then printf "failed %s %s\n" "$submitted" "$next_batch" > submission.state; fi' EXIT
 trap 'exit 1' HUP INT TERM
 echo "Slurmy job ID: $1"
 echo "Submission progress: $submitted/$next_batch batches accepted (at most $MAX_OUTSTANDING outstanding)"
-OUTSTANDING_IDS=()
 refresh_outstanding() {
     local ids output
     (( ${#OUTSTANDING_IDS[@]} )) || return 0
@@ -138,8 +162,10 @@ refresh_outstanding() {
     output=$(squeue -h -j "$ids" -o '%A') || return 1
     mapfile -t OUTSTANDING_IDS < <(printf '%s\n' "$output" | sed '/^$/d' | sort -u)
 }
+refresh_outstanding
 for batch in batches/batch_*.sh; do
     source "$batch"
+    if (( BATCH_ID < submitted )); then continue; fi
     PARALLEL=${PARALLEL:-${#TASK_IDS[@]}}
     SLOT_CORES=$MAX_CORES
     if (( EXCLUSIVE_CPU )); then SLOT_CORES=$((MAX_CPUS * CORES_PER_SOCKET)); fi
@@ -149,7 +175,7 @@ for batch in batches/batch_*.sh; do
         --nodes=1 --ntasks="$PARALLEL" --cpus-per-task="$SLOT_CORES"
         --threads-per-core=1 --distribution=block:block
         --mem="${MEMORY_MIB}M" --time="$(( (WALL_SECONDS + 59) / 60 ))"
-        --array="$BATCH_ID-$BATCH_ID" --output=logs/slurm_%A_%a.out
+        --array=0-0 --export="ALL,SLURMY_BATCH_ID=$BATCH_ID" --output=logs/slurm_%A_%a.out
         --signal=B:TERM@30)
     if (( EXCLUSIVE_CPU )); then
         # With CR_CORE, reject partially occupied sockets during selection.
@@ -179,7 +205,7 @@ for batch in batches/batch_*.sh; do
     done
     ID=${SUBMITTED%%;*}
     [[ "$ID" =~ ^[0-9]+$ ]] || { echo "Invalid sbatch ID: $SUBMITTED" >&2; exit 1; }
-    csv_row "$ID" 0 1 "$(date +%s)" "$BATCH_ID" >> submission.csv
+    csv_row "$ID" "$BATCH_ID" 1 "$(date +%s)" "$BATCH_ID" >> submission.csv
     OUTSTANDING_IDS+=("$ID")
     submitted=$((submitted + 1))
     printf 'submitting %s %s\n' "$submitted" "$next_batch" > submission.state
