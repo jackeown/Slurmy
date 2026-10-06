@@ -132,22 +132,27 @@ setTheme(document.documentElement.dataset.theme||'light');
 themeToggle?.addEventListener('click',()=>{const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';localStorage.setItem('slurmy-theme',theme);setTheme(theme);});
 $('#host-form')?.addEventListener('submit',event=>{event.preventDefault();const url=new URL(location.href);url.searchParams.set('host',$('#host').value);location.href=url;});
 
-let operationTimer;
+let operationTimer, currentOperationId=null, operationHidden=false;
 function lockWorkflowActions(locked){if(page!=='workflow')return;for(const id of ['prepare','submit','submit-only','submit-menu-toggle']){const control=$('#'+id);if(control)control.disabled=locked;}}
+function operationVisibility(){const pane=$('#operation');pane.hidden=operationHidden;const reopen=$('#show-operation');if(reopen)reopen.hidden=!currentOperationId||!operationHidden;}
 async function watchOperation(id){
-  clearTimeout(operationTimer);$('#operation').hidden=false;sessionStorage.setItem('slurmy-operation',id);
+  clearTimeout(operationTimer);currentOperationId=id;operationVisibility();sessionStorage.setItem('slurmy-operation',id);
   try{
     const op=await api('/api/operations/'+encodeURIComponent(id));text('#operation-title',`${op.phase} · ${op.state}`);text('#operation-log',op.log||'Starting…');
     const match=op.log.match(/Slurmy job ID: ([A-Za-z0-9._-]+)/);
     $('#submitted-link')?.remove();
-    if(match){announceJob(match[1],op.requested_name);renderJobs();const node=link('View submitted job →','/jobs/'+encodeURIComponent(match[1])+'?'+params({}));node.id='submitted-link';$('#operation').append(node);refresh();}
+    if(match){announceJob(match[1],op.requested_name);if($('#jobs-body'))renderJobs();const node=link('View submitted job →','/jobs/'+encodeURIComponent(match[1])+'?'+params({}));node.id='submitted-link';$('#operation').append(node);refresh();}
     if(op.state==='running'){lockWorkflowActions(true);operationTimer=setTimeout(()=>watchOperation(id),1500);}
-    else{lockWorkflowActions(false);sessionStorage.removeItem('slurmy-operation');await refresh();}
+    else{lockWorkflowActions(false);sessionStorage.removeItem('slurmy-operation');text('#show-operation','View completed operation');await refresh();}
   }catch(error){lockWorkflowActions(false);text('#operation-log',error.message);sessionStorage.removeItem('slurmy-operation');}
 }
-$('#dismiss-operation')?.addEventListener('click',()=>{$('#operation').hidden=true;clearTimeout(operationTimer);sessionStorage.removeItem('slurmy-operation');});
-async function startOperation(url,data){try{const op=await api(url,data);lockWorkflowActions(true);watchOperation(op.id);}catch(error){notice(error.message);}}
-const runningOperation=sessionStorage.getItem('slurmy-operation');if(runningOperation)watchOperation(runningOperation);
+$('#dismiss-operation')?.addEventListener('click',()=>{if(page!=='workflow'){clearTimeout(operationTimer);sessionStorage.removeItem('slurmy-operation');currentOperationId=null;$('#operation').hidden=true;return;}operationHidden=true;if(currentOperationId)sessionStorage.setItem('slurmy-operation-hidden',currentOperationId);operationVisibility();});
+$('#show-operation')?.addEventListener('click',()=>{operationHidden=false;sessionStorage.removeItem('slurmy-operation-hidden');operationVisibility();if(currentOperationId)watchOperation(currentOperationId);});
+async function startOperation(url,data){try{const op=await api(url,data);operationHidden=false;sessionStorage.removeItem('slurmy-operation-hidden');lockWorkflowActions(true);watchOperation(op.id);}catch(error){notice(error.message);}}
+const runningOperation=sessionStorage.getItem('slurmy-operation');
+if(page==='workflow'){
+ api('/api/workflow/active-operation?'+params({directory:document.body.dataset.directory})).then(data=>{const id=data.operation;if(id){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===id;watchOperation(id);}}).catch(()=>{if(runningOperation){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===runningOperation;watchOperation(runningOperation);}});
+}else if(runningOperation){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===runningOperation;watchOperation(runningOperation);}
 
 let jobs=[], taskPage=0, problemPage=0, jobsPage=0, jobData=null, selectedOutput=null, hasLoadedRemote=false, refreshInFlight=false, refreshQueued=false, staleTimer=null, lastLoadedAt=null;
 restoreTableUrl();

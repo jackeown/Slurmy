@@ -124,7 +124,7 @@ def submission_phase(log):
     """Summarize the newest visible step of a web-triggered submission."""
     phase = 'Preparing submission files…'
     for line in log.splitlines():
-        if line.startswith(('Build progress: ', 'Submission phase: ', 'Submission waiting: ',
+        if line.startswith(('Build progress: ', 'Packaging progress: ', 'Submission phase: ', 'Submission waiting: ',
                             'Submission progress: ', 'Submission complete: ')):
             phase = line
         elif match := re.fullmatch(r'Batch \d+: Slurm \d+ \((\d+/\d+) accepted\)', line):
@@ -906,6 +906,16 @@ rm -r -- "$job"
                 announce_operation_job(operation, match.group(1), Path(operation['operation_cwd']),
                                        {'SLURMY_HOST': operation['operation_host']})
         return jsonify(**operations[key], log=content, phase=submission_phase(content))
+
+    @app.get('/api/workflow/active-operation')
+    def active_workflow_operation():
+        path = directory()
+        with guard:
+            active = [op for op in operations.values()
+                      if op['scope'] == str(path) and op['state'] == 'running'
+                      and op['operation_host'] == host()]
+            latest = max(active, key=lambda op: op['started']) if active else None
+        return jsonify(operation=latest['id'] if latest else None)
 
     @app.post('/api/shutdown')
     def shutdown():

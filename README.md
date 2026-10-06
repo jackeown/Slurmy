@@ -125,6 +125,10 @@ On a workflow page:
 | Duplicate workflow | Create an independent user workflow from an example or an existing workflow. |
 | Delete workflow | Move a user workflow to `workflows/my-workflows/.deleted-workflows/` for recovery. |
 
+During submission, the progress pane reports how much input and job-file data
+has been packaged. **Hide** leaves the operation running; **View submission
+progress** on the workflow page reopens it.
+
 Examples are read-only; duplicate one to customize it. Renaming a user workflow
 moves its folder while keeping earlier jobs linked. Local definitions and past
 jobs appear separately: **Workflows** contains templates, **Job history**

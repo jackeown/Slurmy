@@ -17,11 +17,11 @@ bash "$ASSETS/builds/run.sh"
 
 # 2. Package declared resources and problems with their local path layout.
 echo 'Submission phase: Packaging inputs'
-# Both BSD tar on macOS and GNU tar support these options.
+# The local helper streams tar through gzip and reports bytes as they are packed.
 TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/slurmy-submit.XXXXXXXX")
 trap 'rm -rf -- "$TEMP_DIR"' EXIT
-COPYFILE_DISABLE=1 tar -chzf "$TEMP_DIR/inputs.tar.gz" -C / --null -T "$ASSETS/archive-paths.txt"
-COPYFILE_DISABLE=1 tar -czf "$TEMP_DIR/job-files.tar.gz" -C "$ASSETS" .
+python "$ASSETS/package_inputs.py" --label inputs --output "$TEMP_DIR/inputs.tar.gz" --base / --paths "$ASSETS/archive-paths.txt"
+python "$ASSETS/package_inputs.py" --label job-files --output "$TEMP_DIR/job-files.tar.gz" --base "$ASSETS"
 JOB_ID="${JOB_PREFIX}_$(date +%s)_$$"
 JOB_NAME_B64=$(printf '%s' "$JOB_DISPLAY_NAME" | base64 | tr -d '\r\n')
 
