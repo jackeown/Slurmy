@@ -240,6 +240,9 @@ An optional `--axioms-file axiom-globs.txt` packages TPTP axiom files under a
 job-local `Axioms/` and sets `TPTP` to its parent. Otherwise, if present on
 the cluster, `TPTP` defaults to `/share/Slurmy-TPTP-v9.2.1`; set
 `SLURMY_TPTP_ROOT` before preparing to use a different installation.
+On `datalab`, this is a shared, world-readable directory rather than a link
+through one user's home directory. Other cluster users can check access with
+`test -r /share/Slurmy-TPTP-v9.2.1/Axioms/HWV001-2.ax`.
 The Makefile and saved form choices support the web interface; they are not
 additional inputs to the core runner. An explicit jobpairs workflow does not
 need configurations or globs.

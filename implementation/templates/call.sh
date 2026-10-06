@@ -6,8 +6,12 @@ export CALL_DIR="$JOB_DIR/calls/$1"
 source "$CALL_DIR/config.sh"
 if [[ -n ${TPTP_ROOT_REL:-} ]]; then
     export TPTP="$JOB_DIR/rootfs/$TPTP_ROOT_REL"
-elif [[ -d ${TPTP_DEFAULT_ROOT:-} ]]; then
-    export TPTP="$TPTP_DEFAULT_ROOT"
+elif [[ -n ${TPTP_DEFAULT_ROOT:-} ]]; then
+    if [[ -d "$TPTP_DEFAULT_ROOT/Axioms" && -r "$TPTP_DEFAULT_ROOT/Axioms" && -x "$TPTP_DEFAULT_ROOT/Axioms" ]]; then
+        export TPTP="$TPTP_DEFAULT_ROOT"
+    else
+        printf 'Warning: shared TPTP axioms are not accessible at %s/Axioms; TPTP include files may fail.\n' "$TPTP_DEFAULT_ROOT" >&2
+    fi
 fi
 BATCH_ID=$2
 source "$JOB_DIR/csv.sh"
