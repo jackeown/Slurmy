@@ -67,6 +67,9 @@
   text-align: left;
 }
 .theme-toggle:hover { background: #244237; }
+.sidebar .local-note { margin-top: auto; }
+.sidebar .theme-toggle { margin-top: 12px; }
+@media (max-width: 760px) { .sidebar .theme-toggle { margin-top: 18px; } }
 
 .steps li { padding: 0; border-bottom: 0; }
 .steps li > button {
