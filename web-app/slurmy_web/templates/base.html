@@ -17,6 +17,7 @@
   <a class="brand" href="{{ url_for('index', host=host) }}"><img src="/logo.svg" alt="">Slurmy<span>LOCAL WORKSPACE</span></a>
   <nav aria-label="Main navigation">
     <a href="{{ url_for('index', host=host) }}" {% if request.path == '/' or request.path.startswith('/jobs/') %}aria-current="page"{% endif %}>◫ <span>Job history</span></a>
+    <a href="{{ url_for('cluster_page', host=host) }}" {% if request.path == '/cluster' %}aria-current="page"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l6 6m0 0l6-6m-6 6l6 6m-6-6l-6 6"/><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/></svg><span>Cluster status</span></a>
     <a href="{{ url_for('workflow_list', host=host) }}" {% if request.path.startswith('/workflow') %}aria-current="page"{% endif %}>▤ <span>Workflows</span></a>
     <a href="{{ url_for('new', host=host) }}" {% if request.path == '/new' %}aria-current="page"{% endif %}>＋ <span>New workflow</span></a>
   </nav>

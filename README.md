@@ -66,6 +66,14 @@ solver comparisons, problems, output streams, and diagnostics. **Sync/Download**
 copies new results to `job-results/` without downloading unchanged files.
 Workflows are reusable definitions; jobs are particular runs of them.
 
+**Cluster status** shows Slurm nodes, CPU allocation, users with active jobs,
+and running or pending jobs across users. It starts with the `CPU-amd`
+partition; choose another partition or all partitions from the page. Select a
+node to see the jobs currently running on it. For
+new Slurmy submissions, it also shows call and batch counts across users via
+Slurm's queue metadata. Jobs whose private files you can read link to their
+job inspector; older users' jobs may not expose counts.
+
 Example workflows for Vampire, E, and Drodi are read-only; duplicate one to
 edit it. Your saved workflows live in `workflows/my-workflows/`. See
 [workflow structure and Makefile targets](workflows/README.md) for the files the

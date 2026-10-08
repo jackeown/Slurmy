@@ -22,6 +22,7 @@ from werkzeug.exceptions import HTTPException
 from slurmy_archives import is_archive
 
 from .monitor import RemoteCollector, summarize_results
+from .cluster import fetch_status
 from .launcher import web_version
 from . import workflows
 
@@ -250,6 +251,7 @@ def create_app():
                       SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
                       TRUSTED_HOSTS=['127.0.0.1', 'localhost'])
     cache, locks, operations, announced_jobs = {}, {}, {}, {}
+    cluster_cache = {}
     guard = threading.Lock()
     builder_lock = threading.Lock()
     builder_operations = {}
@@ -349,6 +351,34 @@ def create_app():
     @app.get('/')
     def index():
         return page('jobs.html')
+
+    @app.get('/cluster')
+    def cluster_page():
+        return page('cluster.html')
+
+    @app.get('/api/cluster')
+    def cluster_status():
+        partition = request.args.get('partition', 'CPU-amd')
+        key = (host(), partition)
+        with guard:
+            cached = cluster_cache.get(key)
+            if cached and request.args.get('fresh') != '1' and time.monotonic() - cached[0] < 10:
+                return jsonify(cached[1])
+        value = app.config.get('CLUSTER_COLLECTOR', fetch_status)(*key)
+        with guard:
+            cluster_cache[key] = (time.monotonic(), value)
+            if len(cluster_cache) > 16:
+                cluster_cache.pop(next(iter(cluster_cache)))
+        return jsonify(value)
+
+    @app.get('/api/cluster/node')
+    def cluster_node_jobs():
+        partition = request.args.get('partition', 'CPU-amd')
+        node = request.args.get('node', '')
+        value = app.config.get('CLUSTER_NODE_COLLECTOR', fetch_status)(
+            host(), partition, node=node)
+        return jsonify(node=node, partition=partition, updated=value['updated'],
+                       jobs=[job for job in value['jobs'] if job['state'].upper().startswith(('RUNNING', 'COMPLETING'))])
 
     @app.get('/jobs/<job_id>')
     def job_page(job_id):

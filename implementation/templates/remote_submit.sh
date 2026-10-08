@@ -37,6 +37,8 @@ PY
     if [[ -f ./prepare_axioms.sh ]]; then bash ./prepare_axioms.sh; fi
 fi
 source ./csv.sh
+TOTAL_CALLS=$(sed -n 's/.*"task_count": *\([0-9][0-9]*\).*/\1/p' metadata.json | head -n 1)
+[[ "$TOTAL_CALLS" =~ ^[0-9]+$ ]] || { echo 'Missing call count in metadata.json.' >&2; exit 1; }
 
 # Physical core isolation requires allocation at core granularity and cgroups.
 CONFIG=$(scontrol show config)
@@ -171,7 +173,11 @@ for batch in batches/batch_*.sh; do
     if (( EXCLUSIVE_CPU )); then SLOT_CORES=$((MAX_CPUS * CORES_PER_SOCKET)); fi
     # A first-wave placement mismatch may be explicitly requeued five times by batch.sh.
     # Append output so the log retains diagnostics from each placement attempt.
-    OPTIONS=(--parsable --partition="$PARTITION" --job-name="$JOB_PREFIX" --requeue --open-mode=append
+    # Queue-visible metadata lets other Slurmy users see counts without access
+    # to this job's private directory. It contains no local paths or commands.
+    OPTIONS=(--parsable --partition="$PARTITION" --job-name="$JOB_PREFIX"
+        --comment="slurmy:v1:calls=$TOTAL_CALLS:batches=$next_batch:batch=$BATCH_ID"
+        --requeue --open-mode=append
         --nodes=1 --ntasks="$PARALLEL" --cpus-per-task="$SLOT_CORES"
         --threads-per-core=1 --distribution=block:block
         --mem="${MEMORY_MIB}M" --time="$(( (WALL_SECONDS + 59) / 60 ))"
