@@ -25,13 +25,12 @@ The placeholder `./my-solver` is deliberately not a supplied executable.
 Runsolver is built remotely using the shared recipe.
 Paths may point outside this folder; relative CSV paths resolve beside the CSV.
 
-Shared targets: `all` (prepare), `build`, `prepare-submit`, `submit` (dispatch
-already-prepared files only), `monitor`, `sync`,
-`stop`, and `clean`. Host and partition are configurable through
-`SLURMY_HOST` and `SLURMY_PARTITION`. After changing input files or recipes,
-run `make` again to refresh submission files. After changing `BATCH_SIZE`, run
-`make clean`, then `make` when using a one-off command-line override. Editing
-the Makefile itself refreshes scripts on the next `make`.
+The [workflow guide](../../README.md) explains the shared Makefile targets.
+Host and partition are configurable through `SLURMY_HOST` and
+`SLURMY_PARTITION`. After changing input files or recipes, run `make` again
+to refresh submission files. After changing `BATCH_SIZE`, run `make clean`,
+then `make` when using a one-off command-line override. Editing the Makefile
+itself refreshes scripts on the next `make`.
 
 For all combinations, create a configurations table without the problem column
 and use [slurmy-pairs.py](../../../implementation/slurmy-pairs.py). For guided setup, use the

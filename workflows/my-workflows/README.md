@@ -19,9 +19,8 @@ also supports `make`, `make build`, `make prepare-submit` (refresh and dispatch)
 `make stop`, and `make clean`. A manually copied
 [template](../example-workflows/example-template/README.md) uses `REPO_ROOT := ../../..`.
 
-The updated app automatically moves older workflows out of the former
-`GENERATED` subfolder and preserves links to their past jobs. Deleted workflows
-are retained under `.deleted-workflows/` for recovery.
+Deleted workflows are retained under `.deleted-workflows/` for recovery.
 
-See the [main README](../../README.md) for setup, the web interface, and the
-complete specification format.
+See the [main README](../../README.md) for setup and the web interface, the
+[workflow guide](../README.md) for the files and Makefile, and the
+[implementation reference](../../implementation/README.md) for input formats.

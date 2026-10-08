@@ -1,7 +1,8 @@
 # 🧪 Example workflows
 
-Each workflow uses the same three-file interface documented in the
-[main README](../../README.md). Builds happen on Slurm compute nodes, not your laptop.
+Each workflow uses the [three-file format](../../implementation/README.md)
+and the [shared Makefile targets](../README.md). Builds happen on Slurm
+compute nodes, not your laptop.
 
 | Folder | Workflow |
 | --- | --- |
@@ -13,7 +14,8 @@ Each workflow uses the same three-file interface documented in the
 
 ## 🚀 Run an example
 
-After completing the main README's setup, run `python web-app/main.py` from the
+After completing the [main README's setup](../../README.md), run
+`python web-app/main.py` from the
 repository root. Open **Workflows → Example workflows**, choose an example, and
 use **Prepare & dispatch job**, or open its arrow menu for dispatch-only or
 prepare-only. To change the

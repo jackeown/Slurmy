@@ -1,7 +1,7 @@
 # 🔨 Remote dependency builds
 
 `slurmy-build.py` is the shared local driver for running a Bash build recipe in
-a Slurm job and downloading its outputs. `runsolver/build.sh` is the bundled
+a Slurm job and downloading its outputs. `runsolver/build.sh` is the included
 runsolver source-build recipe. The three-file workflow automatically reuses
 this driver for each resource with a recipe in `building.txt`.
 
