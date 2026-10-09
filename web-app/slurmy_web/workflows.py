@@ -169,7 +169,7 @@ def specification(data, destination_override=None, progress=None):
                 raise ValueError('Choose whether and how to build each resource.')
             source = existing(entry.get('source'), 'directory') if entry.get('source', '').strip() and recipe else None
             if mode == 'interactive' and choice == 'script' and entry.get('role') == 'solver' and source is None:
-                raise ValueError('A solver build needs a source directory.')
+                source = root
             artifact = entry.get('artifact', '').strip() if recipe else ''
             if mode == 'interactive' and choice == 'script' and entry.get('role') == 'solver':
                 matching = [row for row in configs if path_at(row['solver_directory'], BASE) == root]

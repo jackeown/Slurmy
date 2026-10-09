@@ -53,10 +53,14 @@ should agree with the row's limits.
 ```
 
 With no recipe, Slurmy packages the existing root as-is. With a recipe, it
-copies source into `$SLURMY_BUILD_WORK` on a compute node. The recipe must put
-the declared artifact under `$SLURMY_BUILD_OUTPUT`; Slurmy verifies it,
-downloads the output directory into the declared local root, then packages
-that root for the job. A blank source lets a recipe fetch its own source.
+copies source to a compute node and runs the script from that copy. If source
+and root are the same folder, the script may build normally in its working
+directory: Slurmy copies the entire resulting folder back into the local root.
+No Slurmy-specific environment variables are needed. If source and root differ,
+the recipe writes selected runtime files to `$SLURMY_BUILD_OUTPUT`; Slurmy
+downloads that output directory into the root. In either mode Slurmy checks
+the declared artifact before packaging the job. A blank source lets an
+output-mode recipe fetch its own source.
 Independent resources build concurrently. Recipes run again on each dispatch;
 there is no implicit build cache. Older two-line-per-resource files remain
 accepted. The [build guide](build/README.md) covers standalone builds.

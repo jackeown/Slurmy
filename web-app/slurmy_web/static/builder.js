@@ -174,14 +174,14 @@ if(document.body.dataset.page==='new'){
   const runtimeReady=root.startsWith('/')&&!root.includes('/path/to/')&&pathReady('solver_directory')&&
    value('command')&&value('command')!==card.querySelector('[name="command"]').placeholder&&
    !/^\.\/solver(?:\s|$)/.test(value('command'));
-  const buildReady=!buildSelected||(pathReady('build_source')&&pathReady('build_script'));
+  const buildReady=!buildSelected||((!value('build_source')||pathReady('build_source'))&&pathReady('build_script'));
   const positive=name=>{const input=card.querySelector(`[name="${name}"]`);return input.value.trim()!==''&&input.validity.valid&&Number(input.value)>0;};
   const limitsReady=['wc_limit','cpu_limit','cores','threads_per_core'].every(positive)&&
    /^\s*(?:\d+(?:\.\d+)?)(?:\s*(?:[kmgpt]i?b?|b))?\s*$/i.test(value('mem_limit'))&&
    ['exclusive_cpu','exclusive_node'].every(name=>['true','false'].includes(value(name)));
   for(const [section,ready,good,bad] of [
    ['runtime',runtimeReady,'Runtime ready','Set root and command'],
-   ['build',buildReady,buildSelected?'Build ready':'No build selected','Set source and build script'],
+   ['build',buildReady,buildSelected?'Build ready':'No build selected','Set a valid source (or leave blank) and build script'],
    ['limits',limitsReady,'Limits ready','Set limits and placement']]){
    const details=card.querySelector(`[data-solver-section="${section}"]`);details.dataset.state=ready?'valid':'invalid';$('.solver-section-status',details).textContent=ready?good:bad;
   }

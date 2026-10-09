@@ -397,6 +397,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             command = ('python "$HERE/driver.py" --host "${SLURMY_HOST:-datalab}" '
                        f'--name "$WORKFLOW_NAME-build-{i}" --recipe {recipe_arg} '
                        + (f'--context {shlex.quote(str(build.source))} ' if build.source else '')
+                       + ('--in-place ' if build.source == build.root else '')
                        + f'--output {shlex.quote(str(build.root))} '
                        + f'--artifact={shlex.quote(build.artifact or ".slurmy-built")} '
                        + '--sbatch-option="--partition=${SLURMY_PARTITION:?Set SLURMY_PARTITION}"')

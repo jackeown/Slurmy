@@ -24,13 +24,13 @@ python implementation/build/slurmy-build.py \
 ```
 
 `--host` overrides `SLURMY_HOST` (default `datalab`).
-Recipes receive `SLURMY_BUILD_WORK`, the unpacked source directory, and
-`SLURMY_BUILD_OUTPUT`, where standalone recipes must put downloadable outputs.
-In the current JSON `building.txt` format, source files are unpacked into
-`SLURMY_BUILD_WORK`; recipes put the declared executable under
-`SLURMY_BUILD_OUTPUT`. Slurmy verifies that executable and downloads the output
-directory into the runtime root. Legacy two-line build files still use the
-older copied-root behavior.
+Standalone builds use `SLURMY_BUILD_WORK` (the unpacked source) and
+`SLURMY_BUILD_OUTPUT` (downloaded artifacts) by default. Pass `--in-place`
+when a conventional build script instead writes into its current directory;
+the whole resulting directory is downloaded. Workflows select in-place mode
+automatically when their source and runtime root are the same folder. Recipes
+for a separate source and runtime root may still write selected files to
+`SLURMY_BUILD_OUTPUT`. Slurmy verifies the declared artifact in either mode.
 
 The driver verifies the named artifacts before downloading with rsync.
 Remote build directories and logs remain under `~/slurmy/builds/` for inspection.

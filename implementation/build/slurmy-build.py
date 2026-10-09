@@ -155,6 +155,9 @@ mkdir -p -- "$SLURMY_BUILD_WORK" "$SLURMY_BUILD_OUTPUT"
 cd -- "$SLURMY_BUILD_WORK"
 bash "$SLURMY_BUILD_ROOT/recipe.sh"
 
+{'# The recipe built in its working folder; return the full resulting tree.' if args.in_place else '# The recipe wrote selected runtime files to SLURMY_BUILD_OUTPUT.'}
+{'cp -a -- "$SLURMY_BUILD_WORK/." "$SLURMY_BUILD_OUTPUT/"' if args.in_place else ':'}
+
 {artifact_checks}
 echo "Slurmy build completed successfully."
 """
@@ -303,6 +306,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--context", metavar="DIRECTORY", help="optional local directory unpacked into the build work directory")
     parser.add_argument("--output", required=True, metavar="DIRECTORY", help="local directory that receives the built artifacts")
     parser.add_argument("--artifact", action="append", type=checked_artifact, metavar="RELATIVE_PATH", help="required path below the output directory; repeat as needed")
+    parser.add_argument("--in-place", action="store_true", help="run the recipe in the copied source directory and download its entire resulting tree; no Slurmy variables are needed")
     parser.add_argument("--cpus-per-task", type=int, default=4)
     parser.add_argument("--memory", type=slurm_memory, default="4096M", help="Slurm memory request (default: 4GiB)")
     parser.add_argument("--time", type=checked_time, default="00:30:00", help="Slurm time request (default: 00:30:00)")
