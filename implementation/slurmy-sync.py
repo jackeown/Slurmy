@@ -7,6 +7,7 @@ import argparse
 from collections import Counter
 import csv
 from datetime import datetime
+import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -25,6 +26,7 @@ DEFAULT_HOST = os.environ.get("SLURMY_HOST", "datalab")
 DEFAULT_INTERVAL = 5.0
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 TASK_LOG_RE = re.compile(r"(?:^|/)task_(\d+)_[A-Fa-f0-9]+[.]solver[.]log$")
+TASK_ERROR_RE = re.compile(r"(?:^|/)task_(\d+)_[A-Fa-f0-9]+[.]solver-stderr[.]log$")
 SZS_STATUS_RE = re.compile(rb"\bSZS\s+status\s+([A-Za-z][A-Za-z0-9_-]*)", re.IGNORECASE)
 SOLVED_SZS_STATUSES = {
     "contradictoryaxioms",
@@ -120,6 +122,8 @@ def resolve_job_id(host: str, requested: str | None, timeout: float) -> str:
         )
     except subprocess.TimeoutExpired as exc:
         raise SyncError(f"SSH lookup timed out after {timeout + 10:g}s") from exc
+    except OSError as exc:
+        raise SyncError(f"Could not start SSH lookup: {exc}") from exc
     if process.returncode != 0:
         message = process.stderr.decode("utf-8", "replace").strip()
         raise SyncError(message or f"ssh exited with status {process.returncode}")
@@ -140,7 +144,8 @@ def rsync_job(host: str, job_id: str, destination: Path, timeout: float) -> int:
         "rsync",
         "--archive",
         "--compress",
-        "--partial",
+        "--partial-dir=.rsync-partial",
+        "--delay-updates",
         "--prune-empty-dirs",
         "--omit-dir-times",
         "--itemize-changes",
@@ -230,6 +235,7 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
                 "max_memory_kib": as_float(fields[10]),
                 "task_key": fields[13],
                 "archive": fields[14],
+                "szs_output": fields[16] if len(fields) > 16 else "",
             }
     for path in sorted(results_dir.glob("*.csv")):
         try:
@@ -251,6 +257,7 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
                 "max_memory_kib": as_float(fields[10]),
                 "task_key": fields[13],
                 "archive": fields[14],
+                "szs_output": fields[16] if len(fields) > 16 else "",
             }
     for path in sorted(results_dir.glob("*.jsonl")):
         try:
@@ -273,6 +280,7 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
                 "max_memory_kib": as_float(item.get("max_memory_kib")),
                 "task_key": str(item.get("task_key", "")),
                 "archive": str(item.get("archive", "")),
+                "szs_output": str(item.get("szs_output", "")),
             }
     return records
 
@@ -477,12 +485,73 @@ def write_summary(destination: Path, summary: dict[str, Any]) -> Path:
     return target
 
 
+def consolidate_solver_streams(destination: Path, records: dict[int, dict[str, Any]]) -> None:
+    """Atomically publish separate stdout/stderr archives from saved call archives."""
+    sources = []
+    for task_id, record in sorted(records.items()):
+        name = str(record.get('archive', ''))
+        if not re.fullmatch(r'[A-Za-z0-9._-]+\.tar\.gz', name):
+            continue
+        path = destination / 'results' / name
+        if path.is_file():
+            stat = path.stat()
+            sources.append((task_id, path, stat.st_size, stat.st_mtime_ns))
+    fingerprint = hashlib.sha256(repr([(task_id, path.name, size, mtime)
+                                       for task_id, path, size, mtime in sources]).encode()).hexdigest()
+    marker = destination / 'solver-streams.json'
+    outputs = (destination / 'solver-logs.tgz', destination / 'solver-errors.tgz')
+    if all(path.is_file() for path in outputs) and marker.is_file():
+        try:
+            if json.loads(marker.read_text(encoding='utf-8')).get('fingerprint') == fingerprint:
+                return
+        except (OSError, ValueError):
+            pass
+    temporary = []
+    try:
+        for target in outputs:
+            fd, name = tempfile.mkstemp(prefix=f'.{target.name}.', suffix='.tmp', dir=destination)
+            os.close(fd)
+            temporary.append(Path(name))
+        with tarfile.open(temporary[0], 'w:gz') as stdout_tar, tarfile.open(temporary[1], 'w:gz') as stderr_tar:
+            for index, (task_id, source, _, _) in enumerate(sources, 1):
+                with tarfile.open(source, 'r:gz') as call_tar:
+                    for member in call_tar:
+                        if not member.isfile():
+                            continue
+                        stdout = TASK_LOG_RE.search(member.name)
+                        stderr = TASK_ERROR_RE.search(member.name)
+                        if not stdout and not stderr:
+                            continue
+                        stream = call_tar.extractfile(member)
+                        if stream is None:
+                            continue
+                        info = tarfile.TarInfo(f'task_{task_id:09d}.log' if stdout else f'task_{task_id:09d}.stderr.log')
+                        info.size = member.size
+                        info.mode = 0o600
+                        (stdout_tar if stdout else stderr_tar).addfile(info, stream)
+                if index % 1000 == 0 or index == len(sources):
+                    print(f'Consolidating solver logs: {index}/{len(sources)} call archives', flush=True)
+        for source, target in zip(temporary, outputs):
+            os.replace(source, target)
+        fd, marker_name = tempfile.mkstemp(prefix='.solver-streams.', suffix='.tmp', dir=destination)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                json.dump({'fingerprint': fingerprint, 'archives': len(sources)}, stream)
+                stream.write('\n')
+            os.replace(marker_name, marker)
+        finally:
+            Path(marker_name).unlink(missing_ok=True)
+    finally:
+        for path in temporary:
+            path.unlink(missing_ok=True)
+
+
 def sync_loop(args: argparse.Namespace) -> int:
     job_id = resolve_job_id(args.host, args.job_id, args.ssh_timeout)
     destination = (
         Path(args.output).expanduser()
         if args.output
-        else Path.cwd() / "job-results" / job_id
+        else Path.cwd() / "job-results" / "verbose" / job_id
     )
     if destination.exists() and not destination.is_dir():
         raise SyncError(f"output path is not a directory: {destination}")
@@ -502,6 +571,9 @@ def sync_loop(args: argparse.Namespace) -> int:
             iteration=iteration,
             cache=cache,
         )
+        if not args.follow or summary['all_tasks_complete']:
+            consolidate_solver_streams(destination, read_result_records(destination))
+            summary['downloaded_bytes'] = directory_size(destination)
         summary_path = write_summary(destination, summary)
         print(
             f"[{summary['updated_at']}] "
@@ -515,6 +587,68 @@ def sync_loop(args: argparse.Namespace) -> int:
             print(f"Metadata: {summary_path.resolve()}")
             return 0
         time.sleep(args.interval)
+
+
+def compact_sync_loop(args: argparse.Namespace) -> int:
+    """Download only the cluster-built CSV and two solver-stream archives."""
+    job_id = resolve_job_id(args.host, args.job_id, args.ssh_timeout)
+    destination = Path(args.output).expanduser() if args.output else Path.cwd() / 'job-results' / job_id
+    expected = {'calls.csv', 'solver-logs.tgz', 'solver-errors.tgz'}
+    if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
+        raise SyncError(f'output path is not a normal directory: {destination}')
+    exporter = Path(__file__).with_name('remote_export.py')
+    if shutil.which('ssh') is None or shutil.which('rsync') is None:
+        raise SyncError('Both ssh and rsync must be installed and on PATH.')
+    while True:
+        print(f'Preparing three-file export for {job_id} on {args.host}…', flush=True)
+        command = ['ssh', '-T', '-o', 'BatchMode=yes', '-o',
+                   f'ConnectTimeout={max(1, int(args.ssh_timeout))}', '-o',
+                   'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
+                   '--', args.host, 'python3', '-u', '-', job_id]
+        try:
+            with exporter.open('rb') as script:
+                process = subprocess.Popen(command, stdin=script, stdout=subprocess.PIPE,
+                                           stderr=subprocess.STDOUT, text=True)
+                assert process.stdout is not None
+                for line in process.stdout:
+                    print(line, end='', flush=True)
+                code = process.wait()
+        except OSError as exc:
+            raise SyncError(f'Could not prepare remote export over SSH: {exc}') from exc
+        if code:
+            raise SyncError(f'Remote export failed (SSH exit {code}); existing local files were kept.')
+        if destination.is_dir() and any(item.name not in expected for item in destination.iterdir()):
+            if args.output:
+                raise SyncError('This output directory contains verbose files; choose an empty directory for the three-file download.')
+            legacy = Path.cwd() / 'job-results' / 'verbose' / job_id
+            if legacy.exists():
+                raise SyncError(f'Both concise and verbose result directories exist; move the old files from {destination} manually before syncing.')
+            legacy.parent.mkdir(parents=True, exist_ok=True)
+            destination.rename(legacy)
+            print(f'Moved older detailed results to {legacy}; no files were deleted.', flush=True)
+        destination.mkdir(parents=True, exist_ok=True)
+        remote = f'{args.host}:slurmy/jobs/{job_id}/exports/'
+        transfer = ['rsync', '--archive', '--compress', '--delay-updates',
+                    '--partial-dir=.rsync-partial', '--timeout=120', '--rsh',
+                    f'ssh -o BatchMode=yes -o ConnectTimeout={max(1, int(args.ssh_timeout))}',
+                    '--', *(remote + name for name in sorted(expected)), str(destination) + '/']
+        try:
+            result = subprocess.run(transfer, capture_output=True, text=True, timeout=3600, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise SyncError(f'Could not transfer the three export files: {exc}') from exc
+        if result.returncode:
+            raise SyncError(result.stderr.strip() or f'rsync exited with status {result.returncode}')
+        if not all((destination / name).is_file() for name in expected):
+            raise SyncError('The cluster export was incomplete; no successful download was reported.')
+        with (destination / 'calls.csv').open(newline='', encoding='utf-8') as source:
+            completed = total = 0
+            for row in csv.DictReader(source):
+                total += 1
+                completed += row.get('complete', '').lower() == 'true'
+        print(f'Downloaded {completed}/{total} calls ({percentage(completed, total):.1f}%) to {destination}', flush=True)
+        if not args.follow or (total and completed == total):
+            return 0
+        time.sleep(max(15, args.interval))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -546,6 +680,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="keep syncing until every planned task has a complete result",
     )
+    parser.add_argument('--verbose', action='store_true',
+                        help='download all raw per-call archives, Slurm logs, plans, and metadata')
     parser.add_argument(
         "--interval",
         type=float,
@@ -570,7 +706,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.ssh_timeout <= 0:
         raise SystemExit("--ssh-timeout must be greater than zero")
     try:
-        return sync_loop(args)
+        return sync_loop(args) if args.verbose else compact_sync_loop(args)
     except KeyboardInterrupt:
         print("\nSlurmy sync stopped; already downloaded files were kept.", file=sys.stderr)
         return 130

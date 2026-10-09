@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import glob
 import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
@@ -65,6 +66,16 @@ def _archive_files(path: Path, materialize: bool, suffixes: tuple[str, ...], lab
                    progress=None) -> list[Path]:
     identity = f'{label}:{path.resolve()}:{path.stat().st_size}:{path.stat().st_mtime_ns}'
     destination = CACHE / hashlib.sha256(identity.encode()).hexdigest()[:20]
+    index = destination / '.members.json'
+    if (destination / '.complete').is_file() and index.is_file():
+        try:
+            cached = json.loads(index.read_text(encoding='utf-8'))
+            if isinstance(cached, list) and cached and all(isinstance(item, str) and
+                    _safe_name(item, suffixes) is not None and (destination / item).is_file()
+                    for item in cached):
+                return [destination / item for item in cached]
+        except (OSError, ValueError, TypeError):
+            pass
     names, total_bytes = [], 0
     if progress:
         progress('scanning', str(path), 0, 0)
@@ -96,6 +107,7 @@ def _archive_files(path: Path, materialize: bool, suffixes: tuple[str, ...], lab
                         if progress:
                             progress('extracting', str(path), completed_bytes, total_bytes)
             (temporary / '.complete').write_text('')
+            (temporary / '.members.json').write_text(json.dumps([str(name) for name in names]), encoding='utf-8')
             if destination.exists():
                 if not (destination / '.complete').is_file():
                     raise ValueError(f'Incomplete archive cache: {destination}')
@@ -107,6 +119,9 @@ def _archive_files(path: Path, materialize: bool, suffixes: tuple[str, ...], lab
         except Exception:
             shutil.rmtree(temporary)
             raise
+    elif materialize and (destination / '.complete').is_file() and not index.is_file():
+        # Older caches predate the member index. Their contents were already extracted.
+        index.write_text(json.dumps([str(name) for name in names]), encoding='utf-8')
     return [destination.joinpath(*name.parts) for name in names]
 
 

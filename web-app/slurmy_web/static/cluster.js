@@ -3,6 +3,8 @@
   const find = selector => document.querySelector(selector);
   const host = document.body.dataset.host;
   const partitionSelect = find('#cluster-partition');
+  const nodeScope = find('#cluster-node-scope');
+  const jobChoice = find('#cluster-job-choice');
   if (!partitionSelect) return;
   let status = null;
   let busy = false;
@@ -55,6 +57,27 @@
   const query = new URLSearchParams(location.search);
   partitionSelect.value = query.get('partition') || 'CPU-amd';
   if (!partitionSelect.value) partitionSelect.add(new Option(query.get('partition'), query.get('partition'), true, true));
+  if (['mine', 'job'].includes(query.get('nodes'))) nodeScope.value = query.get('nodes');
+  const requestedJob = query.get('job') || '';
+  if (requestedJob) jobChoice.add(new Option(requestedJob, requestedJob));
+  jobChoice.value = requestedJob;
+  function syncNodeScopeUrl() {
+    const url = new URL(location.href);
+    if (nodeScope.value === 'all') url.searchParams.delete('nodes');
+    else url.searchParams.set('nodes', nodeScope.value);
+    if (nodeScope.value === 'job' && jobChoice.value) url.searchParams.set('job', jobChoice.value);
+    else url.searchParams.delete('job');
+    history.replaceState(null, '', url);
+  }
+  function updateJobChoices() {
+    const previous = jobChoice.value;
+    const mine = status.jobs.filter(job => job.user === status.user && job.state.toUpperCase().startsWith('RUNNING'));
+    const names = [...new Set(mine.map(job => job.slurmy_id || job.id))].sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
+    jobChoice.replaceChildren(...names.map(name => new Option(name, name)));
+    if (names.includes(previous)) jobChoice.value = previous;
+    find('#cluster-job-choice-label').hidden = nodeScope.value !== 'job';
+    jobChoice.disabled = names.length === 0;
+  }
 
   function cell(value) {
     const td = document.createElement('td');
@@ -125,14 +148,19 @@
     find('#cluster-utilization').title = `${totals.allocated_cpus.toLocaleString()} of ${totals.total_cpus.toLocaleString()} Slurm CPUs allocated`;
     find('#cluster-running').textContent = totals.running.toLocaleString();
     find('#cluster-pending').textContent = totals.pending.toLocaleString();
-    find('#cluster-node-count').textContent = `· ${status.nodes.length}`;
     find('#cluster-user-count').textContent = `· ${status.users.length}`;
     find('#cluster-job-count').textContent = `· ${status.jobs.length}`;
 
     const nodes = find('#cluster-nodes');
     nodes.replaceChildren();
     const nodeFilter = find('#cluster-node-filter').value.trim().toLowerCase();
-    for (const node of ordered('nodes', status.nodes.filter(item => match([item.name, item.state], nodeFilter)))) {
+    const running = status.jobs.filter(job => job.state.toUpperCase().startsWith('RUNNING'));
+    const relevant = nodeScope.value === 'all' ? null : running.filter(job => job.user === status.user &&
+      (nodeScope.value === 'mine' || (job.slurmy_id || job.id) === jobChoice.value));
+    const visible = status.nodes.filter(item => match([item.name, item.state], nodeFilter) &&
+      (relevant === null || relevant.some(job => job.hostnames.includes(item.name))));
+    find('#cluster-node-count').textContent = `· ${visible.length} / ${status.nodes.length} shown`;
+    for (const node of ordered('nodes', visible)) {
       const used = cell(`${node.allocated} / ${node.total}`);
       const meter = document.createElement('progress');
       meter.max = node.total || 1;
@@ -155,7 +183,7 @@
       if (node.name === selectedNode) nodeRow.classList.add('selected-node');
       nodes.append(nodeRow);
     }
-    if (!nodes.children.length) empty(nodes, 7, 'No matching nodes.');
+    if (!nodes.children.length) empty(nodes, 7, nodeScope.value === 'all' ? 'No matching nodes.' : 'No nodes currently running matching jobs.');
 
     const users = find('#cluster-users');
     users.replaceChildren();
@@ -203,6 +231,7 @@
       partitionSelect.replaceChildren(new Option('All partitions', 'all'), ...data.partitions.map(name => new Option(name, name)));
       if (![...partitionSelect.options].some(option => option.value === prior)) partitionSelect.add(new Option(prior, prior));
       partitionSelect.value = prior;
+      updateJobChoices();
       render();
       if (selectedNode) inspectNode(selectedNode, false);
       message.textContent = `Connected to ${host} · ${selected} · refreshed ${new Date(data.updated * 1000).toLocaleTimeString()} · refreshes every 30 seconds`;
@@ -232,6 +261,8 @@
     refresh(true);
   });
   find('#cluster-refresh').addEventListener('click', () => refresh(true));
+  nodeScope.addEventListener('change', () => { updateJobChoices(); syncNodeScopeUrl(); render(); });
+  jobChoice.addEventListener('change', () => { syncNodeScopeUrl(); render(); });
   for (const selector of ['#cluster-node-filter', '#cluster-user-filter', '#cluster-job-filter']) {
     find(selector).addEventListener('input', render);
   }

@@ -17,27 +17,32 @@ function duration(value){if(value==null)return '—';if(value===0)return '0 s';i
 function memory(value){if(value==null)return '—';let i=0;const units=['B','KiB','MiB','GiB','TiB'];while(value>=1024&&i<units.length-1){value/=1024;i++;}return `${value.toFixed(i===0?0:1)} ${units[i]}`;}
 const outcomeColors={'not finished':'#87938f','theorem':'#278866','unsatisfiable':'#4479b5','satisfiable':'#9367ac','countersatisfiable':'#219a98','counter satisfiable':'#219a98','timeout':'#e7b251','time limit':'#ca842c','memory limit':'#bb684a','resourceout':'#9f5241','resource out':'#9f5241','error':'#bb555b','solver error':'#bb555b'};
 const otherOutcomeColors=['#6d70b7','#a66b8b','#628b51','#ac7650','#568d9c','#a5a047'];
-let selectedOutcome=null;
-function showOutcomeComparison(item){
- const panel=$('#status-comparison'),bars=$('#status-bars');if(!panel||!bars)return;
- selectedOutcome=`${item.label}\u0000${item.source}`;panel.hidden=false;text('#status-comparison-title',`${item.label}${item.source?` (${item.source})`:''} by solver`);
- bars.replaceChildren();const solvers=[...(item.solvers||[])].sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name));const maximum=Math.max(1,...solvers.map(solver=>solver.count));
- for(const solver of solvers){const row=el('div',undefined,'status-bar-row'),track=el('div',undefined,'status-bar-track'),fill=el('span',undefined,'status-bar-fill');fill.style.width=`${solver.count/maximum*100}%`;track.append(fill);row.append(el('span',solver.name,'status-bar-label'),track,el('strong',solver.count.toLocaleString(),'status-bar-count'));bars.append(row);}
- if(!solvers.length)bars.append(el('p','No solver names are available for these calls.','muted'));
+let selectedOutcomes=[];
+const outcomeSelected=item=>selectedOutcomes.some(selected=>selected.label===item.label&&selected.source===item.source);
+const outcomeSelectionKey=()=>JSON.stringify(selectedOutcomes);
+function updateOutcomeFilter(){
+ const panel=$('#outcome-filter');if(!panel)return;
+ panel.hidden=selectedOutcomes.length===0;
+ text('#outcome-filter-label',`Selected statuses: ${selectedOutcomes.map(item=>item.label+(item.source?` (${item.source})`:'' )).join(', ')}`);
 }
-$('#close-status-comparison')?.addEventListener('click',()=>{$('#status-comparison').hidden=true;selectedOutcome=null;});
+function chooseOutcome(item){
+ selectedOutcomes=outcomeSelected(item)?selectedOutcomes.filter(selected=>selected.label!==item.label||selected.source!==item.source):[...selectedOutcomes,{label:item.label,source:item.source}];
+ taskPage=0;syncTableUrl(true);updateOutcomeFilter();renderOutcomes(jobData?.outcomes);refresh();
+ $('#remote-data')?.scrollIntoView({behavior:'smooth',block:'start'});
+}
+$('#clear-outcome-filter')?.addEventListener('click',()=>{selectedOutcomes=[];taskPage=0;syncTableUrl(true);updateOutcomeFilter();renderOutcomes(jobData?.outcomes);refresh();});
 function renderOutcomes(outcomes){
  const chart=$('#outcome-chart'),breakdown=$('#outcome-breakdown');if(!chart||!breakdown)return;
  const items=(outcomes||[]).filter(item=>Number.isFinite(item.count)&&item.count>0);
  const total=items.reduce((sum,item)=>sum+item.count,0);
  chart.replaceChildren();breakdown.replaceChildren();chart.classList.toggle('is-empty',total===0);
- if(!total){chart.style.background='';chart.setAttribute('aria-label','No call outcomes yet');breakdown.append(el('p','No call outcomes yet.','muted'));$('#status-comparison').hidden=true;selectedOutcome=null;window.outcomeCubeData=[];window.renderOutcomeCube?.([]);return;}
+ if(!total){chart.style.background='';chart.setAttribute('aria-label','No call outcomes yet');breakdown.append(el('p','No call outcomes yet.','muted'));window.outcomeCubeData=[];window.renderOutcomeCube?.([]);return;}
  let start=0,other=0;const segments=[];const labels=[];
  for(const item of items){
   const color=outcomeColors[item.label.toLowerCase()]||otherOutcomeColors[other++%otherOutcomeColors.length];
   item.color=color;
   const end=start+item.count/total*100;segments.push(`${color} ${start}% ${end}%`);start=end;
-  const percent=item.count/total*100;const row=el('button',undefined,'outcome-row outcome-row-button');row.type='button';row.setAttribute('aria-label',`Compare solvers for ${item.label}${item.source?` (${item.source})`:''}`);row.addEventListener('click',()=>showOutcomeComparison(item));
+  const percent=item.count/total*100;const row=el('button',undefined,'outcome-row outcome-row-button');row.type='button';row.setAttribute('aria-label',`Toggle calls with ${item.label}${item.source?` (${item.source})`:''}`);const active=outcomeSelected(item);row.setAttribute('aria-pressed',String(active));row.classList.toggle('selected',active);row.addEventListener('click',()=>chooseOutcome(item));
   const name=el('span',undefined,'outcome-name');const swatch=el('span',undefined,'outcome-swatch');swatch.style.backgroundColor=color;swatch.setAttribute('aria-hidden','true');name.append(swatch,el('span',item.label));if(item.source)name.append(el('small',`(${item.source})`,'outcome-source'));
   row.append(name,el('span',item.count.toLocaleString(),'outcome-count'),el('strong',`${percent.toFixed(1)}%`,'outcome-percent'));breakdown.append(row);
   labels.push(`${item.label}${item.source?` (${item.source})`:''}: ${item.count} (${percent.toFixed(1)}%)`);
@@ -46,7 +51,7 @@ function renderOutcomes(outcomes){
  chart.setAttribute('aria-label',`Call outcomes for ${total} calls. ${labels.join('; ')}`);
  chart.title=labels.join('\n');
  window.outcomeCubeData=items;window.renderOutcomeCube?.(items);
- if(selectedOutcome){const selected=items.find(item=>`${item.label}\u0000${item.source}`===selectedOutcome);if(selected)showOutcomeComparison(selected);else{$('#status-comparison').hidden=true;selectedOutcome=null;}}
+ updateOutcomeFilter();
 }
 function badge(state){const value=state.toLowerCase();let cls='';if(/error|fail|incomplete|interrupted|cancel|not run/.test(value))cls='bad';else if(/limit|timeout/.test(value))cls='limit';else if(/run|pending|submit|dispatch|completing/.test(value))cls='active';else if(/done|ok|completed|theorem|unsatisfiable|satisfiable|counter/.test(value))cls='good';return el('span',state,`badge ${cls}`);}
 function text(id, value){const node=$(id);if(node)node.textContent=value;}
@@ -64,6 +69,7 @@ function syncTableUrl(push=false){
  url.searchParams.set('sort',tableSort[kind].key);url.searchParams.set('direction',tableSort[kind].direction);
  const filter=kind==='tasks'?$('#task-filter'):kind==='jobs'?$('#job-filter'):null;
  if(filter){if(filter.value)url.searchParams.set('q',filter.value);else url.searchParams.delete('q');}
+ if(kind==='tasks'){url.searchParams.delete('outcome');url.searchParams.delete('origin');for(const item of selectedOutcomes){url.searchParams.append('outcome',item.label);url.searchParams.append('origin',item.source);}}
  if(url.href!==location.href)history[push?'pushState':'replaceState'](null,'',url);
 }
 function restoreTableUrl(){
@@ -76,6 +82,7 @@ function restoreTableUrl(){
  const key=query.get('sort');if(key&&[...table.querySelectorAll('th[data-sort]')].some(th=>th.dataset.sort===key))tableSort[kind].key=key;
  const direction=query.get('direction');if(direction==='asc'||direction==='desc')tableSort[kind].direction=direction;
  const filter=kind==='tasks'?$('#task-filter'):kind==='jobs'?$('#job-filter'):null;if(filter)filter.value=query.get('q')||'';
+ if(kind==='tasks'){const labels=query.getAll('outcome'),sources=query.getAll('origin');selectedOutcomes=labels.filter(Boolean).map((label,index)=>({label,source:sources[index]||''}));updateOutcomeFilter();}
  updateSortButtons(table);
 }
 function updateSortButtons(table){
@@ -154,19 +161,40 @@ if(page==='workflow'){
  api('/api/workflow/active-operation?'+params({directory:document.body.dataset.directory})).then(data=>{const id=data.operation;if(id){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===id;watchOperation(id);}}).catch(()=>{if(runningOperation){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===runningOperation;watchOperation(runningOperation);}});
 }else if(runningOperation){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===runningOperation;watchOperation(runningOperation);}
 
-let jobs=[], taskPage=0, problemPage=0, jobsPage=0, jobData=null, selectedOutput=null, hasLoadedRemote=false, refreshInFlight=false, refreshQueued=false, refreshQueuedFresh=false, staleTimer=null, lastLoadedAt=null, autoRefreshTotal=0, autoRefreshPercent=0;
+let jobs=[], taskPage=0, problemPage=0, jobsPage=0, jobData=null, selectedOutput=null, hasLoadedRemote=false, refreshInFlight=false, refreshTimer=null, refreshPending=false, lastRefreshStarted=0, staleTimer=null, lastLoadedAt=null, autoRefreshTotal=0, autoRefreshPercent=0;
+function scheduleRefresh(fresh=false){
+ if(refreshInFlight){refreshPending=true;return;}
+ if(refreshTimer)return;
+ const delay=Math.max(0,10000-(Date.now()-lastRefreshStarted));
+ refreshTimer=setTimeout(()=>{refreshTimer=null;refresh(fresh);},delay);
+}
 restoreTableUrl();
 function pendingJobs(){try{return JSON.parse(sessionStorage.getItem('slurmy-pending-jobs')||'[]').filter(job=>job.host===host&&Date.now()-job.created<3600000);}catch{return [];}}
 function savePendingJobs(value){sessionStorage.setItem('slurmy-pending-jobs',JSON.stringify(value));}
 async function deleteJob(id, control, redirect=false){
+ const originalLabel=control.textContent;
  control.disabled=true;
  try{
-  await api(`/api/jobs/${encodeURIComponent(id)}/delete?`+params({}),{});
+  const options=await api(`/api/jobs/${encodeURIComponent(id)}/delete-options?`+params({}));
+  if(options.synced&&Number(options.percent_complete)<100){
+   if(confirm(`The last download of “${id}” was ${options.percent_complete==null?'not verified':`${Number(options.percent_complete).toFixed(1)}% complete`}. Sync the latest results before deleting the cluster job?`)){
+    control.textContent='Syncing…';
+    const op=await api(`/api/jobs/${encodeURIComponent(id)}/action?`+params({}),{action:'sync'});
+    let state=op;
+    while(state.state==='running'){
+     await new Promise(resolve=>setTimeout(resolve,1500));
+     state=await api(`/api/operations/${encodeURIComponent(op.id)}`);
+    }
+    if(state.state!=='done')throw new Error(`Sync failed; job was not deleted. ${state.log||''}`);
+   }
+  }
+  const deleteLocal=options.synced&&confirm(`Also delete downloaded results for “${id}” from this laptop?\n\nCancel keeps the local copy; the cluster job will still be deleted.`);
+  await api(`/api/jobs/${encodeURIComponent(id)}/delete?`+params({}),{delete_local:deleteLocal});
   savePendingJobs(pendingJobs().filter(item=>item.id!==id));
   if(redirect){location.href='/?'+params({});return;}
   jobs=jobs.filter(item=>item.id!==id);renderJobs();
-  notice(`Deleted job ${id} from the cluster and local synced results.`);
- }catch(error){control.disabled=false;notice(error.message);}
+  notice(`Deleted job ${id} from the cluster${deleteLocal?' and this laptop':''}.`);
+ }catch(error){notice(error.message);}finally{control.disabled=false;control.textContent=originalLabel;}
 }
 async function renameJob(id,current){
  const proposed=prompt('Job name (1–100 characters):',current||id);
@@ -238,12 +266,14 @@ $('#stream')?.addEventListener('change',renderOutput);
 $('#close-output')?.addEventListener('click',()=>{$('#call-output').hidden=true;selectedOutput=null;});
 async function fetchJob(fresh=false){
  const jobId=document.body.dataset.job;
- const perPage=pageSize('#task-page-size'),requestedPage=taskPage,sort=tableSort.tasks.key,direction=tableSort.tasks.direction,query=$('#task-filter').value;
- const data=await api(`/api/jobs/${encodeURIComponent(jobId)}?`+params({page:requestedPage,per_page:perPage,sort,direction,q:query,fresh:fresh?'1':'0'}));
- if(requestedPage!==taskPage||perPage!==pageSize('#task-page-size')||sort!==tableSort.tasks.key||direction!==tableSort.tasks.direction||query!==$('#task-filter').value){refreshQueued=true;return;}
+ const perPage=pageSize('#task-page-size'),requestedPage=taskPage,sort=tableSort.tasks.key,direction=tableSort.tasks.direction,query=$('#task-filter').value,outcomeKey=outcomeSelectionKey();
+ const requestParams=new URLSearchParams({host,page:requestedPage,per_page:perPage,sort,direction,q:query,fresh:fresh?'1':'0'});
+ for(const item of selectedOutcomes){requestParams.append('outcome',item.label);requestParams.append('origin',item.source);}
+ const data=await api(`/api/jobs/${encodeURIComponent(jobId)}?${requestParams}`);
+ if(requestedPage!==taskPage||perPage!==pageSize('#task-page-size')||sort!==tableSort.tasks.key||direction!==tableSort.tasks.direction||query!==$('#task-filter').value||outcomeKey!==outcomeSelectionKey()){scheduleRefresh();return;}
  jobData=data;
  autoRefreshTotal=data.total;autoRefreshPercent=data.percent;
- const lastPage=Math.max(0,Math.ceil(data.matched/perPage)-1);if(taskPage>lastPage){taskPage=lastPage;syncTableUrl();return fetchJob();}
+ const lastPage=Math.max(0,Math.ceil(data.matched/perPage)-1);if(taskPage>lastPage){taskPage=lastPage;syncTableUrl();scheduleRefresh();return;}
  syncTableUrl();
  const submission=data.submission_state==='submitting'?` · submitting batches ${data.submitted_batches}/${data.batch_count}`:data.submission_state==='failed'?' · batch submission stopped before all calls were queued':'';
  text('#job-display-name',data.name);document.title=`${data.name} · Slurmy`;
@@ -262,8 +292,8 @@ async function fetchProblem(fresh=false){
  const jobId=document.body.dataset.job, taskId=document.body.dataset.task;
  const perPage=pageSize('#problem-page-size'),requestedPage=problemPage,sort=tableSort.problem.key,direction=tableSort.problem.direction;
  const data=await api(`/api/jobs/${encodeURIComponent(jobId)}/problems/${taskId}?`+params({page:requestedPage,per_page:perPage,sort,direction,fresh:fresh?'1':'0'}));
- if(requestedPage!==problemPage||perPage!==pageSize('#problem-page-size')||sort!==tableSort.problem.key||direction!==tableSort.problem.direction){refreshQueued=true;return;}
- const lastPage=Math.max(0,Math.ceil(data.matched/perPage)-1);if(problemPage>lastPage){problemPage=lastPage;syncTableUrl();return fetchProblem();}
+ if(requestedPage!==problemPage||perPage!==pageSize('#problem-page-size')||sort!==tableSort.problem.key||direction!==tableSort.problem.direction){scheduleRefresh();return;}
+ const lastPage=Math.max(0,Math.ceil(data.matched/perPage)-1);if(problemPage>lastPage){problemPage=lastPage;syncTableUrl();scheduleRefresh();return;}
  autoRefreshTotal=data.total;autoRefreshPercent=data.percent;
  syncTableUrl();
  text('#problem-name',data.problem.split('/').pop());text('#problem-path',data.problem);
@@ -288,10 +318,14 @@ async function fetchProblem(fresh=false){
  text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()} · ${data.matched} calls on this problem · ${refreshNote}`);
 }
 async function refresh(fresh=false){
- if(refreshInFlight){refreshQueued=true;refreshQueuedFresh ||= fresh;return;}refreshInFlight=true;beginRefresh();
+ if(refreshInFlight)return;
+ if((page==='job'||page==='problem')&&Date.now()-lastRefreshStarted<10000){scheduleRefresh(fresh);return;}
+ if(refreshTimer){clearTimeout(refreshTimer);refreshTimer=null;}
+ if(page==='job'||page==='problem')lastRefreshStarted=Date.now();
+ refreshInFlight=true;beginRefresh();
  try{if(page==='jobs'||page==='workflow')await fetchJobs();else if(page==='job')await fetchJob(fresh);else if(page==='problem')await fetchProblem(fresh);hasLoadedRemote=true;finishRefresh();scheduleStaleWarning();}
  catch(error){remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check your SSH access or VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),10,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='problem')loadingRow($('#problem-tasks-body'),9,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='jobs'||page==='workflow')loadingRow($('#jobs-body'),6,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
- finally{refreshInFlight=false;if(refreshQueued){const queuedFresh=refreshQueuedFresh;refreshQueued=false;refreshQueuedFresh=false;queueMicrotask(()=>refresh(queuedFresh));}}
+ finally{refreshInFlight=false;if(refreshPending){refreshPending=false;scheduleRefresh();}}
 }
 $('#refresh')?.addEventListener('click',()=>refresh(true));
 $('#job-filter')?.addEventListener('input',()=>{jobsPage=0;syncTableUrl();if(hasLoadedRemote)renderJobs();});
@@ -305,12 +339,16 @@ $('#problem-previous')?.addEventListener('click',()=>stepPage(-1,'problem'));$('
 $('#jobs-previous')?.addEventListener('click',()=>stepPage(-1,'jobs'));$('#jobs-next')?.addEventListener('click',()=>stepPage(1,'jobs'));
 window.addEventListener('popstate',()=>{restoreTableUrl();if(tableKind()==='jobs'&&hasLoadedRemote)renderJobs();else if(tableKind())refresh();});
 $('#sync')?.addEventListener('click',()=>startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'sync'}));
+const syncMenu=$('#sync-menu'),syncMenuToggle=$('#sync-menu-toggle');
+function closeSyncMenu(){if(!syncMenu)return;syncMenu.hidden=true;syncMenuToggle.setAttribute('aria-expanded','false');}
+syncMenuToggle?.addEventListener('click',()=>{syncMenu.hidden=!syncMenu.hidden;syncMenuToggle.setAttribute('aria-expanded',String(!syncMenu.hidden));});
+$('#sync-verbose')?.addEventListener('click',()=>{closeSyncMenu();startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'sync_verbose'});});
 $('#rename-job')?.addEventListener('click',()=>renameJob(document.body.dataset.job,$('#job-display-name').textContent));
 $('#delete-job')?.addEventListener('click',event=>deleteJob(document.body.dataset.job,event.currentTarget,true));
 const submitMenu=$('#submit-menu'),submitMenuToggle=$('#submit-menu-toggle');
 function closeSubmitMenu(){if(!submitMenu)return;submitMenu.hidden=true;submitMenuToggle.setAttribute('aria-expanded','false');}
 submitMenuToggle?.addEventListener('click',()=>{submitMenu.hidden=!submitMenu.hidden;submitMenuToggle.setAttribute('aria-expanded',String(!submitMenu.hidden));});
-document.addEventListener('click',event=>{if(submitMenu&&!event.target.closest('.split-action'))closeSubmitMenu();});
+document.addEventListener('click',event=>{if(submitMenu&&!event.target.closest('#submit-menu-toggle')&&!event.target.closest('#submit-menu'))closeSubmitMenu();if(syncMenu&&!event.target.closest('#sync-menu-toggle')&&!event.target.closest('#sync-menu'))closeSyncMenu();});
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!submitMenu?.hidden){closeSubmitMenu();submitMenuToggle.focus();}});
 function workflowAction(action){closeSubmitMenu();startOperation('/api/workflow/action?'+params({directory:document.body.dataset.directory}),{action,name:$('#new-job-name')?.value||''});}
 $('#prepare')?.addEventListener('click',()=>workflowAction('prepare'));

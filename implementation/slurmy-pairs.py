@@ -23,7 +23,7 @@ def expand(configurations: list[Path], patterns: list[str], output: Path,
     for filename in configurations:
         with filename.open(encoding="utf-8-sig", newline="") as stream:
             reader = csv.DictReader(stream)
-            required = set(COLUMNS) - {"solver_name", "problem", "exclusive_cpu", "exclusive_node"}
+            required = set(COLUMNS) - {"solver_name", "problem", "threads_per_core", "exclusive_cpu", "exclusive_node"}
             headers = reader.fieldnames or []
             if len(set(headers)) != len(headers) or not required <= set(headers) or set(headers) - (set(COLUMNS) - {"problem"}):
                 raise SlurmyError(f"{filename}: configuration columns are {', '.join(c for c in COLUMNS if c != 'problem')}")

@@ -36,6 +36,12 @@ else
     jobs=$(squeue -a -h -p "$partition" -o "$format")
 fi
 printf '%s\n' "$jobs"
+printf 'IDENTITY\n%s\n' "$(id -un)"
+printf 'HOSTS\n'
+printf '%s\n' "$jobs" | awk -F'|' 'NF >= 12 && $9 != "(null)" && $9 != "" {print $9}' | sort -u | while IFS= read -r expression; do
+    hosts=$(scontrol show hostnames "$expression" 2>/dev/null | paste -sd, -) || continue
+    printf '%s|%s\n' "$expression" "$hosts"
+done
 printf 'METADATA\n'
 # Only metadata from the connected account's own, direct Slurmy job folders is
 # readable. Slurm exposes other users' queue entries, not their private files.
@@ -54,7 +60,7 @@ done
 
 
 def parse_status(host, partition, output):
-    sections = {'PARTITIONS': [], 'NODES': [], 'JOBS': [], 'METADATA': []}
+    sections = {'PARTITIONS': [], 'NODES': [], 'JOBS': [], 'IDENTITY': [], 'HOSTS': [], 'METADATA': []}
     section = None
     for line in output.splitlines():
         if line in sections:
@@ -64,6 +70,7 @@ def parse_status(host, partition, output):
     if section != 'METADATA':
         raise RuntimeError('Incomplete Slurm status response.')
     metadata = {}
+    hostlists = dict(line.split('|', 1) for line in sections['HOSTS'] if '|' in line)
     for line in sections['METADATA']:
         fields = line.split('|')
         if len(fields) == 3 and fields[1].isdigit() and fields[2].isdigit():
@@ -101,6 +108,7 @@ def parse_status(host, partition, output):
         slurmy = len(parts) >= 5 and parts[-3:-1] == ('slurmy', 'jobs')
         entry = dict(id=job_id, user=user, name=name, state=state, nodes=node_count,
                      cpus=cpu_count, elapsed=elapsed, limit=limit, nodelist=nodelist,
+                     hostnames=hostlists.get(nodelist, '').split(',') if nodelist in hostlists else [],
                      reason=reason, slurmy=slurmy, slurmy_id=parts[-1] if slurmy else None)
         public = re.fullmatch(r'slurmy:v1:calls=(\d+):batches=(\d+):batch=(\d+)', comment)
         if public and slurmy:
@@ -119,7 +127,7 @@ def parse_status(host, partition, output):
             account['pending'] += 1
     allocated = sum(node['allocated'] for node in nodes)
     total = sum(node['total'] for node in nodes)
-    return dict(host=host, partition=partition, updated=time.time(),
+    return dict(host=host, partition=partition, user=sections['IDENTITY'][0] if sections['IDENTITY'] else '', updated=time.time(),
                 partitions=sections['PARTITIONS'], nodes=nodes, jobs=jobs,
                 users=[dict(name=name, **counts) for name, counts in sorted(users.items())],
                 summary=dict(nodes=len(nodes), free_nodes=sum(n['state'].lower().startswith('idle') for n in nodes),
@@ -143,6 +151,8 @@ def fetch_status(host, partition, timeout=12, node=None):
                                  capture_output=True, timeout=timeout + 15, check=False)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError('Cluster status request timed out.') from exc
+    except OSError as exc:
+        raise RuntimeError(f'Could not start cluster status SSH request: {exc}') from exc
     if process.returncode:
         raise RuntimeError(process.stderr.strip() or f'SSH exited with status {process.returncode}')
     return parse_status(host, partition, process.stdout)

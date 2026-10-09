@@ -49,9 +49,12 @@ def run(
             text=True,
             check=True,
             capture_output=capture,
+            timeout=3600 if command[0] in {'scp', 'rsync'} else 120,
         )
-    except FileNotFoundError as exc:
-        raise BuildError(f"required command is not installed: {command[0]}") from exc
+    except OSError as exc:
+        raise BuildError(f"could not run {command[0]}: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise BuildError(f"{command[0]} timed out; check remote state before retrying") from exc
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
         suffix = f"\n{detail}" if detail else ""
@@ -163,8 +166,9 @@ umask 077
 build_id=$1
 install -d -m 700 "$HOME/slurmy" "$HOME/slurmy/builds"
 root="$HOME/slurmy/builds/$build_id"
-[[ ! -e "$root" ]] || { echo "Build directory already exists: $root" >&2; exit 1; }
-mkdir -m 700 -p -- "$root/incoming"
+staging="$HOME/slurmy/builds/.staging-$build_id"
+[[ ! -e "$root" && ! -e "$staging" ]] || { echo "Build directory already exists: $root" >&2; exit 1; }
+mkdir -m 700 -p -- "$staging"
 """
 
 
@@ -172,8 +176,11 @@ REMOTE_SUBMIT = r"""
 set -euo pipefail
 build_id=$1
 root="$HOME/slurmy/builds/$build_id"
-mv -- "$root"/incoming/* "$root"/
-rmdir -- "$root/incoming"
+staging="$HOME/slurmy/builds/.staging-$build_id"
+[[ -f "$staging/job.sh" && -f "$staging/recipe.sh" && ! -e "$root" ]] || {
+    echo 'Build upload is incomplete or already published.' >&2; exit 1;
+}
+mv -T -- "$staging" "$root"
 cd -- "$root"
 sbatch --parsable job.sh
 """
@@ -227,10 +234,10 @@ def execute_build(args: argparse.Namespace) -> None:
         job_script.write_text(build_job_script(args, has_context=has_context), encoding="utf-8")
         job_script.chmod(0o755)
 
-        run(["ssh", "-T", "--", args.host, "bash", "-s", "--", build_id], input_text=REMOTE_PREPARE)
-        run(["scp", "-q", "--", *(str(path) for path in staging.iterdir()), f"{args.host}:slurmy/builds/{build_id}/incoming/"])
+        run(["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", args.host, "bash", "-s", "--", build_id], input_text=REMOTE_PREPARE)
+        run(["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", *(str(path) for path in staging.iterdir()), f"{args.host}:slurmy/builds/.staging-{build_id}/"])
         submitted = run(
-            ["ssh", "-T", "--", args.host, "bash", "-s", "--", build_id],
+            ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", args.host, "bash", "-s", "--", build_id],
             input_text=REMOTE_SUBMIT,
             capture=True,
         )
@@ -245,7 +252,7 @@ def execute_build(args: argparse.Namespace) -> None:
     while True:
         try:
             state_result = run(
-                ["ssh", "-T", "--", args.host, "bash", "-s", "--", job_id],
+                ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", args.host, "bash", "-s", "--", job_id],
                 input_text=REMOTE_STATE,
                 capture=True,
             )
@@ -267,7 +274,7 @@ def execute_build(args: argparse.Namespace) -> None:
 
     if state != "COMPLETED":
         log = run(
-            ["ssh", "-T", "--", args.host, "bash", "-s", "--", build_id],
+            ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", args.host, "bash", "-s", "--", build_id],
             input_text=REMOTE_LOG,
             capture=True,
         ).stdout.rstrip()
@@ -277,7 +284,7 @@ def execute_build(args: argparse.Namespace) -> None:
         raise BuildError(f"Slurm build job {job_id} ended in state {state or 'UNKNOWN'}")
 
     output.mkdir(parents=True, exist_ok=True)
-    run(["rsync", "-a", "--", f"{args.host}:slurmy/builds/{build_id}/output/", f"{output}/"])
+    run(["rsync", "-a", "--delay-updates", "--partial-dir=.rsync-partial", "-e", "ssh -o BatchMode=yes -o ConnectTimeout=10", "--", f"{args.host}:slurmy/builds/{build_id}/output/", f"{output}/"])
     for artifact in args.artifact:
         if not (output / artifact).exists():
             raise BuildError(f"downloaded output is missing required artifact: {artifact}")

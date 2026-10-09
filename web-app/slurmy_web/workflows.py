@@ -557,12 +557,13 @@ def copyable_solver_configurations(directory):
     resources = {str(path_at(item.get('root', ''), BASE)): item
                  for item in data.get('resources', []) if item.get('role') == 'solver'}
     fields = ('solver_name', 'solver_directory', 'command', 'wc_limit', 'cpu_limit', 'mem_limit',
-              'cores', 'exclusive_cpu', 'exclusive_node')
+              'cores', 'threads_per_core', 'exclusive_cpu', 'exclusive_node')
     seen = set()
     result = []
     for config in configs:
         card = {name: str(config.get(name) or ('false' if name in {'exclusive_cpu', 'exclusive_node'} else ''))
                 for name in fields}
+        card['threads_per_core'] = card['threads_per_core'] or '1'
         if not card['solver_name']:
             card['solver_name'] = Path(shlex.split(card['command'])[0]).name if card['command'].strip() else 'Solver'
         card['solver_directory'] = str(path_at(card['solver_directory'], directory))

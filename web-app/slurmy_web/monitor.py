@@ -412,6 +412,7 @@ class ResultRecord:
     task_key: str = ""
     archive: str = ""
     szs_status: str = ""
+    szs_output: str = ""
     problem: str = ""
     command: str = ""
 
@@ -688,6 +689,7 @@ def parse_result_rows(rows: Any) -> dict[int, ResultRecord]:
             task_key=fields[13],
             archive=fields[14],
             szs_status=fields[15] if len(fields) > 15 else '',
+            szs_output=fields[16] if len(fields) > 16 else '',
         )
     return results
 
@@ -1100,6 +1102,8 @@ class RemoteCollector:
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"SSH refresh timed out after {self.timeout + 20:g}s") from exc
+        except OSError as exc:
+            raise RuntimeError(f"Could not start SSH refresh: {exc}") from exc
         if process.returncode != 0:
             message = process.stderr.decode("utf-8", "replace").strip()
             raise RuntimeError(message or f"ssh exited with status {process.returncode}")
@@ -1121,8 +1125,11 @@ head -c 1048577 -- "$file"
         command = ['ssh', '-T', '-o', 'BatchMode=yes', '-o',
                    f'ConnectTimeout={max(1, int(self.timeout))}', '--', self.host,
                    'bash', '-s', '--', job_id, problem.lstrip('/')]
-        process = subprocess.run(command, input=script.encode(), stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, timeout=self.timeout + 20, check=False)
+        try:
+            process = subprocess.run(command, input=script.encode(), stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, timeout=self.timeout + 20, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f'Could not read the problem over SSH: {exc}') from exc
         if process.returncode:
             raise RuntimeError(process.stderr.decode('utf-8', 'replace').strip() or
                                'The packaged problem could not be read on the cluster.')
@@ -1159,6 +1166,8 @@ head -c 1048577 -- "$file"
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"task-output request timed out after {self.timeout + 30:g}s") from exc
+        except OSError as exc:
+            raise RuntimeError(f"Could not start task-output SSH request: {exc}") from exc
         if process.returncode != 0:
             message = process.stderr.decode("utf-8", "replace").strip()
             raise RuntimeError(message or f"ssh exited with status {process.returncode}")

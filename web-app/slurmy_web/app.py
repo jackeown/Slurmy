@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from collections import Counter
 import base64
+import csv
 import json
 import os
 from pathlib import Path
@@ -82,24 +83,35 @@ def current_workflow_directory(value):
     return str(value)
 
 
-def outcome_breakdown(job):
-    """Count final SZS answers or fallback execution outcomes across all calls."""
+def call_outcome(result):
+    """Return the same display label and source used by the pie chart and call filter."""
     fallback = {'ok': 'OK', 'time-limit': 'Time limit',
                 'counter-satisfiable': 'CounterSatisfiable',
                 'memory-limit': 'Memory limit'}
+    if result is None:
+        return 'Not finished', ''
+    szs = result.szs_status.strip()
+    if result.status == 'solver-error' and szs.casefold() in {
+            'error', 'oserror', 'inputerror', 'syntaxerror', 'semanticerror',
+            'typeerror', 'usageerror'}:
+        return 'Solver error', 'execution'
+    if szs:
+        return szs, 'solver'
+    label = fallback.get(result.status, result.status.replace('-', ' ').capitalize())
+    source = ('resource limiter' if result.status in
+              {'time-limit', 'memory-limit', 'resource-limiter-error'} else
+              'controller' if result.status in {'worker-error', 'interrupted'} else
+              'execution')
+    return label, source
+
+
+def outcome_breakdown(job):
+    """Count final SZS answers or fallback execution outcomes across all calls."""
     counts = Counter()
     by_solver = Counter()
     solver_names = {definition.solver or 'Unknown solver' for definition in job.tasks.values()}
     for task_id, result in job.results.items():
-        szs = result.szs_status.strip()
-        if szs:
-            label, source = szs, 'solver'
-        else:
-            label = fallback.get(result.status, result.status.replace('-', ' ').capitalize())
-            source = ('resource limiter' if result.status in
-                      {'time-limit', 'memory-limit', 'resource-limiter-error'} else
-                      'controller' if result.status in {'worker-error', 'interrupted'} else
-                      'execution')
+        label, source = call_outcome(result)
         counts[(label, source)] += 1
         solver = job.tasks.get(task_id)
         by_solver[(label, source, solver.solver if solver and solver.solver else 'Unknown solver')] += 1
@@ -113,12 +125,24 @@ def outcome_breakdown(job):
         untracked = unfinished - sum(count for (label, source, _), count in by_solver.items() if label == 'Not finished')
         if untracked > 0:
             by_solver[('Not finished', '', 'Unknown solver')] += untracked
+    priority = {('theorem', 'solver'): 0,
+                ('contradictoryaxioms', 'solver'): 1,
+                ('countersatisfiable', 'solver'): 2,
+                ('unsatisfiable', 'solver'): 3,
+                ('satisfiable', 'solver'): 4,
+                ('timeout', 'solver'): 5,
+                ('solver error', 'execution'): 6,
+                ('time limit', 'resource limiter'): 7,
+                ('memory limit', 'resource limiter'): 8,
+                ('resource limiter error', 'resource limiter'): 9,
+                ('not finished', ''): 11}
     return [{'label': label, 'source': source, 'count': count,
              'solvers': [{'name': name, 'count': by_solver[(label, source, name)]}
                          for name in sorted(solver_names | {name for (outcome, origin, name) in by_solver
                                                            if (outcome, origin) == (label, source)}, key=str.casefold)]}
             for (label, source), count in sorted(
-                counts.items(), key=lambda item: (-item[1], item[0][0].lower(), item[0][1]))]
+                counts.items(), key=lambda item: (priority.get((item[0][0].casefold(), item[0][1]), 10),
+                                                  item[0][0].casefold(), item[0][1]))]
 
 
 def submission_phase(log):
@@ -214,6 +238,7 @@ def task_rows(job):
                    return_code=result.return_code if result else '',
                    execution_status=result.status if result else '',
                    szs_status=result.szs_status if result else '',
+                   szs_output=result.szs_output if result else '',
                    will_run=will_run, reason=reason, diagnostic=diagnostic,
                    output=bool(result and result.archive))
 
@@ -496,7 +521,19 @@ def create_app():
     def job_data(job_id):
         job = job_snapshot(job_id, force=request.args.get('fresh') == '1')
         query = request.args.get('q', '').lower()
-        rows = [row for row in task_rows(job) if query in ' '.join(str(v) for v in row.values()).lower()]
+        outcomes = request.args.getlist('outcome')
+        origins = request.args.getlist('origin')
+        if outcomes and not origins:
+            origins = [''] * len(outcomes)
+        if len(outcomes) != len(origins) or any(
+            not label or len(label) > 100 or len(source) > 40
+            for label, source in zip(outcomes, origins)
+        ):
+            abort(400, 'Invalid outcome filter.')
+        selected_outcomes = set(zip(outcomes, origins))
+        rows = [row for row in task_rows(job)
+                if (not selected_outcomes or call_outcome(job.results.get(row['id'])) in selected_outcomes)
+                and query in ' '.join(str(v) for v in row.values()).lower()]
         page_number, per_page, sort, direction = call_page_args()
         rows = sorted_call_rows(rows, sort, direction)
         return jsonify(**summary(job), outcomes=outcome_breakdown(job),
@@ -517,21 +554,30 @@ def create_app():
         new_id = renamed_job_id(job_id, name)
         local_old = REPO / 'job-results' / job_id
         local_new = REPO / 'job-results' / new_id
-        if local_old.is_symlink() or (new_id != job_id and (local_new.exists() or local_new.is_symlink())):
+        verbose_old = REPO / 'job-results' / 'verbose' / job_id
+        verbose_new = REPO / 'job-results' / 'verbose' / new_id
+        if local_old.is_symlink() or verbose_old.is_symlink() or (new_id != job_id and
+                (local_new.exists() or local_new.is_symlink() or verbose_new.exists() or verbose_new.is_symlink())):
             abort(409, 'The local result directory is a symlink or the new job ID already exists locally.')
         script = (REPO / 'implementation/templates/remote_rename_job.sh').read_text(encoding='utf-8')
         encoded = base64.b64encode(name.encode('utf-8')).decode('ascii')
-        result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '--', host(),
-                                 'bash', '-s', '--', job_id, new_id, encoded],
-                                input=script, text=True, capture_output=True, timeout=90, check=False)
+        try:
+            result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host(),
+                                     'bash', '-s', '--', job_id, new_id, encoded],
+                                    input=script, text=True, capture_output=True, timeout=90, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            abort(503, f'Could not confirm the rename over SSH: {exc}. Refresh jobs before retrying.')
         if result.returncode:
             abort(409, result.stderr.strip() or 'Could not rename the cluster job directory.')
         warning = ''
         try:
-            if local_old.is_dir() and new_id != job_id:
-                local_old.rename(local_new)
-            local = local_new if new_id != job_id else local_old
-            if local.is_dir():
+            if new_id != job_id:
+                for old, new in ((local_old, local_new), (verbose_old, verbose_new)):
+                    if old.is_dir():
+                        old.rename(new)
+            for local in (local_new, verbose_new) if new_id != job_id else (local_old, verbose_old):
+                if not local.is_dir():
+                    continue
                 for filename in ('metadata.json', 'sync-metadata.json'):
                     path = local / filename
                     if not path.is_file():
@@ -883,8 +929,10 @@ def create_app():
     def job_action(job_id):
         job = job_snapshot(job_id)
         data = request.get_json()
-        if data.get('action') == 'sync':
+        if data.get('action') in ('sync', 'sync_verbose'):
             argv = [sys.executable, str(REPO/'implementation/slurmy-sync.py'), job_id, '--host', host()]
+            if data['action'] == 'sync_verbose':
+                argv.append('--verbose')
         elif data.get('action') == 'cancel':
             slurm_id = str(data.get('slurm_id', ''))
             valid = {r.array_job_id for r in job.active_records}
@@ -905,7 +953,8 @@ def create_app():
             if any(op['scope'] == host() + ':' + job_id and op['state'] == 'running' for op in operations.values()):
                 abort(409, 'Wait for the active job operation to finish before deleting it.')
         local = REPO / 'job-results' / job_id
-        if local.is_symlink():
+        verbose_local = REPO / 'job-results' / 'verbose' / job_id
+        if local.is_symlink() or verbose_local.is_symlink():
             abort(409, 'The local result directory is a symlink; remove it manually.')
         script = r'''set -euo pipefail
 job="$HOME/slurmy/jobs/$1"
@@ -916,16 +965,55 @@ if squeue -h -u "$USER" -o '%Z' | grep -Fxq -- "$job"; then
 fi
 rm -r -- "$job"
 '''
-        result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '--', host(), 'bash', '-s', '--', job_id],
-                                input=script, text=True, capture_output=True, timeout=60, check=False)
+        try:
+            result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host(), 'bash', '-s', '--', job_id],
+                                    input=script, text=True, capture_output=True, timeout=60, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            abort(503, f'Could not confirm cluster deletion over SSH: {exc}. The local results were kept.')
         if result.returncode:
-            abort(409, result.stderr.strip() or 'Could not delete the cluster job directory.')
-        if local.is_dir():
-            shutil.rmtree(local)
+            abort(409, (result.stderr.strip() or 'Could not delete the cluster job directory.') + ' Local results were kept.')
+        if bool((request.get_json() or {}).get('delete_local')):
+            try:
+                for directory in (local, verbose_local):
+                    if directory.is_dir():
+                        shutil.rmtree(directory)
+            except OSError as exc:
+                abort(500, f'Cluster job was deleted, but local results could not be removed: {exc}')
         with guard:
             announced_jobs.pop((host(), job_id), None)
             cache.clear()
-        return jsonify(deleted=job_id)
+        return jsonify(deleted=job_id, local_deleted=not local.exists() and not verbose_local.exists())
+
+    @app.get('/api/jobs/<job_id>/delete-options')
+    def job_delete_options(job_id):
+        job_id = safe_job(job_id)
+        local = REPO / 'job-results' / job_id
+        verbose_local = REPO / 'job-results' / 'verbose' / job_id
+        if local.is_symlink() or verbose_local.is_symlink():
+            abort(409, 'The local result directory is a symlink; remove it manually.')
+        metadata = verbose_local / 'sync-metadata.json'
+        if not metadata.is_file():
+            metadata = local / 'sync-metadata.json'
+        summary = {}
+        if metadata.is_file():
+            try:
+                summary = json.loads(metadata.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                pass
+        percent = summary.get('percent_complete')
+        calls = local / 'calls.csv'
+        if calls.is_file():
+            try:
+                with calls.open(newline='', encoding='utf-8') as stream:
+                    done = total = 0
+                    for row in csv.DictReader(stream):
+                        total += 1
+                        done += row.get('complete', '').lower() == 'true'
+                percent = 100 * done / total if total else 0
+            except (OSError, UnicodeError, csv.Error):
+                pass
+        return jsonify(synced=local.is_dir() or verbose_local.is_dir(), percent_complete=percent,
+                       updated_at=summary.get('updated_at'))
 
     @app.get('/api/operations/<key>')
     def operation_state(key):

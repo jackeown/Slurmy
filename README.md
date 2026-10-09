@@ -62,8 +62,17 @@ resources on the cluster, and submits the job. The arrow menu also offers
 prepare-only and dispatch-already-prepared actions.
 
 In **Job history**, follow progress and open a job to inspect call outcomes,
-solver comparisons, problems, output streams, and diagnostics. **Sync/Download**
-copies new results to `job-results/` without downloading unchanged files.
+solver comparisons, problems, output streams, and diagnostics. Select a call
+outcomes to filter the calls table by multiple statuses; the 3D plot compares outcome
+counts across solvers. **Sync/Download** saves exactly three files under
+`job-results/JOB_ID/`: `calls.csv`, `solver-logs.tgz`, and
+`solver-errors.tgz`. The arrow menu offers **Complete/verbose sync/download**
+for raw per-call archives, Slurm logs, plans, and metadata under
+`job-results/verbose/JOB_ID/`.
+The workflow editor keeps Slurm settings separate from Review; generating a
+potentially expensive preview is an explicit action. When
+deleting a synced job, you can keep its local copy or remove it too; an
+incomplete last download can be synced first.
 Workflows are reusable definitions; jobs are particular runs of them.
 
 **Cluster status** shows Slurm nodes, CPU allocation, users with active jobs,

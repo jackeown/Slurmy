@@ -26,10 +26,12 @@ to that file; the web app normally saves absolute paths.
 | `wc_limit`, `cpu_limit` | Positive wall-clock and total CPU limits in seconds. |
 | `mem_limit` | Positive memory limit, e.g. `500MB`, `2GiB`; a bare number means MB. |
 | `cores` | Maximum physical cores for the call. |
+| `threads_per_core` | Logical threads per physical core for the call. Optional; defaults to `1`. Slurmy rejects values above the partition's hardware limit. |
 | `cpus` | Physical CPU sockets, or `auto` for cluster-derived placement; the web builder uses `auto`. |
 | `exclusive_cpu`, `exclusive_node` | `true` or `false`: reserve whole sockets or an entire node. Empty values mean false. |
 
-All columns except `solver_name` are required. Use normal CSV quoting for
+All columns except `solver_name`, `threads_per_core`, `exclusive_cpu`, and
+`exclusive_node` are required. Use normal CSV quoting for
 commands containing commas, quotes, or newlines. Solver-command placeholders
 include `{{problem}}`, `{{wc_limit}}`, `{{cpu_limit}}`, `{{mem_limit}}` (decimal
 MB), `{{mem_limit_mib}}` (MiB), and `{{cores}}`. Explicit numeric socket counts
@@ -102,7 +104,8 @@ batches can run concurrently across nodes. A node-exclusive call gets its own
 batch. The batch's Slurm wall-time budget includes all its calls; memory and
 core reservations cover its largest call. Slurmy uses a rolling submission
 window (32 pending/running batches by default) so large jobs can fit cluster
-submission limits. `SLURMY_MAX_OUTSTANDING` changes that window.
+submission limits. This is Slurmy's conservative default, not a known hard
+limit imposed by the cluster; `SLURMY_MAX_OUTSTANDING` changes the window.
 
 Remote jobs live under `~/slurmy/jobs/JOB_ID/`; build jobs live under
 `~/slurmy/builds/`. Results publish per call, so completed calls can be synced
@@ -110,6 +113,25 @@ before the entire job finishes. A partially interrupted submission can be
 resumed using its prepared files; earlier accepted batches and saved results
 are retained. Remote job directories and build directories are private to
 their owner (mode `700`).
+
+Uploads are unpacked in a private staging directory and published by an
+atomic rename only after completion. SSH failures during preparation/upload
+are reported without dispatching a batch. Once `sbatch` begins accepting
+batches, submission is checkpointed per batch rather than globally atomic:
+Slurm cannot roll back allocations already accepted before a connection loss.
+Inspect the reported job ID before attempting a retry.
+If the prepared submit script reports a connection loss during batch submission,
+`SLURMY_RESUME_JOB_ID=JOB_ID bash ./submit.sh` resumes its checkpointed batch
+list without rebuilding or re-uploading inputs.
+
+Each call's result CSV includes `szs_status` and `szs_output`; for example,
+`SZS output end Proof` records `Proof` in `szs_output`. The `time` member of a
+call's original result archive measures the entire per-call limiter invocation,
+including the solver. Runsolver's measurements of the solver tree replace that
+fallback when available. Default sync exports only `calls.csv`,
+`solver-logs.tgz`, and `solver-errors.tgz` into `job-results/JOB_ID/`; original
+archives and diagnostics stay on the cluster. Use `slurmy-sync.py --verbose`
+for all raw files under `job-results/verbose/JOB_ID/`.
 
 Relative solver commands run from their `solver_directory` copy. Local paths
 for listed problems and packaged resources are translated into the cluster's
@@ -130,7 +152,7 @@ when available; `SLURMY_TPTP_ROOT` can override it.
 | Script | Purpose |
 | --- | --- |
 | `slurmy-pairs.py` | Expand configurations × all selected problem globs into an explicit `jobpairs.csv`; supports problem-major, solver-major, or reproducible random order. |
-| `slurmy-sync.py` | Incrementally rsync a job's results into `job-results/JOB_ID/`; use `--follow` to keep updating. |
+| `slurmy-sync.py` | Download the three-file job export into `job-results/JOB_ID/`; `--verbose` downloads raw files, and `--follow` keeps updating. |
 | `slurmy-cancel.py` | Choose an active Slurm allocation to cancel, or provide its ID non-interactively. |
 | `build/slurmy-build.py` | Run one build recipe as a Slurm job and download its artifacts; see the [build guide](build/README.md). |
 | `templates/workflow.mk` | Shared targets for every workflow Makefile; see the [workflow guide](../workflows/README.md). |

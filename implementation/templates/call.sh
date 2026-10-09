@@ -15,7 +15,7 @@ elif [[ -n ${TPTP_DEFAULT_ROOT:-} ]]; then
 fi
 BATCH_ID=$2
 source "$JOB_DIR/csv.sh"
-export OMP_NUM_THREADS=$CORES
+export OMP_NUM_THREADS=$((CORES * THREADS_PER_CORE))
 work=$(mktemp -d "${SLURM_TMPDIR:-${TMPDIR:-/tmp}}/slurmy-call.XXXXXXXX")
 stem=$(printf 'task_%09d_%s' "$TASK_ID" "$TASK_KEY")
 export SOLVER_LOG="$work/$stem.solver.log"
@@ -95,6 +95,8 @@ fi
 szs_status=
 szs_status=$(sed -nE 's/.*SZS[[:space:]]+status[[:space:]]+([A-Za-z][A-Za-z0-9_-]*).*/\1/p' \
     "$SOLVER_LOG" "$SOLVER_STDERR_LOG" "$LIMITER_STDOUT_LOG" 2>/dev/null | tail -n 1 || true)
+szs_output=$(sed -nE 's/.*SZS[[:space:]]+output[[:space:]]+end[[:space:]]+([A-Za-z][A-Za-z0-9_-]*).*/\1/p' \
+    "$SOLVER_LOG" "$SOLVER_STDERR_LOG" "$LIMITER_STDOUT_LOG" 2>/dev/null | tail -n 1 || true)
 if (( interrupted )); then status=interrupted; complete=false
 elif [[ "$memory_out" == true ]]; then status=memory-limit
 elif [[ "$timed_out" == true ]]; then status=time-limit
@@ -111,9 +113,9 @@ archive="batch_${BATCH_ID}_${stem}_${SLURM_JOB_ID:-local}_$(date +%s).tar.gz"
 tar -czf "$JOB_DIR/results/.$archive.tmp" -C "$work" .
 mv "$JOB_DIR/results/.$archive.tmp" "$JOB_DIR/results/$archive"
 result=$(printf '%s/results/batch_%06d_task_%09d.csv' "$JOB_DIR" "$BATCH_ID" "$TASK_ID")
-result_row=$(csv_row "$TASK_ID" "$complete" "$status" "$code" "$wall" "$cpu" "$user" "$system" "$cpu_usage" "$max_vm" "$memory" "${timed_out:-false}" "${memory_out:-false}" "$TASK_KEY" "$archive" "$szs_status")
+result_row=$(csv_row "$TASK_ID" "$complete" "$status" "$code" "$wall" "$cpu" "$user" "$system" "$cpu_usage" "$max_vm" "$memory" "${timed_out:-false}" "${memory_out:-false}" "$TASK_KEY" "$archive" "$szs_status" "$szs_output")
 {
-    csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status
+    csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output
     printf '%s\n' "$result_row"
 } > "$result.tmp"
 mv "$result.tmp" "$result"
@@ -124,7 +126,7 @@ if {
     if [[ -f "$index" ]]; then
         cat "$index"
     else
-        csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status
+        csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output
     fi
     printf '%s\n' "$result_row"
 } > "$index.tmp" && mv "$index.tmp" "$index"; then

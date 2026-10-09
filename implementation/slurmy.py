@@ -20,11 +20,11 @@ from slurmy_archives import expand_axiom_pattern
 
 VERSION = "1.0.0"
 COLUMNS = ("solver_name", "command", "solver_directory", "problem", "wc_limit", "cpu_limit", "mem_limit", "cores",
-           "cpus", "exclusive_cpu", "exclusive_node")
+           "threads_per_core", "cpus", "exclusive_cpu", "exclusive_node")
 RESULT_COLUMNS = ("task_id", "complete", "status", "return_code", "wall_seconds",
                   "cpu_seconds", "user_seconds", "system_seconds", "cpu_usage_percent",
                   "max_virtual_memory_kib", "max_memory_kib", "timed_out", "memory_out",
-                  "task_key", "archive", "szs_status")
+                  "task_key", "archive", "szs_status", "szs_output")
 REPO = Path(__file__).resolve().parents[1]
 PLACEHOLDER = re.compile(r"\{\{([a-z_]+)\}\}")
 PAIR_ORDERS = ("problem-major", "solver-major", "random")
@@ -83,9 +83,9 @@ def read_pairs(filename: Path) -> list[dict]:
     with filename.open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         headers = reader.fieldnames or []
-        required = set(COLUMNS) - {"solver_name", "exclusive_cpu", "exclusive_node"}
+        required = set(COLUMNS) - {"solver_name", "threads_per_core", "exclusive_cpu", "exclusive_node"}
         if len(headers) != len(set(headers)) or not required <= set(headers) or set(headers) - set(COLUMNS):
-            raise SlurmyError(f"{filename}: columns must be {', '.join(COLUMNS)}; exclusivity columns may be omitted")
+            raise SlurmyError(f"{filename}: columns must be {', '.join(COLUMNS)}; threads_per_core and exclusivity columns may be omitted")
         for row in reader:
             label = f"{filename}: row ending at line {reader.line_num}"
             if None in row or any(row.get(key) is None for key in required):
@@ -107,6 +107,8 @@ def read_pairs(filename: Path) -> list[dict]:
                     "solver": solver_name or Path(shlex.split(command)[0]).name}
             for key in ("wc_limit", "cpu_limit", "cores"):
                 task[key] = positive(row[key].strip(), f"{label}: {key}")
+            task["threads_per_core"] = positive((row.get("threads_per_core") or "1").strip(),
+                                                 f"{label}: threads_per_core")
             task["cpus"] = 0 if row.get("cpus", "").strip().lower() in {"", "auto"} else positive(row["cpus"].strip(), f"{label}: cpus")
             task["mem_limit"] = memory_bytes(row["mem_limit"].strip())
             for key in ("exclusive_cpu", "exclusive_node"):
@@ -319,7 +321,8 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             write_script(call / "limiter.sh", limiter_script)
             config = "".join(key.upper() + "=" + shlex.quote(str(value)) + "\n" for key, value in {
                 "task_id": task["task_id"], "task_key": task["task_key"], "batch_id": task["batch_id"],
-                "cores": task["cores"], "cpus": task["cpus"], "wc_limit": task["wc_limit"],
+                "cores": task["cores"], "threads_per_core": task["threads_per_core"],
+                "cpus": task["cpus"], "wc_limit": task["wc_limit"],
                     "solver_root_rel": task['solver_root'].lstrip("/"),
                     "tptp_root_rel": '.slurmy-tptp' if axioms else '',
                     "tptp_default_root": os.environ.get('SLURMY_TPTP_ROOT', '/share/Slurmy-TPTP-v9.2.1')}.items())
@@ -334,13 +337,15 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             config += f"BATCH_ID={i}\nEXCLUSIVE_CPU={int(batch[0]['exclusive_cpu'])}\nEXCLUSIVE_NODE={int(batch[0]['exclusive_node'])}\n"
             config += f"MEMORY_MIB={len(batch) * (max(math.ceil(t['mem_limit'] / 2**20) for t in batch) + 128)}\n"
             config += f"WALL_SECONDS={60 + sum(t['wc_limit'] + 30 for t in batch)}\n"
+            config += shell_array("TASK_THREADS_PER_CORE", [t["threads_per_core"] for t in batch])
             config += f"MAX_CORES={max(t['cores'] for t in batch)}\nMAX_CPUS={max(t['cpus'] for t in batch)}\n"
+            config += f"MAX_THREADS_PER_CORE={max(t['threads_per_core'] for t in batch)}\n"
             (assets / "plans" / f"batch_{i:06d}.sh").write_text(config)
             if progress and ((i + 1) % 100 == 0 or i + 1 == len(batches)):
                 progress('batches', 'Generating Slurm batch plans', i + 1, len(batches))
         if progress:
             progress('phase', 'Finalizing submission files', 0, 0)
-        for name in ("submit.sh", "remote_prepare.sh", "remote_submit.sh", "batch.sh", "call.sh", "timed_call.sh", "csv.sh", "workflow_name.sh"):
+        for name in ("submit.sh", "remote_prepare.sh", "remote_finish_upload.sh", "remote_submit.sh", "batch.sh", "call.sh", "timed_call.sh", "csv.sh", "workflow_name.sh"):
             source = REPO / "implementation/templates" / name
             destination = output if name == "submit.sh" else assets / name
             # A generated file should look newly generated. copy2() preserved the

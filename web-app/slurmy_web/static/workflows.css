@@ -364,13 +364,9 @@ html[data-theme="dark"] .sort-button:hover, html[data-theme="dark"] .sort-button
 .outcome-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 72px; align-items: center; gap: 14px; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
 .outcome-row-button { width: 100%; border: 0; border-bottom: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--ink); text-align: left; font-weight: inherit; cursor: pointer; }
 .outcome-row-button:hover, .outcome-row-button:focus-visible { background: color-mix(in srgb, var(--green) 10%, var(--white)); filter: none; }
-.status-comparison { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line); }
-.status-comparison .section-heading h3 { margin: 0; }
-.status-bar-row { display: grid; grid-template-columns: minmax(110px, 220px) minmax(80px, 1fr) auto; gap: 14px; align-items: center; padding: 8px 0; font-size: 13px; }
-.status-bar-label { overflow-wrap: anywhere; }
-.status-bar-track { height: 20px; border-radius: 4px; background: var(--paper); overflow: hidden; }
-.status-bar-fill { display: block; height: 100%; min-width: 0; background: var(--green); border-radius: 4px; }
-.status-bar-count { font-variant-numeric: tabular-nums; font-weight: 650; }
+.outcome-row-button.selected { background: color-mix(in srgb, var(--green) 18%, var(--white)); box-shadow: inset 3px 0 var(--green); }
+.outcome-filter { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; color: var(--green); font-size: 13px; font-weight: 650; }
+.outcome-filter button { padding: 6px 10px; font-size: 12px; }
 .outcome-cube-action { margin-top: 22px; }
 .outcome-cube-panel { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
 .outcome-cube-panel .section-heading h3 { margin: 0 0 5px; }
@@ -399,5 +395,4 @@ html[data-theme="dark"] .sort-button:hover, html[data-theme="dark"] .sort-button
 #results-overview.refreshing .outcome-layout { opacity: .72; transition: opacity .15s; }
 #results-overview.stale { border-color: color-mix(in srgb, var(--orange) 65%, var(--line)); }
 @media (max-width: 760px) { .outcome-layout { grid-template-columns: 1fr; gap: 20px; } .outcome-pie { width: min(75vw, 240px); margin: 0 auto; } }
-@media (max-width: 760px) { .status-bar-row { grid-template-columns: minmax(90px, 125px) minmax(50px, 1fr) auto; gap: 8px; } }
 @media (max-width: 760px) { .outcome-cube-viewport { height: 430px; } .outcome-cube-panel .section-heading { align-items: flex-start; } }

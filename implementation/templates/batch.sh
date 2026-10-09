@@ -10,6 +10,10 @@ BATCH_ID=${SLURMY_BATCH_ID:-${SLURM_ARRAY_TASK_ID:?}}
 source "$(printf 'batches/batch_%06d.sh' "$BATCH_ID")"
 (( PARALLEL == 1 )) || { echo 'Slurmy batches must run one call at a time.' >&2; exit 1; }
 declare -A ALLOWED=() CORE_CPU=() CORE_SOCKET=() SOCKET_TOTAL=() SOCKET_ALLOWED=() USED=()
+if ! declare -p TASK_THREADS_PER_CORE &>/dev/null; then
+    TASK_THREADS_PER_CORE=()
+    for ((i=0; i<${#TASK_IDS[@]}; i++)); do TASK_THREADS_PER_CORE+=(1); done
+fi
 allowed_list=$(awk '/^Cpus_allowed_list:/ {print $2}' /proc/self/status)
 IFS=, read -r -a ranges <<< "$allowed_list"
 for range in "${ranges[@]}"; do
@@ -22,7 +26,7 @@ while IFS=, read -r cpu core socket; do
     SOCKET_TOTAL[$socket]=$(( ${SOCKET_TOTAL[$socket]:-0} + 1 ))
     if [[ ${ALLOWED[$cpu]:-} ]]; then
         SOCKET_ALLOWED[$socket]=$(( ${SOCKET_ALLOWED[$socket]:-0} + 1 ))
-        CORE_CPU[$key]=${CORE_CPU[$key]:-$cpu}
+        CORE_CPU[$key]=${CORE_CPU[$key]:+${CORE_CPU[$key]},}$cpu
         CORE_SOCKET[$key]=$socket
     fi
 done < <(lscpu -p=CPU,CORE,SOCKET)
@@ -53,14 +57,17 @@ MASKS=()
 last=$((first + PARALLEL))
 (( last <= ${#TASK_IDS[@]} )) || last=${#TASK_IDS[@]}
 for ((index=first; index<last; index++)); do
-    need=${TASK_CORES[$index]}; socket_limit=${TASK_CPUS[$index]}
+    need=${TASK_CORES[$index]}; socket_limit=${TASK_CPUS[$index]}; threads_needed=${TASK_THREADS_PER_CORE[$index]}
     selected=(); reserved=(); used_sockets=0
     for socket in "${sockets[@]}"; do
         (( used_sockets < socket_limit )) || break
         candidates=(); busy=0
         for key in "${core_keys[@]}"; do
             [[ ${CORE_SOCKET[$key]} == "$socket" ]] || continue
-            if [[ ${USED[$key]:-} ]]; then busy=1; else candidates+=("$key"); fi
+            if [[ ${USED[$key]:-} ]]; then busy=1; else
+                IFS=, read -r -a core_threads <<< "${CORE_CPU[$key]}"
+                if (( ${#core_threads[@]} >= threads_needed )); then candidates+=("$key"); fi
+            fi
         done
         if (( EXCLUSIVE_CPU )); then
             (( busy == 0 && ${SOCKET_ALLOWED[$socket]:-0} == ${SOCKET_TOTAL[$socket]} )) || continue
@@ -78,7 +85,12 @@ for ((index=first; index<last; index++)); do
     fi
     if (( ! EXCLUSIVE_CPU )); then reserved=("${selected[@]}"); fi
     mask=
-    for key in "${selected[@]}"; do mask+="${mask:+,}${CORE_CPU[$key]}"; done
+    for key in "${selected[@]}"; do
+        IFS=, read -r -a core_threads <<< "${CORE_CPU[$key]}"
+        for ((thread=0; thread<threads_needed; thread++)); do
+            mask+="${mask:+,}${core_threads[$thread]}"
+        done
+    done
     for key in "${reserved[@]}"; do USED[$key]=1; done
     MASKS+=("$mask")
 done

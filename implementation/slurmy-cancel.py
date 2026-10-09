@@ -80,6 +80,8 @@ def run_remote(
         )
     except subprocess.TimeoutExpired as exc:
         raise CancelError(f"SSH command timed out after {timeout + 20:g}s") from exc
+    except OSError as exc:
+        raise CancelError(f"Could not start SSH command: {exc}") from exc
     if process.returncode != 0:
         message = process.stderr.strip()
         raise CancelError(message or f"ssh exited with status {process.returncode}")

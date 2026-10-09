@@ -9,12 +9,12 @@ JOB_PREFIX=$4
     echo 'Invalid job prefix.' >&2; exit 1;
 }
 mkdir -p "$JOB_DIR/rootfs" "$JOB_DIR/results/index" "$JOB_DIR/progress" "$JOB_DIR/logs"
-if [[ ! -f "$JOB_DIR/metadata.json" ]]; then
+if [[ ! -f "$JOB_DIR/.inputs-ready" ]]; then
     : > "$JOB_DIR/results/index/.ready"
     tar -xzf "$JOB_DIR/incoming/job-files.tar.gz" -C "$JOB_DIR"
     tar -xzf "$JOB_DIR/incoming/inputs.tar.gz" -C "$JOB_DIR/rootfs"
 else
-    echo "Resuming batch submission for $1; preserving existing results and inputs."
+    echo "Using committed inputs for $1; preserving existing results and inputs."
 fi
 cd "$JOB_DIR"
 if [[ ! -f submission.csv ]]; then python3 - "${5:-}" <<'PY'
@@ -65,7 +65,16 @@ csv_row batch_id concurrent_calls reserved_cores memory_mib wall_seconds exclusi
 mkdir -p batches
 next_batch=0
 for plan in plans/batch_*.sh; do
+    unset TASK_THREADS_PER_CORE MAX_THREADS_PER_CORE
     source "$plan"
+    MAX_THREADS_PER_CORE=${MAX_THREADS_PER_CORE:-1}
+    (( MAX_THREADS_PER_CORE >= 1 && MAX_THREADS_PER_CORE <= THREADS_PER_CORE )) || {
+        echo "A jobpair in $plan requests $MAX_THREADS_PER_CORE threads per core; partition $PARTITION supports $THREADS_PER_CORE." >&2; exit 1;
+    }
+    if ! declare -p TASK_THREADS_PER_CORE &>/dev/null; then
+        TASK_THREADS_PER_CORE=()
+        for ((i=0; i<${#TASK_IDS[@]}; i++)); do TASK_THREADS_PER_CORE+=(1); done
+    fi
     MAX_CPUS=0
     for ((i=0; i<${#TASK_IDS[@]}; i++)); do
         if (( TASK_CPUS[i] == 0 )); then
@@ -101,8 +110,9 @@ for plan in plans/batch_*.sh; do
             printf 'TASK_IDS=('; printf ' %q' "${TASK_IDS[@]:first:count}"; printf ' )\n'
             printf 'TASK_CORES=('; printf ' %q' "${TASK_CORES[@]:first:count}"; printf ' )\n'
             printf 'TASK_CPUS=('; printf ' %q' "${TASK_CPUS[@]:first:count}"; printf ' )\n'
-            printf 'BATCH_ID=%s\nPARALLEL=%s\nEXCLUSIVE_CPU=%s\nEXCLUSIVE_NODE=%s\nMAX_CORES=%s\nMAX_CPUS=%s\nMEMORY_MIB=%s\nWALL_SECONDS=%s\n' \
-                "$next_batch" "$parallel" "$EXCLUSIVE_CPU" "$EXCLUSIVE_NODE" "$MAX_CORES" "$MAX_CPUS" "$((parallel * SLOT_MEMORY))" "$wall"
+            printf 'TASK_THREADS_PER_CORE=('; printf ' %q' "${TASK_THREADS_PER_CORE[@]:first:count}"; printf ' )\n'
+            printf 'BATCH_ID=%s\nPARALLEL=%s\nEXCLUSIVE_CPU=%s\nEXCLUSIVE_NODE=%s\nMAX_CORES=%s\nMAX_CPUS=%s\nMAX_THREADS_PER_CORE=%s\nMEMORY_MIB=%s\nWALL_SECONDS=%s\n' \
+                "$next_batch" "$parallel" "$EXCLUSIVE_CPU" "$EXCLUSIVE_NODE" "$MAX_CORES" "$MAX_CPUS" "$MAX_THREADS_PER_CORE" "$((parallel * SLOT_MEMORY))" "$wall"
             printf 'RESERVED_CORES=%s\n' "$((parallel * SLOT_CORES))"
         } > "$file"
         next_batch=$((next_batch + 1))
@@ -113,6 +123,10 @@ sed -i -E "s/\"batch_count\": [0-9]+/\"batch_count\": $next_batch/" metadata.jso
 # Validate every batch before submitting any of them.
 for batch in batches/batch_*.sh; do
     source "$batch"
+    MAX_THREADS_PER_CORE=${MAX_THREADS_PER_CORE:-1}
+    (( MAX_THREADS_PER_CORE >= 1 && MAX_THREADS_PER_CORE <= THREADS_PER_CORE )) || {
+        echo "Batch $BATCH_ID requests $MAX_THREADS_PER_CORE threads per core; partition $PARTITION supports $THREADS_PER_CORE." >&2; exit 1;
+    }
     PARALLEL=${PARALLEL:-${#TASK_IDS[@]}}
     (( MAX_CPUS <= SOCKETS && MAX_CORES <= MAX_CPUS * CORES_PER_SOCKET )) || {
         echo "Batch $BATCH_ID exceeds the node's socket/core capacity." >&2; exit 1;
@@ -178,8 +192,8 @@ for batch in batches/batch_*.sh; do
     OPTIONS=(--parsable --partition="$PARTITION" --job-name="$JOB_PREFIX"
         --comment="slurmy:v1:calls=$TOTAL_CALLS:batches=$next_batch:batch=$BATCH_ID"
         --requeue --open-mode=append
-        --nodes=1 --ntasks="$PARALLEL" --cpus-per-task="$SLOT_CORES"
-        --threads-per-core=1 --distribution=block:block
+        --nodes=1 --ntasks="$PARALLEL" --cpus-per-task="$((SLOT_CORES * MAX_THREADS_PER_CORE))"
+        --threads-per-core="$MAX_THREADS_PER_CORE" --distribution=block:block
         --mem="${MEMORY_MIB}M" --time="$(( (WALL_SECONDS + 59) / 60 ))"
         --array=0-0 --export="ALL,SLURMY_BATCH_ID=$BATCH_ID" --output=logs/slurm_%A_%a.out
         --signal=B:TERM@30)
@@ -211,7 +225,8 @@ for batch in batches/batch_*.sh; do
     done
     ID=${SUBMITTED%%;*}
     [[ "$ID" =~ ^[0-9]+$ ]] || { echo "Invalid sbatch ID: $SUBMITTED" >&2; exit 1; }
-    csv_row "$ID" "$BATCH_ID" 1 "$(date +%s)" "$BATCH_ID" >> submission.csv
+    row=$(csv_row "$ID" "$BATCH_ID" 1 "$(date +%s)" "$BATCH_ID")
+    printf '%s\n' "$row" >> submission.csv
     OUTSTANDING_IDS+=("$ID")
     submitted=$((submitted + 1))
     printf 'submitting %s %s\n' "$submitted" "$next_batch" > submission.state
