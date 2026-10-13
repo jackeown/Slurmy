@@ -59,7 +59,7 @@ Slurmy, and stopping the app does not stop cluster jobs.
 </details>
 
 <details>
-<summary><strong>🌐 Create a workflow and inspect its jobs</strong></summary>
+<summary><strong>🌐 Create a workflow and running a job</strong></summary>
 
 <blockquote>
 
@@ -70,6 +70,21 @@ limiter. Saving a workflow creates its definition locally; it does not submit
 a job. **Prepare & dispatch job** creates the submission files, builds declared
 resources on the cluster, and submits the job. The arrow menu also offers
 prepare-only and dispatch-already-prepared actions.
+
+Example workflows for Vampire, E, and Drodi are read-only; duplicate one to
+edit it. Your saved workflows live in `workflows/my-workflows/`. See
+[workflow structure and Makefile targets](workflows/README.md) for the files the
+app creates and how to use a workflow from the command line. See
+[implementation and CLI details](implementation/README.md) only if you want to
+work below the web interface.
+
+</blockquote>
+</details>
+
+<details>
+<summary><strong>🌐 Looking at job results</strong></summary>
+
+<blockquote>
 
 In **Job history**, follow progress and open a job to inspect call outcomes,
 solver comparisons, problems, output streams, and diagnostics. Select a call
@@ -92,13 +107,6 @@ node to see the jobs currently running on it. For
 new Slurmy submissions, it also shows call and batch counts across users via
 Slurm's queue metadata. Jobs whose private files you can read link to their
 job inspector; older users' jobs may not expose counts.
-
-Example workflows for Vampire, E, and Drodi are read-only; duplicate one to
-edit it. Your saved workflows live in `workflows/my-workflows/`. See
-[workflow structure and Makefile targets](workflows/README.md) for the files the
-app creates and how to use a workflow from the command line. See
-[implementation and CLI details](implementation/README.md) only if you want to
-work below the web interface.
 
 </blockquote>
 </details>
