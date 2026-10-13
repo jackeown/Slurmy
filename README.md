@@ -124,14 +124,15 @@ has the current requirements and login instructions. In brief:
 Host datalab
     HostName cluster.datalab.tuwien.ac.at
     User YOUR_DATALAB_USERNAME
-    IdentityFile ~/.ssh/YOUR_PRIVATE_KEY
+    AddKeysToAgent yes
+    IdentityFile ~/.ssh/YOUR_PRIVATE_KEY_FILE
 ```
 
 Then verify `ssh datalab` works before submitting a workflow. Slurmy uses
 `datalab` by default; set `SLURMY_HOST` or choose another SSH host in the app
 if your alias differs. Choose a partition available to your account in the
-workflow settings. If you are off campus, arrange the TU Wien network or VPN
-access needed to reach the cluster.
+workflow settings. If you are off campus, set up VPN
+access to the TU Wien network to reach the cluster.
 
 </blockquote>
 </details>
