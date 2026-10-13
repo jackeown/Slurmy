@@ -28,6 +28,21 @@ JOB_ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]*$')
 ARCHIVE = re.compile(r'^[A-Za-z0-9._-]+\.tar\.gz$')
 
 
+def safe_name(value: str) -> str:
+    return re.sub(r'[^A-Za-z0-9._-]+', '-', value).strip('._-')[:80] or 'job'
+
+
+def export_names(metadata: dict) -> tuple[str, str, str]:
+    name = safe_name(str(metadata.get('job_name') or metadata.get('job_id') or 'job'))
+    return f'{name}.csv', f'{name}_logs.tgz', f'{name}_errors.tgz'
+
+
+def stream_name(definition: dict, task_id: int, error: bool) -> str:
+    solver = safe_name(str(definition.get('solver') or 'solver'))
+    problem = safe_name(Path(str(definition.get('problem') or 'problem')).stem)
+    return f'{solver}_{problem}_{task_id:09d}{".stderr" if error else ""}.log'
+
+
 def records(root: Path) -> dict[int, dict[str, str]]:
     found = {}
     for path in sorted((root / 'results').glob('batch_*_task_*.csv')):
@@ -49,12 +64,13 @@ def export(root: Path) -> None:
         signature = hashlib.sha256(repr([(path.name, path.stat().st_size, path.stat().st_mtime_ns)
                                          for path in source_files if path.is_file()]).encode()).hexdigest()
         signature_file = directory / '.signature'
-        names = ('calls.csv', 'solver-logs.tgz', 'solver-errors.tgz')
+        metadata = json.loads((root / 'metadata.json').read_text(encoding='utf-8'))
+        names = export_names(metadata)
         if all((directory / name).is_file() for name in names) and signature_file.is_file():
             if signature_file.read_text(encoding='ascii').strip() == signature:
                 print('Export unchanged; reusing the three existing files.', flush=True)
+                print('EXPORT_FILES|' + '|'.join(names), flush=True)
                 return
-        metadata = json.loads((root / 'metadata.json').read_text(encoding='utf-8'))
         definitions = {}
         with (root / 'manifest.jsonl').open(encoding='utf-8') as stream:
             for line in stream:
@@ -64,9 +80,14 @@ def export(root: Path) -> None:
         count = max(int(metadata.get('task_count', 0)), max(definitions, default=-1) + 1)
         with tempfile.TemporaryDirectory(prefix='.export-', dir=directory) as staging_name:
             staging = Path(staging_name)
-            with tarfile.open(staging / 'solver-logs.tgz', 'w:gz') as stdout_tar, \
-                 tarfile.open(staging / 'solver-errors.tgz', 'w:gz') as stderr_tar, \
-                 (staging / 'calls.csv').open('w', newline='', encoding='utf-8') as csv_file:
+            with tarfile.open(staging / names[1], 'w:gz') as stdout_tar, \
+                 tarfile.open(staging / names[2], 'w:gz') as stderr_tar, \
+                 (staging / names[0]).open('w', newline='', encoding='utf-8') as csv_file:
+                for archive, filename in ((stdout_tar, names[1]), (stderr_tar, names[2])):
+                    directory_info = tarfile.TarInfo(filename.removesuffix('.tgz') + '/')
+                    directory_info.type = tarfile.DIRTYPE
+                    directory_info.mode = 0o700
+                    archive.addfile(directory_info)
                 writer = csv.DictWriter(csv_file, fieldnames=EXPORT_FIELDS)
                 writer.writeheader()
                 for task_id in range(count):
@@ -89,15 +110,16 @@ def export(root: Path) -> None:
                                 if not member.isfile():
                                     continue
                                 if member.name.endswith('.solver.log'):
-                                    target, field, suffix = stdout_tar, 'has_solver_stdout', '.log'
+                                    target, field = stdout_tar, 'has_solver_stdout'
                                 elif member.name.endswith('.solver-stderr.log'):
-                                    target, field, suffix = stderr_tar, 'has_solver_stderr', '.stderr.log'
+                                    target, field = stderr_tar, 'has_solver_stderr'
                                 else:
                                     continue
                                 content = source.extractfile(member)
                                 if content is None:
                                     continue
-                                info = tarfile.TarInfo(f'task_{task_id:09d}{suffix}')
+                                archive_root = names[2 if target is stderr_tar else 1].removesuffix('.tgz')
+                                info = tarfile.TarInfo(f'{archive_root}/{stream_name(definition, task_id, target is stderr_tar)}')
                                 info.size = member.size
                                 info.mode = 0o600
                                 target.addfile(info, content)
@@ -110,6 +132,7 @@ def export(root: Path) -> None:
             (staging / '.signature').write_text(signature + '\n', encoding='ascii')
             os.replace(staging / '.signature', signature_file)
         print(f'Export ready: {count} calls', flush=True)
+        print('EXPORT_FILES|' + '|'.join(names), flush=True)
 
 
 def main() -> int:

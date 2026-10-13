@@ -31,6 +31,9 @@ if [[ -n ${SLURMY_RESUME_JOB_ID:-} ]]; then
     exit $?
 fi
 
+# Catch topology mismatches before building, packaging, or uploading anything.
+python "$ASSETS/check_threads.py" "$ASSETS/manifest.jsonl" --host "$HOST" --partition "$SLURMY_PARTITION"
+
 # 1. Build each non-empty building.txt recipe remotely and fetch its outputs.
 echo 'Submission phase: Building dependencies on cluster compute nodes'
 bash "$ASSETS/builds/run.sh"

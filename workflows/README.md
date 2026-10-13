@@ -45,7 +45,9 @@ configuration × problem product into `jobpairs.csv`. Optional
 `axiom-globs.txt` lists custom TPTP axiom inputs. Build commands typed in the
 form are saved as `build-resource-*.sh`. The solver source and problem files
 can remain at their existing paths; they are packaged at submission time.
-Problems can be selected by files, globs, or ZIP/tar archives. If custom axioms
+Problems can be selected by files, globs, ZIP/tar archives, or a cluster TPTP
+pattern such as `tptp://AGT/*.p`. Cluster TPTP problems remain under the
+shared `/share/Slurmy-TPTP-v9.2.1/Problems/` tree. If custom axioms
 are selected, they replace the default shared TPTP library for that job.
 
 The three core inputs are `jobpairs.csv`, `building.txt`, and
@@ -79,6 +81,14 @@ nodes. `SLURMY_MAX_OUTSTANDING` caps the pending/running batches from one job;
 the default is 32, and any positive value is allowed. Slurmy also coordinates
 concurrent submissions under the same cluster Unix user and shares available
 slots fairly; a Slurm-reported or observed submit limit takes precedence.
+The coordinator counts all of your queued and running Slurm allocations,
+including non-Slurmy jobs, before each `sbatch`. Active Slurmy submitters
+divide the remaining capacity fairly: a small job's unused share goes to
+other waiting jobs. A submit-limit rejection records a temporary observed
+ceiling and is retried; the batch is not discarded. The per-job setting is a
+ceiling on *simultaneously pending or running* batches, not on the total
+number that can run over the lifetime of a job.
+
 `BUILD_RECIPES` lists build scripts whose changes should trigger fresh
 submission-file generation. All-pairs workflows add a rule to create
 `jobpairs.csv` from configurations and problem globs; see the
@@ -86,13 +96,14 @@ submission-file generation. All-pairs workflows add a rule to create
 
 | Target | What it does |
 | --- | --- |
-| `make` or `make prepare` | Create or refresh local `submit.sh` and its helper files; do not connect to the cluster. |
+| `make` or `make prepare` | Check the selected partition's thread topology over SSH, then create or refresh local `submit.sh` and its helper files. No job is submitted. |
 | `make prepare-submit` | Prepare if needed, then build declared resources and submit a new job. |
 | `make submit` | Dispatch the **already prepared** files without regenerating them; still rebuild declared resources. |
 | `make build` | Build and download declared resources without submitting the proving job. |
 | `make monitor` | Start or reuse the web app and open this workflow. |
 | `make sync` | Follow and incrementally download the latest job's results. |
-| `make stop` | Choose an active Slurm job to cancel. |
+| `make stop SLURMY_ID=JOB_ID` | Stop the whole Slurmy job and cancel its outstanding Slurm allocations. |
+| `make resume SLURMY_ID=JOB_ID` | Resume only unfinished calls in a stopped job. |
 | `make clean` | Remove generated submission files, leaving definitions and downloaded builds intact. |
 
 Set `SLURMY_HOST` (default `datalab`) and `SLURMY_PARTITION` (default

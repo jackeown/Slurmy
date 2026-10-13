@@ -22,6 +22,15 @@ else
     echo "Using committed inputs for $1; preserving existing results and inputs."
 fi
 cd "$JOB_DIR"
+RESUME_INCOMPLETE=${6:-0}
+if [[ ! -f submission_context.sh ]]; then
+    printf 'SAVED_PARTITION=%q\nSAVED_MAX_OUTSTANDING=%q\nSAVED_JOB_PREFIX=%q\nSAVED_JOB_NAME_B64=%q\n' \
+        "$PARTITION" "${3:-32}" "$JOB_PREFIX" "${5:-}" > submission_context.sh
+fi
+if [[ -f .stopped ]]; then
+    echo 'This job is stopped. Use Resume job before submitting more batches.' >&2
+    exit 1
+fi
 [[ -f ./submit_coordinator.py ]] || {
     echo 'This job predates coordinated submission; resume it with its original prepared submit.sh.' >&2
     exit 1
@@ -154,15 +163,25 @@ from pathlib import Path
 
 with Path('submission.csv').open(newline='', encoding='utf-8') as stream:
     rows = list(csv.DictReader(stream))
-for expected, row in enumerate(rows):
-    if int(row['batch_id']) != expected or not row['slurm_job_id'].isdigit():
+seen = set()
+for row in rows:
+    batch = int(row['batch_id'])
+    if not row['slurm_job_id'].isdigit() or (batch not in seen and batch != len(seen)):
         raise SystemExit('Cannot resume: submission.csv is not a contiguous batch prefix.')
-    print(row['slurm_job_id'])
+    seen.add(batch)
+for row in rows:
+    if int(row['batch_id']) in seen:
+        print(row['slurm_job_id'])
 PY
     )
     OUTSTANDING_IDS=()
     if [[ -n "$prior_ids" ]]; then mapfile -t OUTSTANDING_IDS <<< "$prior_ids"; fi
-    submitted=${#OUTSTANDING_IDS[@]}
+    submitted=$(python3 - <<'PY'
+import csv
+with open('submission.csv', newline='') as stream:
+    print(len({int(row['batch_id']) for row in csv.DictReader(stream)}))
+PY
+    )
 else
     csv_row slurm_job_id offset array_size submitted_epoch batch_id > submission.csv
     OUTSTANDING_IDS=()
@@ -182,11 +201,34 @@ finish_submit() {
 }
 trap finish_submit EXIT
 trap 'exit 1' HUP INT TERM
+declare -A RESUME_WANTED=()
+if (( RESUME_INCOMPLETE )); then
+    mapfile -t RESUME_BATCHES < <(python3 - <<'PY'
+import csv, json
+from pathlib import Path
+metadata = json.loads(Path('metadata.json').read_text())
+done = set()
+for path in Path('results').glob('batch_*_task_*.csv'):
+    try:
+        with path.open(newline='') as stream:
+            row = next(csv.DictReader(stream))
+        if row.get('complete', '').lower() == 'true':
+            done.add(int(row['task_id']))
+    except (OSError, ValueError, StopIteration):
+        pass
+for batch, tasks in enumerate(metadata['planned_batch_tasks']):
+    if any(task not in done for task in tasks):
+        print(batch)
+PY
+    )
+    for batch_id in "${RESUME_BATCHES[@]}"; do RESUME_WANTED[$batch_id]=1; done
+fi
 echo "Slurmy job ID: $1"
 echo "Submission progress: $submitted/$next_batch batches accepted (at most $MAX_OUTSTANDING outstanding)"
 for batch in batches/batch_*.sh; do
     source "$batch"
-    if (( BATCH_ID < submitted )); then continue; fi
+    [[ ! -f .stopped ]] || { echo 'Submission stopped before the next batch.' >&2; exit 1; }
+    if (( BATCH_ID < submitted )) && [[ ! ${RESUME_WANTED[$BATCH_ID]:-} ]]; then continue; fi
     PARALLEL=${PARALLEL:-${#TASK_IDS[@]}}
     SLOT_CORES=$MAX_CORES
     if (( EXCLUSIVE_CPU )); then SLOT_CORES=$((MAX_CPUS * CORES_PER_SOCKET)); fi
@@ -210,6 +252,7 @@ for batch in batches/batch_*.sh; do
     fi
     if (( EXCLUSIVE_NODE )); then OPTIONS+=(--exclusive); fi
     while :; do
+        [[ ! -f .stopped ]] || { echo 'Submission stopped before the next batch.' >&2; exit 1; }
         if ! SUBMITTED=$(python3 "$JOB_DIR/submit_coordinator.py" attempt "$SLURMY_JOB_ID" "$MAX_OUTSTANDING" -- "${OPTIONS[@]}" batch.sh); then
             printf '%s\n' "$SUBMITTED" >&2
             exit 1
@@ -232,7 +275,7 @@ for batch in batches/batch_*.sh; do
     row=$(csv_row "$ID" "$BATCH_ID" 1 "$(date +%s)" "$BATCH_ID")
     printf '%s\n' "$row" >> submission.csv
     OUTSTANDING_IDS+=("$ID")
-    submitted=$((submitted + 1))
+    if (( BATCH_ID >= submitted )); then submitted=$((submitted + 1)); fi
     printf 'submitting %s %s\n' "$submitted" "$next_batch" > submission.state
     echo "Batch $BATCH_ID: Slurm $ID ($submitted/$next_batch accepted)"
 done

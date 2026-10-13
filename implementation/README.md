@@ -22,7 +22,7 @@ to that file; the web app normally saves absolute paths.
 | `solver_name` | Optional display label for this solver configuration. |
 | `command` | Solver shell command; may use the placeholders below. |
 | `solver_directory` | Local runtime directory, copied to the cluster and used as the command's working directory. |
-| `problem` | Local problem file for this call. |
+| `problem` | Local problem file, or `tptp:/share/Slurmy-TPTP-v9.2.1/Problems/...` for a shared cluster problem. |
 | `wc_limit`, `cpu_limit` | Positive wall-clock and total CPU limits in seconds. |
 | `mem_limit` | Positive memory limit, e.g. `500MB`, `2GiB`; a bare number means MB. |
 | `cores` | Maximum physical cores for the call. |
@@ -95,10 +95,12 @@ python /path/to/Slurmy/implementation/slurmy.py jobpairs.csv building.txt resour
 bash ./submit.sh
 ```
 
-Preparation does not connect to the cluster and refuses to overwrite an
+Direct `slurmy.py` preparation does not connect to the cluster and refuses to overwrite an
 existing `submit.sh` or `submit.sh.files/`. Submission builds resources on
 compute nodes, downloads their artifacts, packages local inputs, and submits
-Slurm tasks. The generated `submit.sh.files/` directory holds readable remote
+Slurm tasks. Dispatch checks threads per core over SSH before any build or
+upload. Workflow Makefiles also check during `make prepare`, and the web
+builder checks before previewing or saving. The generated `submit.sh.files/` directory holds readable remote
 prepare/submit scripts, batch and call runners, call definitions, build
 drivers, and metadata. Use the workflow's `make prepare-submit` to handle
 regeneration when inputs change.
@@ -137,9 +139,11 @@ Each call's result CSV includes `szs_status` and `szs_output`; for example,
 `SZS output end Proof` records `Proof` in `szs_output`. The `time` member of a
 call's original result archive measures the entire per-call limiter invocation,
 including the solver. Runsolver's measurements of the solver tree replace that
-fallback when available. Default sync exports only `calls.csv`,
-`solver-logs.tgz`, and `solver-errors.tgz` into `job-results/JOB_ID/`; original
-archives and diagnostics stay on the cluster. Use `slurmy-sync.py --verbose`
+fallback when available. Default sync exports only `<job-name>.csv`,
+`<job-name>_logs.tgz`, and `<job-name>_errors.tgz` into `job-results/JOB_ID/`.
+Each archive extracts into a same-named top-level directory and contains logs
+named for solver configuration, problem, and jobpair ID. Original archives
+and diagnostics stay on the cluster. Use `slurmy-sync.py --verbose`
 for all raw files under `job-results/verbose/JOB_ID/`.
 
 Relative solver commands run from their `solver_directory` copy. Local paths
@@ -163,6 +167,8 @@ when available; `SLURMY_TPTP_ROOT` can override it.
 | `slurmy-pairs.py` | Expand configurations × all selected problem globs into an explicit `jobpairs.csv`; supports problem-major, solver-major, or reproducible random order. |
 | `slurmy-sync.py` | Download the three-file job export into `job-results/JOB_ID/`; `--verbose` downloads raw files, and `--follow` keeps updating. |
 | `slurmy-cancel.py` | Choose an active Slurm allocation to cancel, or provide its ID non-interactively. |
+| `slurmy-job.py` | Stop or resume an entire Slurmy job by ID (`stop` or `resume`); resume keeps completed calls. |
+| `check_threads.py` | Check requested threads per core against the selected partition before preparation or dispatch. |
 | `build/slurmy-build.py` | Run one build recipe as a Slurm job and download its artifacts; see the [build guide](build/README.md). |
 | `submit_coordinator.py` | Cluster-side helper that serializes `sbatch` attempts and fairly shares a user's available submission slots. It is packaged automatically; users do not run it directly. |
 | `templates/workflow.mk` | Shared targets for every workflow Makefile; see the [workflow guide](../workflows/README.md). |

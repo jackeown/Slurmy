@@ -539,7 +539,7 @@ class JobSnapshot:
         )
         setup_incomplete = not self.metadata and not self.submission_offsets and not self.slurm
         submission_incomplete = (self.submission_state == 'failed' or
-                                 (self.submission_state != 'submitting' and
+                                 (self.submission_state not in {'submitting', 'stopped'} and
                                   bool(self.submitted_batches) and
                                   self.batch_count > len(self.submitted_batches) and
                                   not self.active_records))
@@ -586,6 +586,8 @@ class JobSnapshot:
             return "PENDING"
         if self.task_count and self.completed >= self.task_count:
             return "DONE" if not self.issue_count else "DONE · ERRORS"
+        if self.submission_state == 'stopped':
+            return 'STOPPED'
         if self.submission_state == 'submitting':
             return 'SUBMITTING'
         historical_states = {slurm_state_code(record.state) for record in self.slurm}
@@ -885,7 +887,7 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
 
     for job_id, job in jobs.items():
         state_fields = submission_states.get(job_id, '').split()
-        if len(state_fields) >= 2 and state_fields[0] in {'submitting', 'complete', 'failed'}:
+        if len(state_fields) >= 2 and state_fields[0] in {'submitting', 'complete', 'failed', 'stopped'}:
             job.submission_state = state_fields[0]
             job.submission_count = int(state_fields[1]) if state_fields[1].isdigit() else 0
         try:
@@ -1118,7 +1120,12 @@ class RemoteCollector:
             raise ValueError('Invalid problem path.')
         script = r'''set -euo pipefail
 root=$(realpath -e -- "$HOME/slurmy/jobs/$1/rootfs")
-file=$(realpath -e -- "$root/$2")
+if [[ "$2" == /share/Slurmy-TPTP-v9.2.1/Problems/* ]]; then
+    root=$(realpath -e -- /share/Slurmy-TPTP-v9.2.1/Problems)
+    file=$(realpath -e -- "$2")
+else
+    file=$(realpath -e -- "$root/$2")
+fi
 [[ "$file" == "$root/"* && -f "$file" ]] || exit 2
 head -c 1048577 -- "$file"
 '''

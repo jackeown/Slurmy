@@ -14,7 +14,7 @@ LIMITER ?= resource_limiter_template.txt
 BUILD_RECIPES ?=
 AXIOMS ?=
 
-.PHONY: all prepare prepare-submit submit monitor sync stop clean build
+.PHONY: all prepare prepare-submit submit monitor sync stop resume clean build
 all: prepare
 
 # Keep the generated submission complete and current. This target is deliberately
@@ -24,9 +24,11 @@ prepare:
 	@if [ ! -f submit.sh ] || [ ! -d submit.sh.files ]; then \
 		rm -f -- submit.sh; rm -rf -- submit.sh.files; \
 	fi
+	@$(MAKE) --no-print-directory $(JOBPAIRS)
+	@python '$(REPO_ROOT)/implementation/check_threads.py' '$(JOBPAIRS)' --host '$(SLURMY_HOST)' --partition '$(SLURMY_PARTITION)'
 	@$(MAKE) --no-print-directory submit.sh
 
-submit.sh: Makefile $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES) $(REPO_ROOT)/implementation/slurmy.py $(REPO_ROOT)/implementation/package_inputs.py $(REPO_ROOT)/implementation/submit_coordinator.py $(REPO_ROOT)/implementation/build/slurmy-build.py $(REPO_ROOT)/implementation/templates/workflow.mk $(wildcard $(REPO_ROOT)/implementation/templates/*.sh)
+submit.sh: Makefile $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES) $(REPO_ROOT)/implementation/slurmy.py $(REPO_ROOT)/implementation/check_threads.py $(REPO_ROOT)/implementation/package_inputs.py $(REPO_ROOT)/implementation/submit_coordinator.py $(REPO_ROOT)/implementation/build/slurmy-build.py $(REPO_ROOT)/implementation/templates/workflow.mk $(wildcard $(REPO_ROOT)/implementation/templates/*.sh)
 	@if [ -e submit.sh ] || [ -d submit.sh.files ]; then \
 		printf '♻️  Inputs changed; refreshing generated submission files.\n'; \
 		rm -f -- submit.sh; rm -rf -- submit.sh.files; \
@@ -52,7 +54,11 @@ monitor:
 sync:
 	cd '$(REPO_ROOT)' && python ./implementation/slurmy-sync.py $(SLURMY_ID) --host '$(SLURMY_HOST)' --follow --interval 2
 stop:
-	python '$(REPO_ROOT)/implementation/slurmy-cancel.py' --host '$(SLURMY_HOST)'
+	@test -n '$(SLURMY_ID)' || { printf 'Set SLURMY_ID to the Slurmy job ID to stop.\n' >&2; exit 1; }
+	python '$(REPO_ROOT)/implementation/slurmy-job.py' stop '$(SLURMY_ID)' --host '$(SLURMY_HOST)'
+resume:
+	@test -n '$(SLURMY_ID)' || { printf 'Set SLURMY_ID to the stopped Slurmy job ID to resume.\n' >&2; exit 1; }
+	python '$(REPO_ROOT)/implementation/slurmy-job.py' resume '$(SLURMY_ID)' --host '$(SLURMY_HOST)'
 clean:
 	rm -f -- submit.sh
 	rm -rf -- submit.sh.files

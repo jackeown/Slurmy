@@ -396,3 +396,6 @@ html[data-theme="dark"] .sort-button:hover, html[data-theme="dark"] .sort-button
 #results-overview.stale { border-color: color-mix(in srgb, var(--orange) 65%, var(--line)); }
 @media (max-width: 760px) { .outcome-layout { grid-template-columns: 1fr; gap: 20px; } .outcome-pie { width: min(75vw, 240px); margin: 0 auto; } }
 @media (max-width: 760px) { .outcome-cube-viewport { height: 430px; } .outcome-cube-panel .section-heading { align-items: flex-start; } }
+.cluster-node-jobs-inline summary { cursor: pointer; font-weight: 600; }
+.cluster-node-job-list { margin: .5rem 0 .25rem 1.2rem; min-width: 18rem; font-size: .9rem; line-height: 1.6; }
+.cluster-node-job-list > div + div { border-top: 1px solid var(--border, #7774); }

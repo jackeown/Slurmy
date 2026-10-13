@@ -10,15 +10,16 @@ import sys
 import tempfile
 
 from slurmy import COLUMNS, PAIR_ORDERS, SlurmyError, order_jobpairs, path_at, read_pairs
-from slurmy_archives import expand_problem_pattern
+from slurmy_archives import expand_problem_pattern, expand_cluster_tptp
 
 
 def expand(configurations: list[Path], patterns: list[str], output: Path,
            order: str = "solver-major") -> int:
-    problems: set[Path] = set()
+    problems: set[str] = set()
     for pattern in patterns:
-        matches = expand_problem_pattern(pattern)
-        problems.update(matches)
+        matches = (expand_cluster_tptp(pattern, os.environ.get('SLURMY_HOST', 'datalab'))
+                   if pattern.startswith('tptp://') else expand_problem_pattern(pattern))
+        problems.update(map(str, matches))
     rows = []
     for filename in configurations:
         with filename.open(encoding="utf-8-sig", newline="") as stream:
@@ -69,7 +70,7 @@ def main() -> int:
     try:
         patterns = [p for group in args.problems for p in group]
         if args.problem_globs_file:
-            patterns.extend(str(path_at(line, args.problem_globs_file.resolve().parent))
+            patterns.extend(line if line.startswith('tptp://') else str(path_at(line, args.problem_globs_file.resolve().parent))
                             for line in args.problem_globs_file.read_text().splitlines() if line.strip())
         if not patterns:
             raise SlurmyError("provide --problems or --problem-globs-file")

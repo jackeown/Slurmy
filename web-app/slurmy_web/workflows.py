@@ -12,7 +12,8 @@ import tempfile
 import time
 
 from slurmy import COLUMNS, PAIR_ORDERS, generate, order_jobpairs, path_at, positive, read_builds, read_pairs
-from slurmy_archives import expand_axiom_pattern, expand_problem_pattern
+from slurmy_archives import expand_axiom_pattern, expand_problem_pattern, expand_cluster_tptp
+from check_threads import check_requested
 
 REPO = Path(__file__).resolve().parents[2]
 USER_RUNS = REPO / 'workflows/my-workflows'
@@ -46,9 +47,11 @@ def expand_repo_root(value):
     return None
 
 
-def problem_glob(value, materialize=True, progress=None):
+def problem_glob(value, materialize=True, progress=None, host='datalab'):
     if not isinstance(value, str) or not value.strip():
         raise ValueError('Enter a problem path or glob.')
+    if value.startswith('tptp://'):
+        return value, expand_cluster_tptp(value, host)
     pattern = str(expand_repo_root(value.strip()) or path_at(value.strip(), BASE))
     files = [str(path) for path in expand_problem_pattern(pattern, materialize, progress)]
     return pattern, files
@@ -77,8 +80,11 @@ def imported_rows(filename, configurations=False, check_paths=True):
         row['solver_directory'] = str(existing(row.get('solver_directory'), 'directory', filename.parent)
                                       if check_paths else path_at(row.get('solver_directory', ''), filename.parent))
         if not configurations:
-            row['problem'] = str(existing(row.get('problem'), base=filename.parent)
-                                 if check_paths else path_at(row.get('problem', ''), filename.parent))
+            if str(row.get('problem') or '').startswith('tptp:'):
+                row['problem'] = str(row['problem'])
+            else:
+                row['problem'] = str(existing(row.get('problem'), base=filename.parent)
+                                     if check_paths else path_at(row.get('problem', ''), filename.parent))
     return rows
 
 
@@ -124,11 +130,18 @@ def specification(data, destination_override=None, progress=None):
             names = [row['solver_name'].casefold() for row in configs]
             if len(names) != len(set(names)):
                 raise ValueError('Give each solver configuration a distinct name.')
+        # Validate against the selected cluster before expanding large archives
+        # or constructing the Cartesian product of configurations and problems.
+        maximum = max(positive(str(row.get('threads_per_core') or 1), 'threads per core')
+                      for row in configs)
+        if progress:
+            progress('phase', 'Checking selected partition’s thread topology', 0, 0)
+        check_requested(host, partition, maximum)
         problems = set()
         if progress:
             progress('phase', 'Finding selected problems and inspecting archives', 0, 0)
         for value in data.get('globs', []):
-            pattern, matches = problem_glob(value, progress=progress)
+            pattern, matches = problem_glob(value, progress=progress, host=host)
             patterns.append(pattern)
             problems.update(matches)
         if not problems:
@@ -136,6 +149,12 @@ def specification(data, destination_override=None, progress=None):
         rows = [{**row, 'problem': problem} for row in configs for problem in sorted(problems)]
     else:
         raise ValueError('Choose how to define solver/problem calls.')
+    if mode == 'jobpairs':
+        maximum = max(positive(str(row.get('threads_per_core') or 1), 'threads per core')
+                      for row in rows)
+        if progress:
+            progress('phase', 'Checking selected partition’s thread topology', 0, 0)
+        check_requested(host, partition, maximum)
     rows = order_jobpairs(rows, pair_order)
     axiom_patterns = []
     if data.get('axiom_mode') == 'custom' and not data.get('axiom_globs'):
@@ -527,7 +546,8 @@ def decisions(directory, check_paths=True):
     if config_file.is_file() and glob_values:
         configs = imported_rows(config_file, True, check_paths)
         mode = 'interactive'
-        globs = [str(expand_repo_root(value) or path_at(value, directory)) for value in glob_values]
+        globs = [value if value.startswith('tptp://') else str(expand_repo_root(value) or path_at(value, directory))
+                 for value in glob_values]
         jobpairs = ''
     else:
         configs, globs, mode, jobpairs = [], [], 'jobpairs', str(directory / 'jobpairs.csv')

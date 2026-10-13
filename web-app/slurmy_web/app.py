@@ -159,6 +159,8 @@ def submission_phase(log):
 
 def unfinished_call(job, task_id, progress):
     """Explain a missing result using this call's actual Slurm batch."""
+    if job.submission_state == 'stopped':
+        return 'stopped', 'After resume', 'This job was stopped. Resume it to run this unfinished call.', ''
     batch_id = job.task_batches.get(task_id)
     if batch_id is None and progress:
         batch_id = progress.batch_id
@@ -213,6 +215,11 @@ def task_rows(job):
         reason = ''
         diagnostic = ''
         wall = None
+        batch_id = job.task_batches.get(task_id, task_id // job.batch_size)
+        allocations = [record for record in job.slurm if record.array_task_id.isdigit()
+                       and job.submission_offsets.get(record.array_job_id, 0) + int(record.array_task_id) == batch_id]
+        allocations.sort(key=lambda record: record.source != 'queue')
+        allocation = allocations[0] if allocations else None
         if result:
             state, wall = result.szs_status or result.status.replace('-', ' '), result.wall_seconds
             if result.status in {'resource-limiter-error', 'worker-error', 'interrupted'}:
@@ -240,10 +247,12 @@ def task_rows(job):
                    szs_status=result.szs_status if result else '',
                    szs_output=result.szs_output if result else '',
                    will_run=will_run, reason=reason, diagnostic=diagnostic,
+                   node=(allocation.location if allocation and allocation.state.upper().startswith(('RUNNING', 'COMPLETING')) else ''),
+                   slurm_id=allocation.display_id if allocation else '',
                    output=bool(result and result.archive))
 
 
-CALL_SORT_FIELDS = {'id', 'solver', 'problem', 'state', 'will_run', 'reason', 'cpu', 'wall', 'memory'}
+CALL_SORT_FIELDS = {'id', 'solver', 'problem', 'state', 'will_run', 'node', 'reason', 'cpu', 'wall', 'memory'}
 
 
 def sorted_call_rows(rows, field, direction):
@@ -658,7 +667,7 @@ def create_app():
                 from slurmy_archives import expand_axiom_pattern
                 matches = [str(path) for path, _ in expand_axiom_pattern(pattern, materialize=False)]
             else:
-                pattern, matches = workflows.problem_glob(data.get('value'), materialize=False)
+                pattern, matches = workflows.problem_glob(data.get('value'), materialize=False, host=host())
             return jsonify(path=pattern, count=len(matches), sample=matches[:5])
         value = workflows.existing(data.get('value'), data.get('kind'))
         return jsonify(path=str(value))
@@ -933,6 +942,9 @@ def create_app():
             argv = [sys.executable, str(REPO/'implementation/slurmy-sync.py'), job_id, '--host', host()]
             if data['action'] == 'sync_verbose':
                 argv.append('--verbose')
+        elif data.get('action') in ('stop', 'resume'):
+            argv = [sys.executable, str(REPO/'implementation/slurmy-job.py'),
+                    data['action'], safe_job(job_id), '--host', host()]
         elif data.get('action') == 'cancel':
             slurm_id = str(data.get('slurm_id', ''))
             valid = {r.array_job_id for r in job.active_records}
@@ -947,6 +959,8 @@ def create_app():
     def delete_job(job_id):
         job_id = safe_job(job_id)
         job = job_snapshot(job_id)
+        if job.percent < 100 and job.submission_state != 'stopped':
+            abort(409, 'Stop this unfinished job and wait for Stop to complete before deleting it.')
         if job.active_records:
             abort(409, 'This job still has active Slurm allocations. Cancel them and wait for completion before deleting it.')
         with guard:
@@ -959,10 +973,15 @@ def create_app():
         script = r'''set -euo pipefail
 job="$HOME/slurmy/jobs/$1"
 [[ -d "$job" && ! -L "$job" ]] || { echo 'Job directory not found or is a symlink.' >&2; exit 2; }
-if squeue -h -u "$USER" -o '%Z' | grep -Fxq -- "$job"; then
+snapshot=$(squeue -h -r -u "$USER" -o '%Z') || { echo 'Cannot confirm Slurm queue state; deletion refused.' >&2; exit 3; }
+if grep -Fxq -- "$job" <<< "$snapshot"; then
     echo 'Slurm still has an active allocation for this job.' >&2
     exit 3
 fi
+flock -n "$job/.submit-controller.lock" true || {
+    echo 'The submission controller is still active.' >&2
+    exit 3
+}
 rm -r -- "$job"
 '''
         try:
@@ -1001,7 +1020,7 @@ rm -r -- "$job"
             except (OSError, ValueError):
                 pass
         percent = summary.get('percent_complete')
-        calls = local / 'calls.csv'
+        calls = next(iter(sorted(local.glob('*.csv'))), local / 'calls.csv')
         if calls.is_file():
             try:
                 with calls.open(newline='', encoding='utf-8') as stream:

@@ -499,7 +499,17 @@ def consolidate_solver_streams(destination: Path, records: dict[int, dict[str, A
     fingerprint = hashlib.sha256(repr([(task_id, path.name, size, mtime)
                                        for task_id, path, size, mtime in sources]).encode()).hexdigest()
     marker = destination / 'solver-streams.json'
-    outputs = (destination / 'solver-logs.tgz', destination / 'solver-errors.tgz')
+    try:
+        metadata = json.loads((destination / 'metadata.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        metadata = {}
+    job_name = re.sub(r'[^A-Za-z0-9._-]+', '-', str(metadata.get('job_name') or destination.name)).strip('._-')[:80] or 'job'
+    outputs = (destination / f'{job_name}_logs.tgz', destination / f'{job_name}_errors.tgz')
+    try:
+        definitions = {int(item['task_id']): item for item in
+                       (json.loads(line) for line in (destination / 'manifest.jsonl').read_text(encoding='utf-8').splitlines())}
+    except (OSError, ValueError, KeyError):
+        definitions = {}
     if all(path.is_file() for path in outputs) and marker.is_file():
         try:
             if json.loads(marker.read_text(encoding='utf-8')).get('fingerprint') == fingerprint:
@@ -513,6 +523,11 @@ def consolidate_solver_streams(destination: Path, records: dict[int, dict[str, A
             os.close(fd)
             temporary.append(Path(name))
         with tarfile.open(temporary[0], 'w:gz') as stdout_tar, tarfile.open(temporary[1], 'w:gz') as stderr_tar:
+            for archive, target in ((stdout_tar, outputs[0]), (stderr_tar, outputs[1])):
+                directory_info = tarfile.TarInfo(target.name.removesuffix('.tgz') + '/')
+                directory_info.type = tarfile.DIRTYPE
+                directory_info.mode = 0o700
+                archive.addfile(directory_info)
             for index, (task_id, source, _, _) in enumerate(sources, 1):
                 with tarfile.open(source, 'r:gz') as call_tar:
                     for member in call_tar:
@@ -525,7 +540,12 @@ def consolidate_solver_streams(destination: Path, records: dict[int, dict[str, A
                         stream = call_tar.extractfile(member)
                         if stream is None:
                             continue
-                        info = tarfile.TarInfo(f'task_{task_id:09d}.log' if stdout else f'task_{task_id:09d}.stderr.log')
+                        definition = definitions.get(task_id, {})
+                        solver = re.sub(r'[^A-Za-z0-9._-]+', '-', str(definition.get('solver') or 'solver')).strip('._-')[:80] or 'solver'
+                        problem = re.sub(r'[^A-Za-z0-9._-]+', '-', Path(str(definition.get('problem') or 'problem')).stem).strip('._-')[:80] or 'problem'
+                        suffix = '.log' if stdout else '.stderr.log'
+                        archive_root = outputs[0 if stdout else 1].name.removesuffix('.tgz')
+                        info = tarfile.TarInfo(f'{archive_root}/{solver}_{problem}_{task_id:09d}{suffix}')
                         info.size = member.size
                         info.mode = 0o600
                         (stdout_tar if stdout else stderr_tar).addfile(info, stream)
@@ -593,7 +613,6 @@ def compact_sync_loop(args: argparse.Namespace) -> int:
     """Download only the cluster-built CSV and two solver-stream archives."""
     job_id = resolve_job_id(args.host, args.job_id, args.ssh_timeout)
     destination = Path(args.output).expanduser() if args.output else Path.cwd() / 'job-results' / job_id
-    expected = {'calls.csv', 'solver-logs.tgz', 'solver-errors.tgz'}
     if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
         raise SyncError(f'output path is not a normal directory: {destination}')
     exporter = Path(__file__).with_name('remote_export.py')
@@ -601,6 +620,7 @@ def compact_sync_loop(args: argparse.Namespace) -> int:
         raise SyncError('Both ssh and rsync must be installed and on PATH.')
     while True:
         print(f'Preparing three-file export for {job_id} on {args.host}…', flush=True)
+        expected = None
         command = ['ssh', '-T', '-o', 'BatchMode=yes', '-o',
                    f'ConnectTimeout={max(1, int(args.ssh_timeout))}', '-o',
                    'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
@@ -612,11 +632,19 @@ def compact_sync_loop(args: argparse.Namespace) -> int:
                 assert process.stdout is not None
                 for line in process.stdout:
                     print(line, end='', flush=True)
+                    if line.startswith('EXPORT_FILES|'):
+                        candidate = line.strip().split('|')[1:]
+                        if (len(candidate) == 3 and
+                                all(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', name) for name in candidate) and
+                                candidate[0].endswith('.csv') and all(name.endswith('.tgz') for name in candidate[1:])):
+                            expected = tuple(candidate)
                 code = process.wait()
         except OSError as exc:
             raise SyncError(f'Could not prepare remote export over SSH: {exc}') from exc
         if code:
             raise SyncError(f'Remote export failed (SSH exit {code}); existing local files were kept.')
+        if expected is None:
+            raise SyncError('Remote export did not report its three output filenames.')
         if destination.is_dir() and any(item.name not in expected for item in destination.iterdir()):
             if args.output:
                 raise SyncError('This output directory contains verbose files; choose an empty directory for the three-file download.')
@@ -640,7 +668,7 @@ def compact_sync_loop(args: argparse.Namespace) -> int:
             raise SyncError(result.stderr.strip() or f'rsync exited with status {result.returncode}')
         if not all((destination / name).is_file() for name in expected):
             raise SyncError('The cluster export was incomplete; no successful download was reported.')
-        with (destination / 'calls.csv').open(newline='', encoding='utf-8') as source:
+        with (destination / expected[0]).open(newline='', encoding='utf-8') as source:
             completed = total = 0
             for row in csv.DictReader(source):
                 total += 1

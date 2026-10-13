@@ -64,8 +64,9 @@ Slurmy, and stopping the app does not stop cluster jobs.
 <blockquote>
 
 Open **New workflow** in the app, or start with an example under **Workflows**.
-The guided form covers solver commands and builds, problems and optional TPTP
-axioms, the resource limiter, and Slurm settings. Runsolver is the default
+The guided form covers solver commands and builds, local or shared cluster
+TPTP problems, optional TPTP axioms, the resource limiter, and Slurm settings.
+Runsolver is the default
 limiter. Saving a workflow creates its definition locally; it does not submit
 a job. **Prepare & dispatch job** creates the submission files, builds declared
 resources on the cluster, and submits the job. The arrow menu also offers
@@ -87,24 +88,30 @@ work below the web interface.
 <blockquote>
 
 In **Job history**, follow progress and open a job to inspect call outcomes,
-solver comparisons, problems, output streams, and diagnostics. Select a call
+solver comparisons, problems, output streams, and diagnostics. Select call
 outcomes to filter the calls table by multiple statuses; the 3D plot compares outcome
 counts across solvers. **Sync/Download** saves exactly three files under
-`job-results/JOB_ID/`: `calls.csv`, `solver-logs.tgz`, and
-`solver-errors.tgz`. The arrow menu offers **Complete/verbose sync/download**
+`job-results/JOB_ID/`: `<job-name>.csv`, `<job-name>_logs.tgz`, and
+`<job-name>_errors.tgz`. Each archive extracts into its own directory, with
+one descriptively named log per call. Unsafe filename characters in the job
+name are replaced with hyphens. The arrow menu offers
+**Complete/verbose sync/download**
 for raw per-call archives, Slurm logs, plans, and metadata under
 `job-results/verbose/JOB_ID/`.
 The workflow editor keeps Slurm settings separate from Review; generating a
-potentially expensive preview is an explicit action. When
-deleting a synced job, you can keep its local copy or remove it too; an
-incomplete last download can be synced first.
+potentially expensive preview is an explicit action. Use **Stop job** to cancel
+remaining Slurm work and **Resume job** to run only unfinished calls in the
+same job. An unfinished job must be stopped before deletion. When deleting a
+synced job, you can keep its local copy or remove it too; an incomplete last
+download can be synced first.
 Workflows are reusable definitions; jobs are particular runs of them.
 
 **Cluster status** shows Slurm nodes, CPU allocation, users with active jobs,
 and running or pending jobs across users. It starts with the `CPU-amd`
 partition; choose another partition or all partitions from the page. Select a
-node to see the jobs currently running on it. For
-new Slurmy submissions, it also shows call and batch counts across users via
+node to see the jobs currently running on it. A running call's row shows its
+node and Slurm ID. For new Slurmy submissions, it also shows call and batch
+counts across users via
 Slurm's queue metadata. Jobs whose private files you can read link to their
 job inspector; older users' jobs may not expose counts.
 

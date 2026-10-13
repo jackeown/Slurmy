@@ -9,8 +9,7 @@
   let status = null;
   let busy = false;
   let queued = false;
-  let selectedNode = null;
-  let nodeRequest = 0;
+  const expandedNodes = new Set();
   const sorts = {nodes: {key: 'name', direction: 'asc'}, users: {key: 'jobs', direction: 'desc'},
                  jobs: {key: 'id', direction: 'desc'}};
   function ordered(kind, items) {
@@ -109,37 +108,6 @@
     }
     return result;
   }
-  async function inspectNode(name, reveal = true) {
-    selectedNode = name;
-    const requestNumber = ++nodeRequest;
-    const detail = find('#cluster-node-detail');
-    detail.hidden = false;
-    if (reveal) detail.scrollIntoView({behavior: 'smooth', block: 'start'});
-    find('#cluster-node-title').textContent = `${name} · running jobs`;
-    find('#cluster-node-status').textContent = 'Loading jobs allocated to this node…';
-    const body = find('#cluster-node-jobs');
-    body.replaceChildren();
-    try {
-      const url = `/api/cluster/node?${new URLSearchParams({host, partition: partitionSelect.value, node: name})}`;
-      const response = await fetch(url);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
-      if (requestNumber !== nodeRequest || selectedNode !== name) return;
-      const jobs = ordered('jobs', data.jobs);
-      for (const job of jobs) body.append(row([job.id, job.name, job.user, job.state, job.cpus,
-                                              `${job.elapsed} / ${job.limit}`, slurmyCell(job)]));
-      if (!jobs.length) empty(body, 7, 'No running jobs on this node.');
-      find('#cluster-node-status').textContent = `${jobs.length} running job${jobs.length === 1 ? '' : 's'} · refreshed ${new Date(data.updated * 1000).toLocaleTimeString()}`;
-    } catch (error) {
-      if (requestNumber !== nodeRequest || selectedNode !== name) return;
-      find('#cluster-node-status').textContent = `Could not load node jobs: ${error.message}`;
-    }
-  }
-  find('#cluster-node-close').addEventListener('click', () => {
-    selectedNode = null;
-    nodeRequest++;
-    find('#cluster-node-detail').hidden = true;
-  });
   function render() {
     if (!status) return;
     const totals = status.summary;
@@ -167,20 +135,30 @@
       meter.value = node.allocated;
       used.append(meter);
       const name = document.createElement('td');
-      const open = document.createElement('button');
-      open.type = 'button';
-      open.className = 'cluster-node-button';
-      open.textContent = node.name;
-      open.title = `Show jobs running on ${node.name}`;
-      open.addEventListener('click', () => {
-        nodes.querySelector('.selected-node')?.classList.remove('selected-node');
-        open.closest('tr').classList.add('selected-node');
-        inspectNode(node.name);
-      });
-      name.append(open);
+      const details = document.createElement('details');
+      details.className = 'cluster-node-jobs-inline';
+      details.open = expandedNodes.has(node.name);
+      const summary = document.createElement('summary');
+      summary.textContent = node.name;
+      details.append(summary);
+      const onNode = running.filter(job => job.hostnames.includes(node.name));
+      const list = document.createElement('div');
+      list.className = 'cluster-node-job-list';
+      for (const job of onNode) {
+        const item = document.createElement('div');
+        const title = job.slurmy && job.user === status.user
+          ? document.createElement('a') : document.createElement('span');
+        title.textContent = `${job.name} · ${job.id}`;
+        if (title.tagName === 'A') title.href = `/jobs/${encodeURIComponent(job.slurmy_id)}?${new URLSearchParams({host})}`;
+        item.append(title, document.createTextNode(` — ${job.user}, ${job.cpus} Slurm CPUs`));
+        list.append(item);
+      }
+      if (!onNode.length) list.textContent = 'No running jobs on this node.';
+      details.append(list);
+      details.addEventListener('toggle', () => {if (details.open) expandedNodes.add(node.name); else expandedNodes.delete(node.name);});
+      name.append(details);
       const nodeRow = row([name, node.state, used, node.idle, node.other, node.total,
                            `${(node.memory_mib / 1024).toFixed(0)} GiB`]);
-      if (node.name === selectedNode) nodeRow.classList.add('selected-node');
       nodes.append(nodeRow);
     }
     if (!nodes.children.length) empty(nodes, 7, nodeScope.value === 'all' ? 'No matching nodes.' : 'No nodes currently running matching jobs.');
@@ -233,7 +211,6 @@
       partitionSelect.value = prior;
       updateJobChoices();
       render();
-      if (selectedNode) inspectNode(selectedNode, false);
       message.textContent = `Connected to ${host} · ${selected} · refreshed ${new Date(data.updated * 1000).toLocaleTimeString()} · refreshes every 30 seconds`;
     } catch (error) {
       message.textContent = `Cluster data unavailable: ${error.message}. ${status ? 'Previously loaded data remains visible.' : 'Check SSH access, VPN, and partition name.'}`;
@@ -255,9 +232,6 @@
     url.searchParams.set('partition', partitionSelect.value);
     history.replaceState(null, '', url);
     status = null;
-    selectedNode = null;
-    nodeRequest++;
-    find('#cluster-node-detail').hidden = true;
     refresh(true);
   });
   find('#cluster-refresh').addEventListener('click', () => refresh(true));

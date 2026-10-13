@@ -27,12 +27,13 @@ The same examples work from the command line:
 
 ```bash
 cd workflows/example-workflows/example-combined
-make                          # Generate jobpairs.csv and inspectable submit scripts.
+make                          # Check cluster thread topology, then generate scripts.
 make prepare-submit           # Refresh scripts, build dependencies, then submit.
 make submit                   # Dispatch the already-prepared scripts without refreshing them.
 make monitor                  # Start/reuse the local web app and open this workflow.
 make sync                     # Continuously download the latest job's results.
-make stop                     # Select an active job to cancel.
+make stop SLURMY_ID=JOB_ID     # Stop the whole job and cancel its Slurm allocations.
+make resume SLURMY_ID=JOB_ID   # Continue unfinished calls in that stopped job.
 ```
 
 Use `SLURMY_HOST=your-alias SLURMY_PARTITION=your-partition make prepare-submit`

@@ -277,13 +277,15 @@ async function fetchJob(fresh=false){
  syncTableUrl();
  const submission=data.submission_state==='submitting'?` · submitting batches ${data.submitted_batches}/${data.batch_count}`:data.submission_state==='failed'?' · batch submission stopped before all calls were queued':'';
  text('#job-display-name',data.name);document.title=`${data.name} · Slurmy`;
+ if($('#stop-job'))$('#stop-job').disabled=data.state==='STOPPED'||data.percent>=100;
+ if($('#resume-job'))$('#resume-job').disabled=data.state!=='STOPPED';
  const refreshNote=data.percent>=100?' · auto-refresh off (100% complete)':data.total>10000?' · auto-refreshes every 30 seconds':' · auto-refreshes every 10 seconds';
  text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()}${submission}${refreshNote} · completion counts finished calls, not proof-search progress`);
  text('#stat-state',data.state);text('#stat-done',`${data.completed} / ${data.total}`);text('#stat-percent',data.percent.toFixed(1)+'%');text('#stat-issues',data.issues);
  renderOutcomes(data.outcomes);
  const tasks=$('#tasks-body');tasks.replaceChildren();
- for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):task.diagnostic?button('Inspect log →',()=>openDiagnostic(task)):'—';tasks.append(tableRow([String(task.id),task.solver||'—',problem,badge(task.state),task.will_run||'—',task.reason||'—',duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
- if(!data.tasks.length)tasks.append(tableRow(['No matching calls.','','','','','','','','','']));
+ for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):task.diagnostic?button('Inspect log →',()=>openDiagnostic(task)):'—';const placement=task.node?link(`${task.node} · ${task.slurm_id}`,`/cluster?`+params({partition:'all',nodes:'job',job:jobId})):task.slurm_id?`Queued · ${task.slurm_id}`:'—';tasks.append(tableRow([String(task.id),task.solver||'—',problem,badge(task.state),task.will_run||'—',placement,task.reason||'—',duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
+ if(!data.tasks.length)tasks.append(tableRow(['No matching calls.','','','','','','','','','','']));
  text('#page-label',`${data.matched} matching calls ·`);$('#task-page').value=taskPage+1;$('#task-page').max=lastPage+1;text('#task-page-count',lastPage+1);$('#previous').disabled=taskPage===0;$('#next').disabled=(taskPage+1)*perPage>=data.matched;
  const selected=new URLSearchParams(location.search).get('call');if(selected&&data.tasks.some(task=>String(task.id)===selected)){const url=new URL(location.href);url.searchParams.delete('call');history.replaceState(null,'',url);openOutput(data.tasks.find(task=>String(task.id)===selected));}
  const diagnostic=new URLSearchParams(location.search).get('diagnostic');if(diagnostic&&data.tasks.some(task=>String(task.id)===diagnostic)){const url=new URL(location.href);url.searchParams.delete('diagnostic');history.replaceState(null,'',url);openDiagnostic(data.tasks.find(task=>String(task.id)===diagnostic));}
@@ -324,7 +326,7 @@ async function refresh(fresh=false){
  if(page==='job'||page==='problem')lastRefreshStarted=Date.now();
  refreshInFlight=true;beginRefresh();
  try{if(page==='jobs'||page==='workflow')await fetchJobs();else if(page==='job')await fetchJob(fresh);else if(page==='problem')await fetchProblem(fresh);hasLoadedRemote=true;finishRefresh();scheduleStaleWarning();}
- catch(error){remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check your SSH access or VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),10,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='problem')loadingRow($('#problem-tasks-body'),9,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='jobs'||page==='workflow')loadingRow($('#jobs-body'),6,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
+ catch(error){remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check your SSH access or VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),11,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='problem')loadingRow($('#problem-tasks-body'),9,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='jobs'||page==='workflow')loadingRow($('#jobs-body'),6,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
  finally{refreshInFlight=false;if(refreshPending){refreshPending=false;scheduleRefresh();}}
 }
 $('#refresh')?.addEventListener('click',()=>refresh(true));
@@ -343,6 +345,8 @@ const syncMenu=$('#sync-menu'),syncMenuToggle=$('#sync-menu-toggle');
 function closeSyncMenu(){if(!syncMenu)return;syncMenu.hidden=true;syncMenuToggle.setAttribute('aria-expanded','false');}
 syncMenuToggle?.addEventListener('click',()=>{syncMenu.hidden=!syncMenu.hidden;syncMenuToggle.setAttribute('aria-expanded',String(!syncMenu.hidden));});
 $('#sync-verbose')?.addEventListener('click',()=>{closeSyncMenu();startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'sync_verbose'});});
+$('#stop-job')?.addEventListener('click',()=>startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'stop'}));
+$('#resume-job')?.addEventListener('click',()=>startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'resume'}));
 $('#rename-job')?.addEventListener('click',()=>renameJob(document.body.dataset.job,$('#job-display-name').textContent));
 $('#delete-job')?.addEventListener('click',event=>deleteJob(document.body.dataset.job,event.currentTarget,true));
 const submitMenu=$('#submit-menu'),submitMenuToggle=$('#submit-menu-toggle');

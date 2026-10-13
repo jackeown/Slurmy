@@ -52,6 +52,11 @@ placement_failure() {
 }
 failed=0
 for ((first=0; first<${#TASK_IDS[@]}; first+=PARALLEL)); do
+result=$(printf '%s/results/batch_%06d_task_%09d.csv' "$JOB_DIR" "$BATCH_ID" "${TASK_IDS[$first]}")
+if [[ -f "$result" ]] && awk -F, 'NR==2 {gsub(/"/, "", $2); found=1; complete=($2=="true")} END {exit(found && complete ? 0 : 1)}' "$result"; then
+    echo "Jobpair ${TASK_IDS[$first]} already completed; keeping its saved result."
+    continue
+fi
 USED=()
 MASKS=()
 last=$((first + PARALLEL))

@@ -124,7 +124,9 @@ mv "$result.tmp" "$result"
 index=$(printf '%s/results/index/batch_%06d.csv' "$JOB_DIR" "$BATCH_ID")
 if {
     if [[ -f "$index" ]]; then
-        cat "$index"
+        # A resumed call replaces its earlier incomplete row in the compact
+        # monitor index; otherwise it would be counted twice.
+        awk -F, -v id="$TASK_ID" '{field=$1; gsub(/"/, "", field); if (NR==1 || field!=id) print}' "$index"
     else
         csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output
     fi

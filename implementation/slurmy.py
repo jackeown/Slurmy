@@ -96,13 +96,17 @@ def read_pairs(filename: Path) -> list[dict]:
             solver_name = (row.get("solver_name") or "").strip()
             if len(solver_name) > 80 or any(ord(char) < 32 or ord(char) == 127 for char in solver_name):
                 raise SlurmyError(f"{label}: solver_name must be at most 80 characters with no control characters")
-            problem = path_at(row["problem"], filename.parent)
-            if not row["problem"] or not problem.is_file():
+            cluster_problem = row["problem"].startswith('tptp:')
+            problem = Path(row["problem"][5:]) if cluster_problem else path_at(row["problem"], filename.parent)
+            if cluster_problem and (not str(problem).startswith('/share/Slurmy-TPTP-v9.2.1/Problems/') or '..' in problem.parts):
+                raise SlurmyError(f"{label}: invalid cluster TPTP problem: {problem}")
+            if not row["problem"] or (not cluster_problem and not problem.is_file()):
                 raise SlurmyError(f"{label}: problem does not exist: {problem}")
             solver_root = path_at(row["solver_directory"], filename.parent)
             if not row["solver_directory"] or not solver_root.is_dir():
                 raise SlurmyError(f"{label}: solver_directory is not an existing directory: {solver_root}")
             task = {"task_id": len(tasks), "command": command, "problem": str(problem),
+                    "remote_problem": cluster_problem,
                     "solver_root": str(solver_root),
                     "solver": solver_name or Path(shlex.split(command)[0]).name}
             for key in ("wc_limit", "cpu_limit", "cores"):
@@ -250,7 +254,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         raise SlurmyError(f"limiter does not exist and no recipe builds it: {limiter_path}")
     limiter = re.sub(r"^\s*(?:'[^']*'|\"[^\"]*\"|\S+)", lambda _: remote_path(limiter_path), limiter, count=1)
     # Every command runs in its explicitly selected, mirrored solver directory.
-    problems = {Path(t["problem"]) for t in tasks}
+    problems = {Path(t["problem"]) for t in tasks if not t['remote_problem']}
     packaged_roots = set(roots + [Path(t['solver_root']) for t in tasks])
     for task in tasks:
         lexer = shlex.shlex(task['command'], posix=True, punctuation_chars=True)
@@ -263,7 +267,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             values["cpus"] = str(task["cpus"])
         values.update(mem_limit=str(math.ceil(task["mem_limit"] / 10**6)),
                       mem_limit_mib=str(math.ceil(task["mem_limit"] / 2**20)),
-                      problem=remote_path(Path(task["problem"])))
+                      problem=(shlex.quote(task['problem']) if task['remote_problem'] else remote_path(Path(task["problem"]))))
         task["remote_command"] = render(relocate(task["command"], command_paths), values)
         values["solver_command"] = '/bin/bash "$CALL_DIR/solver.sh"'
         for name in ("watcher_log", "var_file", "solver_log"):
@@ -359,6 +363,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         # copy of the declared root; downloaded files preserve that layout.
         shutil.copy2(REPO / "implementation/build/slurmy-build.py", assets / "builds/driver.py")
         shutil.copy2(REPO / "implementation/submit_coordinator.py", assets / "submit_coordinator.py")
+        shutil.copyfile(REPO / "implementation/check_threads.py", assets / "check_threads.py")
         shutil.copyfile(REPO / "implementation/package_inputs.py", assets / "package_inputs.py")
         if axioms:
             axiom_lines = ['#!/usr/bin/env bash', 'set -euo pipefail',
@@ -425,7 +430,8 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         # NUL-separated paths allow spaces, commas, quotes and newlines.
         if progress:
             progress('phase', 'Collecting resource paths for packaging', 0, 0)
-        entries = sorted(set([*roots, *axioms, *(Path(t['solver_root']) for t in tasks), *(Path(t["problem"]) for t in tasks)]))
+        entries = sorted(set(roots + axioms + [Path(t['solver_root']) for t in tasks] +
+                             [Path(t['problem']) for t in tasks if not t['remote_problem']]))
         entry_set = set(entries)
         selected = []
         for index, path in enumerate(entries, 1):
