@@ -102,8 +102,8 @@ work below the web interface.
 <details>
 <summary><strong>🏫 TU Wien dataLAB cluster access</strong></summary>
 
-<blockquote>
   
+<blockquote>
 For TU Wien users, the default SSH alias `datalab` refers to the dataLAB
 cluster. Access is managed by dataLAB, not by Slurmy. Their
 [GPU Cluster guide](https://colab.tuwien.ac.at/spaces/Datalab/pages/241107279/GPU+Cluster#GPUCluster-LogintotheCluster)
