@@ -143,7 +143,7 @@ access to the TU Wien network to reach the cluster.
 
 - [`workflows/`](workflows/README.md) — your saved workflows, plus some example
   problems, solvers, and workflows, and your saved workflows.
-- `job-results/` — downloaded job results (created as needed).
+- [`job-results/`](job-results/README.md) — downloaded job results (created as needed).
 - [`web-app/`](web-app/) — local browser interface. Not really of interest
   to someone who wants to run jobs on the cluster, but interesting if you want
   to see how the interface magic happens.
