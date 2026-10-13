@@ -102,7 +102,6 @@ work below the web interface.
 <details>
 <summary><strong>🏫 TU Wien dataLAB cluster access</strong></summary>
 
-  
 <blockquote>
 For TU Wien users, the default SSH alias `datalab` refers to the dataLAB
 cluster. Access is managed by dataLAB, not by Slurmy. Their
@@ -142,12 +141,16 @@ access to the TU Wien network to reach the cluster.
 
 <blockquote>
 
-- [`web-app/`](web-app/) — local browser interface.
-- [`workflows/`](workflows/README.md) — example problems and solver sources,
-  example workflows, and your saved workflows.
-- [`implementation/`](implementation/README.md) — runner, submission templates,
-  build tooling, and optional command-line utilities.
-- `job-results/` — locally synced results (created as needed).
+- [`workflows/`](workflows/README.md) — your saved workflows, plus some example
+  problems, solvers, and workflows, and your saved workflows.
+- `job-results/` — downloaded job results (created as needed).
+- [`web-app/`](web-app/) — local browser interface. Not really of interest
+  to someone who wants to run jobs on the cluster, but interesting if you want
+  to see how the interface magic happens.
+- [`implementation/`](implementation/README.md) — job runner, submission templates,
+  build tooling, and optional command-line utilities. Not really of interest
+  to someone who wants to run jobs on the cluster, but interesting if you want
+  to see how the execution-with-Slurm magic happens.
 
 </blockquote>
 </details>
