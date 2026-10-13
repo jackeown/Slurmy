@@ -22,29 +22,34 @@ The results of a job can be downloaded in a `.tgz` file, with a summary in a`.cs
 
 <blockquote>
 
-You need Python 3.9+, Bash, SSH, rsync, tar, and make on your computer, plus
-SSH access to a supported Slurm cluster. Linux and macOS are supported; on
-Windows, use WSL. The cluster needs the build tools required by your chosen
-solvers, but you do not need to compile those solvers locally.
+Your computer needs to have `python` (3.9+), `bash`, `ssh`, `rsync`, `tar`, and 
+`make`, plus SSH access to a supported Slurm cluster. Linux and macOS are supported; 
+on Windows, use WSL. On macOS, `brew install python rsync` supplies `python` and 
+`rsync` if they are missing. Install Apple's command-line tools if `make` is missing. 
+The system `bash` and `tar` are sufficient (no GNU tar replacement is required).
+The cluster needs the build tools required by your chosen solvers - you do not need 
+to compile solvers locally.
 
-From the repository root:
-
+After cloning the project, install Slurmy like this:
 ```bash
 python -m venv .venv          # Optional: keep dependencies separate from other projects.
-source .venv/bin/activate    # Skip this line if you skipped the venv.
+source .venv/bin/activate     # Skip this line if you skipped the venv.
 python -m pip install -r requirements.txt
-python web-app/main.py       # Opens the local app; Ctrl-C stops its server.
 ```
-
-On macOS, `brew install python rsync` supplies Python and rsync if they are
-missing. Install Apple's command-line tools if `make` is missing. The system
-Bash and tar are sufficient; no GNU tar replacement is required.
+After installation, run Slurmy like this:
+```
+python web-app/main.py        # Opens the local app; Ctrl-C stops its server.
+```
+or
+```
+python web-app/main.py        # Opens the local app; leaves the app running in the background
+python web-app/main.py --stop # to stop the background app
+```
 
 The app runs on your computer at `127.0.0.1:8765` by default. It is a
 single-user tool with access to your local files and trusted workflow commands;
-do not expose it as a public web service. Use `python web-app/main.py --stop`
-to stop a background server. Closing the browser tab does not stop it, and
-stopping the app does not cancel cluster jobs.
+do not expose it as a public web service. Closing the browser tab does not stop 
+Slurmy, and stopping the app does not stop cluster jobs.
 
 </blockquote>
 </details>
