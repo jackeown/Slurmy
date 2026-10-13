@@ -6,9 +6,14 @@
 </div>
 
 Slurmy is a web app that helps you run (multiple) solvers on (multiple) problems 
-on a Slurm cluster, from your own computer. Solver builds and execution happen on 
-the cluster, so your computer and the cluster need not have the samevarchitecture. 
-You can inspect jobs, compare solver outcomes, read all output,vand incrementally 
+on a Slurm cluster, from your own computer. Solvers can be provided ready for 
+execution on the cluster, or can be built on the cluster - your computer need 
+not have the same architecture as the cluster. Problems are provided as
+local `glob`s of problem files, or as `.tgz`s of problem files. Slurmy
+executes all the solvers on all the problems with resource limits and resource
+reporting. Users do not need to know anything about Slurm, and can focus on
+their solver/problem development.
+Users can inspect jobs, compare solver outcomes, read all output, and incrementally 
 download results without working directly with Slurm scripts.
 
 A **workflow** defines the solvers, problems, resource
