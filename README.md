@@ -40,10 +40,10 @@ After installation, run Slurmy like this:
 ```
 python web-app/main.py        # Opens the local app; Ctrl-C stops its server.
 ```
-or
+or like this:
 ```
 python web-app/main.py        # Opens the local app; leaves the app running in the background
-python web-app/main.py --stop # to stop the background app
+python web-app/main.py --stop # Stops the background app
 ```
 
 The app runs on your computer at `127.0.0.1:8765` by default. It is a
