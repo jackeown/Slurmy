@@ -5,8 +5,9 @@ BATCH_SIZE ?= 1
 PAIR_ORDER ?= solver-major
 SLURMY_HOST ?= datalab
 SLURMY_PARTITION ?= CPU-amd
+SLURMY_MAX_OUTSTANDING ?= 32
 SLURMY_ID ?=
-export SLURMY_HOST SLURMY_PARTITION
+export SLURMY_HOST SLURMY_PARTITION SLURMY_MAX_OUTSTANDING
 JOBPAIRS ?= jobpairs.csv
 BUILDING ?= building.txt
 LIMITER ?= resource_limiter_template.txt
@@ -25,12 +26,12 @@ prepare:
 	fi
 	@$(MAKE) --no-print-directory submit.sh
 
-submit.sh: Makefile $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES) $(REPO_ROOT)/implementation/slurmy.py $(REPO_ROOT)/implementation/package_inputs.py $(REPO_ROOT)/implementation/build/slurmy-build.py $(REPO_ROOT)/implementation/templates/workflow.mk $(wildcard $(REPO_ROOT)/implementation/templates/*.sh)
+submit.sh: Makefile $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES) $(REPO_ROOT)/implementation/slurmy.py $(REPO_ROOT)/implementation/package_inputs.py $(REPO_ROOT)/implementation/submit_coordinator.py $(REPO_ROOT)/implementation/build/slurmy-build.py $(REPO_ROOT)/implementation/templates/workflow.mk $(wildcard $(REPO_ROOT)/implementation/templates/*.sh)
 	@if [ -e submit.sh ] || [ -d submit.sh.files ]; then \
 		printf '♻️  Inputs changed; refreshing generated submission files.\n'; \
 		rm -f -- submit.sh; rm -rf -- submit.sh.files; \
 	fi
-	python '$(REPO_ROOT)/implementation/slurmy.py' '$(JOBPAIRS)' '$(BUILDING)' '$(LIMITER)' --batch-size '$(BATCH_SIZE)' $(if $(AXIOMS),--axioms-file '$(AXIOMS)')
+	python '$(REPO_ROOT)/implementation/slurmy.py' '$(JOBPAIRS)' '$(BUILDING)' '$(LIMITER)' --batch-size '$(BATCH_SIZE)' --max-outstanding '$(SLURMY_MAX_OUTSTANDING)' $(if $(AXIOMS),--axioms-file '$(AXIOMS)')
 	@printf '\n✅ Prepared the explicit jobpairs. Inspect submit.sh.files/.\n👉 make prepare-submit prepares again and dispatches; make submit dispatches these prepared files as-is.\n'
 
 build: prepare

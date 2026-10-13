@@ -7,7 +7,9 @@ set -euo pipefail
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ASSETS="$HERE/submit.sh.files"
 source "$ASSETS/workflow_name.sh"
+source "$ASSETS/submission_settings.sh"
 HOST=${SLURMY_HOST:-datalab}
+MAX_OUTSTANDING=${SLURMY_MAX_OUTSTANDING:-$MAX_OUTSTANDING_DEFAULT}
 SSH_OPTIONS=(-T -o BatchMode=yes -o ConnectTimeout=10)
 ssh_stage() {
     local script=$1 label=$2 attempt
@@ -25,7 +27,7 @@ if [[ -n ${SLURMY_RESUME_JOB_ID:-} ]]; then
     JOB_ID=$SLURMY_RESUME_JOB_ID
     [[ "$JOB_ID" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Invalid SLURMY_RESUME_JOB_ID.' >&2; exit 1; }
     echo "Resuming accepted batches for $JOB_ID; no inputs are rebuilt or uploaded."
-    ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "${SLURMY_MAX_OUTSTANDING:-32}" "$JOB_PREFIX" "$JOB_NAME_B64" < "$ASSETS/remote_submit.sh"
+    ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" < "$ASSETS/remote_submit.sh"
     exit $?
 fi
 
@@ -64,7 +66,7 @@ fi
 
 # 4. Calculate allocations using cluster topology, then submit each batch.
 echo 'Submission phase: Submitting Slurm batches'
-if ! ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "${SLURMY_MAX_OUTSTANDING:-32}" "$JOB_PREFIX" "$JOB_NAME_B64" < "$ASSETS/remote_submit.sh"; then
+if ! ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" < "$ASSETS/remote_submit.sh"; then
     echo "Submission connection failed. Some batches may already be accepted; inspect job $JOB_ID before retrying." >&2
     echo "To resume only unaccepted batches: SLURMY_RESUME_JOB_ID=$JOB_ID bash ./submit.sh" >&2
     exit 1

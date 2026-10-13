@@ -228,9 +228,11 @@ def write_script(path: Path, content: str) -> None:
 
 
 def generate(jobpairs: Path, building: Path, limiter_file: Path,
-             axioms_file: Path | None = None, batch_size: int = 1, progress=None) -> Path:
+             axioms_file: Path | None = None, batch_size: int = 1, progress=None,
+             max_outstanding: int = 32) -> Path:
     tasks = read_pairs(jobpairs)
     positive(str(batch_size), 'batch size')
+    positive(str(max_outstanding), 'maximum outstanding Slurm tasks')
     builds = read_builds(building)
     axioms, axiom_destinations = read_axioms(axioms_file, progress)
     if progress:
@@ -352,9 +354,11 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             # template's old mtime, which made make immediately call it stale.
             shutil.copyfile(source, destination)
             shutil.copymode(source, destination)
+        (assets / "submission_settings.sh").write_text(f'MAX_OUTSTANDING_DEFAULT={max_outstanding}\n', encoding='utf-8')
         # Reuse the local build driver. Remote recipes build in a disposable
         # copy of the declared root; downloaded files preserve that layout.
         shutil.copy2(REPO / "implementation/build/slurmy-build.py", assets / "builds/driver.py")
+        shutil.copy2(REPO / "implementation/submit_coordinator.py", assets / "submit_coordinator.py")
         shutil.copyfile(REPO / "implementation/package_inputs.py", assets / "package_inputs.py")
         if axioms:
             axiom_lines = ['#!/usr/bin/env bash', 'set -euo pipefail',
@@ -447,10 +451,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("resource_limiter_template", type=Path)
     parser.add_argument('--axioms-file', type=Path, help='optional file with one TPTP axiom path or glob per line')
     parser.add_argument("--batch-size", type=int, default=1, help="maximum jobpairs owned by one Slurm array task; calls run sequentially (default: 1)")
+    parser.add_argument("--max-outstanding", type=int, default=32, help="maximum pending/running Slurm tasks from one job (default: 32)")
     args = parser.parse_args(argv)
     try:
         output = generate(args.jobpairs.resolve(), args.building.resolve(), args.resource_limiter_template.resolve(),
-                          args.axioms_file.resolve() if args.axioms_file else None, args.batch_size)
+                          args.axioms_file.resolve() if args.axioms_file else None, args.batch_size,
+                          max_outstanding=args.max_outstanding)
     except (SlurmyError, OSError, ValueError) as exc:
         parser.error(str(exc))
     print(f"Prepared {output}. Inspect its companion files, then run it to build and submit.")

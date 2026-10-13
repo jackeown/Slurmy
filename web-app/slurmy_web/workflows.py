@@ -94,6 +94,7 @@ def specification(data, destination_override=None, progress=None):
         raise ValueError(f'Workflow already exists: {destination}')
     host, partition = alias(data.get('host')), alias(data.get('partition'))
     batch_size = positive(str(data.get('batch_size') or 1), 'jobpairs per Slurm task')
+    max_outstanding = positive(str(data.get('max_outstanding', 32)), 'maximum outstanding Slurm tasks')
     pair_order = data.get('pair_order') or 'solver-major'
     if pair_order not in PAIR_ORDERS:
         raise ValueError('Choose Problem Major, Solver Major, or random jobpair order.')
@@ -228,10 +229,11 @@ def specification(data, destination_override=None, progress=None):
         if progress:
             progress('phase', 'Checking calls and generating submission scripts', 0, 0)
         generate(staging / 'jobpairs.csv', staging / 'building.txt', staging / 'resource_limiter_template.txt',
-                 staging / 'axiom-globs.txt' if axiom_patterns else None, batch_size, progress=progress)
+                 staging / 'axiom-globs.txt' if axiom_patterns else None, batch_size, progress=progress,
+                 max_outstanding=max_outstanding)
     if progress:
         progress('phase', 'Preparing workflow preview', 0, 0)
-    files['Makefile'] = (f'REPO_ROOT := ../../..\nBATCH_SIZE := {batch_size}\n'
+    files['Makefile'] = (f'REPO_ROOT := ../../..\nBATCH_SIZE := {batch_size}\nSLURMY_MAX_OUTSTANDING := {max_outstanding}\n'
                          + (f'PAIR_ORDER := {pair_order}\n' if configs else '') +
                          f'SLURMY_HOST := {host}\n'
                          f'SLURMY_PARTITION := {partition}\ninclude $(REPO_ROOT)/implementation/templates/workflow.mk\n')
@@ -542,6 +544,7 @@ def decisions(directory, check_paths=True):
         limiter = shlex.quote(str(path_at(executable_word, directory))) + ' ' + limiter[lexer.instream.tell():]
     return resource_roles(dict(name=directory.name, host=setting('SLURMY_HOST', 'datalab'),
                 partition=setting('SLURMY_PARTITION', 'CPU-amd'), batch_size=setting('BATCH_SIZE', '1'),
+                max_outstanding=setting('SLURMY_MAX_OUTSTANDING', '32'),
                 pair_order=setting('PAIR_ORDER', 'solver-major'),
                 mode=mode, jobpairs=jobpairs, configurations_file='', configurations=configs,
                 globs=globs, axiom_globs=axiom_globs, axiom_mode='custom' if axiom_globs else 'cluster', building_mode='create', building_file='', resources=resources,

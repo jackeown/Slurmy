@@ -107,9 +107,14 @@ Each batch contains up to `--batch-size` calls, run sequentially. Different
 batches can run concurrently across nodes. A node-exclusive call gets its own
 batch. The batch's Slurm wall-time budget includes all its calls; memory and
 core reservations cover its largest call. Slurmy uses a rolling submission
-window (32 pending/running batches by default) so large jobs can fit cluster
-submission limits. This is Slurmy's conservative default, not a known hard
-limit imposed by the cluster; `SLURMY_MAX_OUTSTANDING` changes the window.
+window (32 pending/running batches per job by default) so large jobs can fit
+cluster submission limits. Set `SLURMY_MAX_OUTSTANDING` in a workflow Makefile
+or pass `--max-outstanding` to `slurmy.py` to change it. Cluster-side submitters
+coordinate under `~/slurmy/submit.lock`, divide available slots among active
+Slurmy jobs, and count other jobs submitted by the same user. A configured
+association limit is used when visible; submit-limit rejections are retried and
+recorded as a temporary observed ceiling (not treated as a permanent exact
+limit). Other users sharing an account or QoS may also affect that ceiling.
 
 Remote jobs live under `~/slurmy/jobs/JOB_ID/`; build jobs live under
 `~/slurmy/builds/`. Results publish per call, so completed calls can be synced
@@ -159,6 +164,7 @@ when available; `SLURMY_TPTP_ROOT` can override it.
 | `slurmy-sync.py` | Download the three-file job export into `job-results/JOB_ID/`; `--verbose` downloads raw files, and `--follow` keeps updating. |
 | `slurmy-cancel.py` | Choose an active Slurm allocation to cancel, or provide its ID non-interactively. |
 | `build/slurmy-build.py` | Run one build recipe as a Slurm job and download its artifacts; see the [build guide](build/README.md). |
+| `submit_coordinator.py` | Cluster-side helper that serializes `sbatch` attempts and fairly shares a user's available submission slots. It is packaged automatically; users do not run it directly. |
 | `templates/workflow.mk` | Shared targets for every workflow Makefile; see the [workflow guide](../workflows/README.md). |
 
 Each script has `--help`. The SSH alias defaults to `datalab`; `SLURMY_HOST`

@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Run on the head node: validate scheduling policy and topology, then sbatch.
 set -euo pipefail
-JOB_DIR="$HOME/slurmy/jobs/$1"
+[[ "${1:-}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Invalid Slurmy job ID.' >&2; exit 2; }
+SLURMY_JOB_ID=$1
+JOB_DIR="$HOME/slurmy/jobs/$SLURMY_JOB_ID"
 export JOB_DIR
+[[ -d "$JOB_DIR" && ! -L "$JOB_DIR" ]] || { echo 'Committed Slurmy job directory is missing.' >&2; exit 1; }
+exec 9> "$JOB_DIR/.submit-controller.lock"
+flock -n 9 || { echo 'Another controller is already submitting this Slurmy job.' >&2; exit 1; }
 PARTITION=$2
 JOB_PREFIX=$4
 [[ "$JOB_PREFIX" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || {
@@ -17,6 +22,10 @@ else
     echo "Using committed inputs for $1; preserving existing results and inputs."
 fi
 cd "$JOB_DIR"
+[[ -f ./submit_coordinator.py ]] || {
+    echo 'This job predates coordinated submission; resume it with its original prepared submit.sh.' >&2
+    exit 1
+}
 if [[ ! -f submission.csv ]]; then python3 - "${5:-}" <<'PY'
 import base64
 import json
@@ -159,26 +168,22 @@ else
     OUTSTANDING_IDS=()
     submitted=0
 fi
-# Keep this controller connected until every batch is accepted. A modest window
-# leaves room for the user's other jobs; Slurm's association limit may be lower,
-# so an explicit submit-limit rejection is retried after jobs finish.
+# Keep this controller connected until every batch is accepted. The per-job
+# window is combined with the user's shared Slurmy capacity by the coordinator.
 MAX_OUTSTANDING=${3:-32}
 [[ "$MAX_OUTSTANDING" =~ ^[1-9][0-9]*$ ]] || {
     echo 'SLURMY_MAX_OUTSTANDING must be a positive integer.' >&2; exit 1;
 }
 printf 'submitting %s %s\n' "$submitted" "$next_batch" > submission.state
-trap 'rc=$?; if (( rc != 0 )); then printf "failed %s %s\n" "$submitted" "$next_batch" > submission.state; fi' EXIT
+finish_submit() {
+    local rc=$?
+    python3 "$JOB_DIR/submit_coordinator.py" release "$SLURMY_JOB_ID" || true
+    if (( rc != 0 )); then printf "failed %s %s\n" "$submitted" "$next_batch" > submission.state; fi
+}
+trap finish_submit EXIT
 trap 'exit 1' HUP INT TERM
 echo "Slurmy job ID: $1"
 echo "Submission progress: $submitted/$next_batch batches accepted (at most $MAX_OUTSTANDING outstanding)"
-refresh_outstanding() {
-    local ids output
-    (( ${#OUTSTANDING_IDS[@]} )) || return 0
-    ids=$(IFS=,; echo "${OUTSTANDING_IDS[*]}")
-    output=$(squeue -h -j "$ids" -o '%A') || return 1
-    mapfile -t OUTSTANDING_IDS < <(printf '%s\n' "$output" | sed '/^$/d' | sort -u)
-}
-refresh_outstanding
 for batch in batches/batch_*.sh; do
     source "$batch"
     if (( BATCH_ID < submitted )); then continue; fi
@@ -205,25 +210,24 @@ for batch in batches/batch_*.sh; do
     fi
     if (( EXCLUSIVE_NODE )); then OPTIONS+=(--exclusive); fi
     while :; do
-        if (( ${#OUTSTANDING_IDS[@]} >= MAX_OUTSTANDING )); then
-            refresh_outstanding
+        if ! SUBMITTED=$(python3 "$JOB_DIR/submit_coordinator.py" attempt "$SLURMY_JOB_ID" "$MAX_OUTSTANDING" -- "${OPTIONS[@]}" batch.sh); then
+            printf '%s\n' "$SUBMITTED" >&2
+            exit 1
         fi
-        if (( ${#OUTSTANDING_IDS[@]} >= MAX_OUTSTANDING )); then
-            echo "Submission waiting: ${#OUTSTANDING_IDS[@]} batches still pending or running; $submitted/$next_batch accepted"
-            sleep 5
-            continue
-        fi
-        if SUBMITTED=$(sbatch "${OPTIONS[@]}" batch.sh 2>&1); then break; fi
-        if [[ "$SUBMITTED" == *AssocMaxSubmitJobLimit* || "$SUBMITTED" == *QOSMaxSubmitJobPerUserLimit* || "$SUBMITTED" == *QOSMaxSubmitJobPerAccountLimit* ]]; then
-            echo "Submission waiting: Slurm's submitted-job limit is full; $submitted/$next_batch accepted"
-            sleep 5
-            continue
-        fi
-        printf '%s\n' "$SUBMITTED" >&2
-        printf 'failed %s %s\n' "$submitted" "$next_batch" > submission.state
-        exit 1
+        case "$SUBMITTED" in
+            ACCEPTED\|*)
+                echo "Submission capacity: ${SUBMITTED#*|*|}"
+                break ;;
+            WAIT\|*)
+                echo "Submission waiting: ${SUBMITTED#WAIT|}; $submitted/$next_batch accepted"
+                sleep 5 ;;
+            *)
+                printf 'Unexpected submit coordinator response: %s\n' "$SUBMITTED" >&2
+                exit 1 ;;
+        esac
     done
-    ID=${SUBMITTED%%;*}
+    ID=${SUBMITTED#ACCEPTED|}
+    ID=${ID%%|*}
     [[ "$ID" =~ ^[0-9]+$ ]] || { echo "Invalid sbatch ID: $SUBMITTED" >&2; exit 1; }
     row=$(csv_row "$ID" "$BATCH_ID" 1 "$(date +%s)" "$BATCH_ID")
     printf '%s\n' "$row" >> submission.csv
@@ -233,6 +237,5 @@ for batch in batches/batch_*.sh; do
     echo "Batch $BATCH_ID: Slurm $ID ($submitted/$next_batch accepted)"
 done
 printf 'complete %s %s\n' "$submitted" "$next_batch" > submission.state
-trap - EXIT HUP INT TERM
 echo "Submission complete: $submitted/$next_batch batches accepted"
 echo "Remote directory: $JOB_DIR"

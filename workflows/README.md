@@ -67,6 +67,7 @@ Workflow Makefiles set a few variables and include the shared rules in
 ```make
 REPO_ROOT := ../../..
 BATCH_SIZE := 20
+SLURMY_MAX_OUTSTANDING := 32
 BUILD_RECIPES := build-solver.sh
 include $(REPO_ROOT)/implementation/templates/workflow.mk
 ```
@@ -74,7 +75,11 @@ include $(REPO_ROOT)/implementation/templates/workflow.mk
 `REPO_ROOT` is the path from the workflow folder to this repository.
 `BATCH_SIZE` is the maximum number of calls in one Slurm task; those calls run
 **one at a time** within that task, while different tasks may run on different
-nodes. `BUILD_RECIPES` lists build scripts whose changes should trigger fresh
+nodes. `SLURMY_MAX_OUTSTANDING` caps the pending/running batches from one job;
+the default is 32, and any positive value is allowed. Slurmy also coordinates
+concurrent submissions under the same cluster Unix user and shares available
+slots fairly; a Slurm-reported or observed submit limit takes precedence.
+`BUILD_RECIPES` lists build scripts whose changes should trigger fresh
 submission-file generation. All-pairs workflows add a rule to create
 `jobpairs.csv` from configurations and problem globs; see the
 [examples](example-workflows/README.md).
