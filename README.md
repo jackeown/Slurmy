@@ -5,16 +5,17 @@
 
 </div>
 
-Slurmy helps you run theorem-proving experiments on a Slurm cluster from your
-own computer. Define a reusable **workflow** with solvers, problems, resource
-limits, and optional cluster-side builds. Each time you dispatch it, Slurmy
-creates a **job**: the individual solver–problem calls are grouped into Slurm
-tasks, and their results can be explored in a local web app.
+Slurmy is a web app that helps you run (multiple) solvers on (multiple) problems 
+on a Slurm cluster, from your own computer. Solver builds and execution happen on 
+the cluster, so your computer and the cluster need not have the samevarchitecture. 
+You can inspect jobs, compare solver outcomes, read all output,vand incrementally 
+download results without working directly with Slurm scripts.
 
-The web app is the intended starting point. Solver builds and proving happen
-on the cluster, so your laptop and the cluster need not have the same
-architecture. You can inspect jobs, compare solver outcomes, read call output,
-and incrementally download results without working directly with Slurm scripts.
+A **workflow** defines the solvers, problems, resource
+limits, and Slurm cluster parameters. Each time you dispatch a workflow, Slurmy
+creates a **job**: the individual solver–problem execution are grouped into Slurm
+**batch**s. The resource usage of each solver–problem run is monitored separately.
+The results of a job can be downloaded in a `.tgz` file, with a summary in a`.csv` file.
 
 <details>
 <summary><strong>🚀 Install and start</strong></summary>
