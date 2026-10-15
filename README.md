@@ -85,7 +85,7 @@ source .venv/bin/activate     # Skip this line if you skipped the venv.
 python -m pip install -r requirements.txt
 ```
 
-After installation, run Slurmy like this:
+Run Slurmy like this:
 ```
 python web-app/main.py        # Opens the local app; Ctrl-C stops its server.
 ```
@@ -95,9 +95,9 @@ python web-app/main.py        # Opens the local app; leaves the app running in t
 python web-app/main.py --stop # Stops the background app
 ```
 
-The app runs on your computer at `127.0.0.1:8765` by default. It is a
-single-user tool with access to your local files and trusted workflow commands;
-do not expose it as a public web service. Closing the browser tab does not stop 
+The app runs on in a web browser at `127.0.0.1:8765` by default.
+It is a single-user tool with access to your local files and trusted workflow commands;
+do not expose it as a public web service. Closing the browser tab does not stop
 Slurmy, and stopping the app does not stop cluster jobs.
 
 </blockquote>
