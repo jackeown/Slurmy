@@ -10,16 +10,18 @@ on a Slurm cluster, from your own computer. Solvers can be provided ready for
 execution on the cluster, or can be built on the cluster - your computer need 
 not have the same architecture as the cluster. Problems are provided as
 local `glob`s of problem files, or as `.tgz`s of problem files. Slurmy
-executes all the solvers on all the problems with resource limits and resource
-reporting. Users can run jobs, see solvers' outputs as they are produced, compare 
-solvers' performances, and incrementally download results, all without working 
-with Slurm scripts.
+executes a job that runs all the solvers on all the problems with resource limits
+and resource reporting. Solvers' outputs can be viewed as they are produced, 
+solvers' performances can be seen in a grphical interface, and results can be
+downloaded incrementally. 
+The user does not need to use or understand Slurm commands or scripts..
 
-A **workflow** defines the solvers, problems, resource
-limits, and Slurm cluster parameters. Each time you dispatch a workflow, Slurmy
-creates a **job**: the individual solver–problem execution are grouped into Slurm
-**batch**s. The resource usage of each solver–problem run is monitored separately.
-The results of a job can be downloaded in a `.tgz` file, with a summary in a`.csv` file.
+A **workflow** defines the solvers, problems, resource limits, and Slurm cluster 
+parameters. Each time you dispatch a workflow, Slurmy creates a **job**.
+The individual solver–problem pairs are grouped into **batch**s. Each batch is
+executed as one **job-step**. The resource usage of each solver–problem pair is
+monitored individually. The results of a job can be downloaded in a `.tgz` file,
+with a summary in a`.csv` file.
 
 <details>
 <summary><strong>🚀 Install and start</strong></summary>
