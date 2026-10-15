@@ -56,11 +56,11 @@ In brief:
 
 1. Complete the **dataLAB Cluster Essentials** TUWEL course linked from the guide.
 2. Create a [dataLAB account](https://login.datalab.tuwien.ac.at/) with your TU Wien credentials and add your SSH public key there.
-3. Request cluster login permission through the dataLAB [Matrix channel](https://matrix.to/#/#gpu:tuwien.ac.at) or the
+Verify `ssh datalab` works. 
+4. Request cluster login permission through the dataLAB [Matrix channel](https://matrix.to/#/#gpu:tuwien.ac.at) or the
 [GPU Slurm Cluster Access request](https://jira.it.tuwien.ac.at/servicedesk/customer/portal/7/create/383).
 The guide explains which affiliation confirmation to provide.
-4. Once access is approved, add an SSH alias on your computer, replacing the
-username with your dataLAB account name:
+5. Once access is approved, add an SSH alias on your computer, replacing the username with your dataLAB account name:
 
 ```sshconfig
 Host datalab
@@ -70,10 +70,8 @@ Host datalab
     IdentityFile ~/.ssh/YOUR_PRIVATE_KEY_FILE
 ```
 
-Then verify `ssh datalab` works before submitting a workflow. Slurmy uses
-`datalab` by default; set `SLURMY_HOST` or choose another SSH host in the app
-if your alias differs. Choose a partition available to your account in the
-workflow settings. 
+Slurmy uses `datalab` by default. Set the environment variable `SLURMY_HOST` or choose another SSH host in the app
+if your alias differs. 
 
 </blockquote>
 </details>
@@ -114,12 +112,9 @@ edit it.
 Saved workflows live in `workflows/my-workflows/`. 
 
 Open **New workflow** in the app, or start with an example under **Workflows**.
-The guided form covers solver commands and builds, local or shared cluster
-TPTP problems, optional TPTP axioms, the resource limiter, and Slurm settings.
-Runsolver is the default limiter.
-Saving a workflow creates its definition locally; it does not submit a job.
-The workflow editor keeps Slurm settings separate from Review; generating a
-potentially expensive preview is an explicit action. 
+The guided form covers cluster specification, solver commands and builds, local or shared cluster
+problems, optional TPTP axioms, the resource limiter (`runsolver` is the default), and Slurm settings.
+Saving a workflow creates and saves its definition locally; it does not submit a job.
 
 See [workflow structure and Makefile targets](workflows/README.md) for the files the
 app creates and how to use a workflow from the command line.
