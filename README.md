@@ -24,7 +24,8 @@ with a summary in a`.csv` file.
 
 <details>
 <summary><strong>🚀 Install and start</strong></summary>
-
+<blockquote>
+  
 Your computer needs to have `python` (3.9+), `bash`, `ssh`, `rsync`, `tar`, and 
 `make`, plus SSH access to a cluster that offers Slurm. Linux and macOS are supported; 
 on Windows, use WSL. On macOS, `brew install python rsync` if they are missing.
@@ -37,6 +38,7 @@ cluster needs to have the build tools required to build the solvers.
 
 <details open>
 <summary><strong>🏫 Cluster access</strong></summary>
+<blockquote>
 
 Slurmy relies on SSH access to a cluster that offers Slurm.
 These setup notes are for TU Wien users; analogous processes
@@ -68,6 +70,7 @@ Host datalab
 Slurmy uses `datalab` by default. Set the environment variable `SLURMY_HOST` or choose another SSH host in the app
 if your alias differs. 
 
+</blockquote>
 </details>
 
 Install Slurmy like this:
@@ -92,6 +95,7 @@ Closing the browser tab does not stop Slurmy, and stopping the app does not stop
 Slurmy is a single-user tool with access to your local files and trusted workflow commands;
 do not expose it as a public web service.
 
+</blockquote>
 </details>
 
 <details>
