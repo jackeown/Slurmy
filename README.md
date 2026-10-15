@@ -141,11 +141,10 @@ download can be synced first.
 **Cluster status** shows Slurm nodes, CPU allocation, users with active jobs,
 and running or pending jobs across users. It starts with the `CPU-amd`
 partition; choose another partition or all partitions from the page. Select a
-node to see the jobs currently running on it. A running call's row shows its
+node to see the jobs currently running on it. A running job's row shows its
 node and Slurm ID. For new Slurmy submissions, it also shows call and batch
-counts across users via
-Slurm's queue metadata. Jobs whose private files you can read link to their
-job inspector; older users' jobs may not expose counts.
+counts across users. Jobs whose private files you can read link to their
+job inspector; older users' jobs might not expose counts.
 
 </blockquote>
 </details>
