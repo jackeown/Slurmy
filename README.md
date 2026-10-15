@@ -56,12 +56,11 @@ In brief:
 
 1. Complete the **dataLAB Cluster Essentials** TUWEL course linked from the guide.
 2. Create a [dataLAB account](https://login.datalab.tuwien.ac.at/) with your TU Wien credentials and add your SSH public key there.
-3. Request cluster login permission through the dataLAB
-   [Matrix channel](https://matrix.to/#/#gpu:tuwien.ac.at) or the
-   [GPU Slurm Cluster Access request](https://jira.it.tuwien.ac.at/servicedesk/customer/portal/7/create/383).
-   The guide explains which affiliation confirmation to provide.
+3. Request cluster login permission through the dataLAB [Matrix channel](https://matrix.to/#/#gpu:tuwien.ac.at) or the
+[GPU Slurm Cluster Access request](https://jira.it.tuwien.ac.at/servicedesk/customer/portal/7/create/383).
+The guide explains which affiliation confirmation to provide.
 4. Once access is approved, add an SSH alias on your computer, replacing the
-   username with your dataLAB account name:
+username with your dataLAB account name:
 
 ```sshconfig
 Host datalab
