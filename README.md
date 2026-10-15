@@ -108,20 +108,21 @@ Slurmy, and stopping the app does not stop cluster jobs.
 
 <blockquote>
 
-Workflows are reusable definitions; jobs are particular runs of them.
+Workflows are reusable definitions; a job is one particular run of a workflow.
 The example workflows for Vampire, E, and Drodi are read-only; duplicate one to
-edit it. Your saved workflows live in `workflows/my-workflows/`. 
+edit it.
+Saved workflows live in `workflows/my-workflows/`. 
 
 Open **New workflow** in the app, or start with an example under **Workflows**.
 The guided form covers solver commands and builds, local or shared cluster
 TPTP problems, optional TPTP axioms, the resource limiter, and Slurm settings.
-Runsolver is the default limiter. S
-aving a workflow creates its definition locally; it does not submit a job. 
+Runsolver is the default limiter.
+Saving a workflow creates its definition locally; it does not submit a job.
 The workflow editor keeps Slurm settings separate from Review; generating a
 potentially expensive preview is an explicit action. 
 
 See [workflow structure and Makefile targets](workflows/README.md) for the files the
-app creates and how to use a workflow from the command line. 
+app creates and how to use a workflow from the command line.
 See [implementation and CLI details](implementation/README.md) only if you want to
 work below the web interface.
 
