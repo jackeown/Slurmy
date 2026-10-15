@@ -73,13 +73,12 @@ access to the TU Wien network to reach the cluster.
 </blockquote>
 </details>
 
-After cloning the project, install Slurmy like this:
+Install Slurmy like this:
 ```bash
 python -m venv .venv          # Optional: keep dependencies separate from other projects.
 source .venv/bin/activate     # Skip this line if you skipped the venv.
 python -m pip install -r requirements.txt
 ```
-
 
 After installation, run Slurmy like this:
 ```
@@ -100,25 +99,53 @@ Slurmy, and stopping the app does not stop cluster jobs.
 </details>
 
 <details>
-<summary><strong>🌐 Create a workflow and running a job</strong></summary>
+<summary><strong>🌐 Creating a workflow</strong></summary>
 
 <blockquote>
+
+Workflows are reusable definitions; jobs are particular runs of them.
+The example workflows for Vampire, E, and Drodi are read-only; duplicate one to
+edit it. Your saved workflows live in `workflows/my-workflows/`. 
 
 Open **New workflow** in the app, or start with an example under **Workflows**.
 The guided form covers solver commands and builds, local or shared cluster
 TPTP problems, optional TPTP axioms, the resource limiter, and Slurm settings.
-Runsolver is the default
-limiter. Saving a workflow creates its definition locally; it does not submit
-a job. **Prepare & dispatch job** creates the submission files, builds declared
+Runsolver is the default limiter. S
+aving a workflow creates its definition locally; it does not submit a job. 
+The workflow editor keeps Slurm settings separate from Review; generating a
+potentially expensive preview is an explicit action. 
+
+See [workflow structure and Makefile targets](workflows/README.md) for the files the
+app creates and how to use a workflow from the command line. 
+See [implementation and CLI details](implementation/README.md) only if you want to
+work below the web interface.
+
+</blockquote>
+</details>
+
+<details>
+<summary><strong>🌐 Running a job</strong></summary>
+
+<blockquote>
+
+**Prepare & dispatch job** creates the submission files, builds declared
 resources on the cluster, and submits the job. The arrow menu also offers
 prepare-only and dispatch-already-prepared actions.
 
-Example workflows for Vampire, E, and Drodi are read-only; duplicate one to
-edit it. Your saved workflows live in `workflows/my-workflows/`. See
-[workflow structure and Makefile targets](workflows/README.md) for the files the
-app creates and how to use a workflow from the command line. See
-[implementation and CLI details](implementation/README.md) only if you want to
-work below the web interface.
+Use **Stop job** to cancel
+remaining Slurm work and **Resume job** to run only unfinished calls in the
+same job. An unfinished job must be stopped before deletion. When deleting a
+synced job, you can keep its local copy or remove it too; an incomplete last
+download can be synced first.
+
+**Cluster status** shows Slurm nodes, CPU allocation, users with active jobs,
+and running or pending jobs across users. It starts with the `CPU-amd`
+partition; choose another partition or all partitions from the page. Select a
+node to see the jobs currently running on it. A running call's row shows its
+node and Slurm ID. For new Slurmy submissions, it also shows call and batch
+counts across users via
+Slurm's queue metadata. Jobs whose private files you can read link to their
+job inspector; older users' jobs may not expose counts.
 
 </blockquote>
 </details>
@@ -131,7 +158,7 @@ work below the web interface.
 In **Job history**, follow progress and open a job to inspect call outcomes,
 solver comparisons, problems, output streams, and diagnostics. Select call
 outcomes to filter the calls table by multiple statuses; the 3D plot compares outcome
-counts across solvers. **Sync/Download** saves exactly three files under
+counts across solvers. **Sync/Download** saves three files under
 `job-results/JOB_ID/`: `<job-name>.csv`, `<job-name>_logs.tgz`, and
 `<job-name>_errors.tgz`. Each archive extracts into its own directory, with
 one descriptively named log per call. Unsafe filename characters in the job
@@ -139,22 +166,6 @@ name are replaced with hyphens. The arrow menu offers
 **Complete/verbose sync/download**
 for raw per-call archives, Slurm logs, plans, and metadata under
 `job-results/verbose/JOB_ID/`.
-The workflow editor keeps Slurm settings separate from Review; generating a
-potentially expensive preview is an explicit action. Use **Stop job** to cancel
-remaining Slurm work and **Resume job** to run only unfinished calls in the
-same job. An unfinished job must be stopped before deletion. When deleting a
-synced job, you can keep its local copy or remove it too; an incomplete last
-download can be synced first.
-Workflows are reusable definitions; jobs are particular runs of them.
-
-**Cluster status** shows Slurm nodes, CPU allocation, users with active jobs,
-and running or pending jobs across users. It starts with the `CPU-amd`
-partition; choose another partition or all partitions from the page. Select a
-node to see the jobs currently running on it. A running call's row shows its
-node and Slurm ID. For new Slurmy submissions, it also shows call and batch
-counts across users via
-Slurm's queue metadata. Jobs whose private files you can read link to their
-job inspector; older users' jobs may not expose counts.
 
 </blockquote>
 </details>
