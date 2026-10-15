@@ -34,14 +34,14 @@ printf 'JOBS\n'
 format='%i|%u|%j|%T|%D|%C|%M|%l|%N|%R|%Z|%k'
 if [[ -n "$node" ]]; then
     if [[ "$partition" == all ]]; then
-        jobs=$(squeue -a -h -w "$node" -o "$format")
+        jobs=$(squeue -a -r -h -w "$node" -o "$format")
     else
-        jobs=$(squeue -a -h -p "$partition" -w "$node" -o "$format")
+        jobs=$(squeue -a -r -h -p "$partition" -w "$node" -o "$format")
     fi
 elif [[ "$partition" == all ]]; then
-    jobs=$(squeue -a -h -o "$format")
+    jobs=$(squeue -a -r -h -o "$format")
 else
-    jobs=$(squeue -a -h -p "$partition" -o "$format")
+    jobs=$(squeue -a -r -h -p "$partition" -o "$format")
 fi
 printf '%s\n' "$jobs"
 printf 'IDENTITY\n%s\n' "$(id -un)"

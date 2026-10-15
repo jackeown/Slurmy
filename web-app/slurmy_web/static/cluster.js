@@ -164,7 +164,7 @@
         }
         list.append(item);
       }
-      if (!onNode.length) list.textContent = 'No running jobs on this node.';
+      if (!onNode.length) list.textContent = 'No running tasks on this node.';
       details.append(list);
       details.addEventListener('toggle', () => {if (details.open) expandedNodes.add(node.name); else expandedNodes.delete(node.name);});
       name.append(details);
@@ -172,7 +172,7 @@
                            `${(node.memory_mib / 1024).toFixed(0)} GiB`]);
       nodes.append(nodeRow);
     }
-    if (!nodes.children.length) empty(nodes, 7, nodeScope.value === 'all' ? 'No matching nodes.' : 'No nodes currently running matching jobs.');
+    if (!nodes.children.length) empty(nodes, 7, nodeScope.value === 'all' ? 'No matching nodes.' : 'No nodes currently running matching tasks.');
 
     const users = find('#cluster-users');
     users.replaceChildren();
@@ -190,7 +190,7 @@
       if (job.slurmy) {
         const tag = document.createElement('small');
         tag.className = 'cluster-slurmy-label';
-        tag.textContent = `Slurmy · ${job.slurmy_id}`;
+        tag.textContent = `Slurmy job · ${job.slurmy_id}`;
         name.append(tag);
       }
       const state = cell(job.state);
@@ -198,7 +198,7 @@
       jobs.append(row([job.id, name, job.user, state, job.nodelist || job.reason || job.nodes,
                         job.reserved_cores, `${job.elapsed} / ${job.limit}`, slurmyCell(job)]));
     }
-    if (!jobs.children.length) empty(jobs, 8, 'No matching active Slurm jobs.');
+    if (!jobs.children.length) empty(jobs, 8, 'No matching active Slurm tasks.');
   }
 
   async function refresh(fresh = false) {
