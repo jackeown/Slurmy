@@ -124,7 +124,7 @@ work below the web interface.
 </details>
 
 <details>
-<summary><strong>🌐 Running a job</strong></summary>
+<summary><strong>🏃‍♀️ Running a job</strong></summary>
 
 <blockquote>
 
@@ -150,7 +150,7 @@ job inspector; older users' jobs might not expose counts.
 </details>
 
 <details>
-<summary><strong>🌐 Looking at job results</strong></summary>
+<summary><strong>📖 Looking at job results</strong></summary>
 
 <blockquote>
 
