@@ -32,7 +32,7 @@ on Windows, use WSL. On macOS, `brew install python rsync` supplies `python` and
 `rsync` if they are missing. Install Apple's command-line tools if `make` is missing. 
 The system `bash` and `tar` are sufficient (no GNU tar replacement is required).
 
-<details>
+<details open>
 <summary><strong>🏫 Cluster access</strong></summary>
 
 <blockquote>
