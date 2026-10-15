@@ -1,6 +1,7 @@
 """Small, read-only Slurm overview for the selected SSH host and partition."""
 
 import re
+import json
 import shutil
 import subprocess
 import time
@@ -42,6 +43,21 @@ printf '%s\n' "$jobs" | awk -F'|' 'NF >= 12 && $9 != "(null)" && $9 != "" {print
     hosts=$(scontrol show hostnames "$expression" 2>/dev/null | paste -sd, -) || continue
     printf '%s|%s\n' "$expression" "$hosts"
 done
+printf 'CALLS\n'
+printf '%s\n' "$jobs" | while IFS='|' read -r slurm_id user name state nodes cpus elapsed limit nodelist reason directory comment; do
+    [[ "$state" == RUNNING* && "$directory" == "$HOME"/slurmy/jobs/* ]] || continue
+    job_name=${directory##*/}
+    [[ "$directory" == "$HOME/slurmy/jobs/$job_name" ]] || continue
+    [[ "$comment" =~ :batch=([0-9]+)$ ]] || continue
+    batch=${BASH_REMATCH[1]}
+    progress=$(printf '%s/progress/batch_%06d.csv' "$directory" "$batch")
+    [[ -f "$progress" && -f "$directory/manifest.jsonl" ]] || continue
+    IFS=, read -r call_state task_id _ < "$progress" || continue
+    call_state=${call_state//\"/}; task_id=${task_id//\"/}
+    [[ "$call_state" == running && "$task_id" =~ ^[0-9]+$ ]] || continue
+    definition=$(sed -n "$((task_id + 1))p" "$directory/manifest.jsonl")
+    [[ -n "$definition" ]] && printf '%s|%s|%s\n' "$slurm_id" "$task_id" "$definition"
+done
 printf 'METADATA\n'
 # Only metadata from the connected account's own, direct Slurmy job folders is
 # readable. Slurm exposes other users' queue entries, not their private files.
@@ -60,7 +76,7 @@ done
 
 
 def parse_status(host, partition, output):
-    sections = {'PARTITIONS': [], 'NODES': [], 'JOBS': [], 'IDENTITY': [], 'HOSTS': [], 'METADATA': []}
+    sections = {'PARTITIONS': [], 'NODES': [], 'JOBS': [], 'IDENTITY': [], 'HOSTS': [], 'CALLS': [], 'METADATA': []}
     section = None
     for line in output.splitlines():
         if line in sections:
@@ -70,6 +86,17 @@ def parse_status(host, partition, output):
     if section != 'METADATA':
         raise RuntimeError('Incomplete Slurm status response.')
     metadata = {}
+    active_calls = {}
+    for line in sections['CALLS']:
+        try:
+            slurm_id, task_id, encoded = line.split('|', 2)
+            call = json.loads(encoded)
+            if int(task_id) != call.get('task_id'):
+                continue
+            active_calls[slurm_id] = dict(id=int(task_id), solver=str(call.get('solver_name') or call.get('system') or 'Solver'),
+                                          problem=str(call.get('problem') or 'Problem'))
+        except (ValueError, TypeError, json.JSONDecodeError):
+            continue
     hostlists = dict(line.split('|', 1) for line in sections['HOSTS'] if '|' in line)
     for line in sections['METADATA']:
         fields = line.split('|')
@@ -109,7 +136,8 @@ def parse_status(host, partition, output):
         entry = dict(id=job_id, user=user, name=name, state=state, nodes=node_count,
                      cpus=cpu_count, elapsed=elapsed, limit=limit, nodelist=nodelist,
                      hostnames=hostlists.get(nodelist, '').split(',') if nodelist in hostlists else [],
-                     reason=reason, slurmy=slurmy, slurmy_id=parts[-1] if slurmy else None)
+                     reason=reason, slurmy=slurmy, slurmy_id=parts[-1] if slurmy else None,
+                     active_call=active_calls.get(job_id) if slurmy else None)
         public = re.fullmatch(r'slurmy:v1:calls=(\d+):batches=(\d+):batch=(\d+)', comment)
         if public and slurmy:
             entry.update(jobpairs=int(public.group(1)), batches=int(public.group(2)),

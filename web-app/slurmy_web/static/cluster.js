@@ -56,13 +56,13 @@
   const query = new URLSearchParams(location.search);
   partitionSelect.value = query.get('partition') || 'CPU-amd';
   if (!partitionSelect.value) partitionSelect.add(new Option(query.get('partition'), query.get('partition'), true, true));
-  if (['mine', 'job'].includes(query.get('nodes'))) nodeScope.value = query.get('nodes');
+  nodeScope.value = ['all', 'mine', 'job'].includes(query.get('nodes')) ? query.get('nodes') : 'mine';
   const requestedJob = query.get('job') || '';
   if (requestedJob) jobChoice.add(new Option(requestedJob, requestedJob));
   jobChoice.value = requestedJob;
   function syncNodeScopeUrl() {
     const url = new URL(location.href);
-    if (nodeScope.value === 'all') url.searchParams.delete('nodes');
+    if (nodeScope.value === 'mine') url.searchParams.delete('nodes');
     else url.searchParams.set('nodes', nodeScope.value);
     if (nodeScope.value === 'job' && jobChoice.value) url.searchParams.set('job', jobChoice.value);
     else url.searchParams.delete('job');
@@ -113,7 +113,7 @@
     const totals = status.summary;
     find('#cluster-free').textContent = `${totals.free_nodes} / ${totals.nodes}`;
     find('#cluster-utilization').textContent = `${totals.utilization}%`;
-    find('#cluster-utilization').title = `${totals.allocated_cpus.toLocaleString()} of ${totals.total_cpus.toLocaleString()} Slurm CPUs allocated`;
+    find('#cluster-utilization').title = `${totals.allocated_cpus.toLocaleString()} of ${totals.total_cpus.toLocaleString()} hardware threads allocated`;
     find('#cluster-running').textContent = totals.running.toLocaleString();
     find('#cluster-pending').textContent = totals.pending.toLocaleString();
     find('#cluster-user-count').textContent = `· ${status.users.length}`;
@@ -150,7 +150,17 @@
           ? document.createElement('a') : document.createElement('span');
         title.textContent = `${job.name} · ${job.id}`;
         if (title.tagName === 'A') title.href = `/jobs/${encodeURIComponent(job.slurmy_id)}?${new URLSearchParams({host})}`;
-        item.append(title, document.createTextNode(` — ${job.user}, ${job.cpus} Slurm CPUs`));
+        item.append(title, document.createTextNode(` — ${job.user}, ${job.cpus} hardware threads reserved`));
+        if (job.active_call) {
+          const call = document.createElement('div');
+          call.className = 'cluster-active-call';
+          const detail = document.createElement('a');
+          detail.href = `/jobs/${encodeURIComponent(job.slurmy_id)}?${new URLSearchParams({host, call: job.active_call.id})}`;
+          detail.textContent = `${job.active_call.solver} — ${job.active_call.problem.split('/').pop()} · call ${job.active_call.id}`;
+          detail.title = job.active_call.problem;
+          call.append(detail);
+          item.append(call);
+        }
         list.append(item);
       }
       if (!onNode.length) list.textContent = 'No running jobs on this node.';

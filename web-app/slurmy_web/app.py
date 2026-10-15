@@ -672,6 +672,18 @@ def create_app():
         value = workflows.existing(data.get('value'), data.get('kind'))
         return jsonify(path=str(value))
 
+    @app.post('/api/validate-solver-cores')
+    def validate_solver_cores():
+        from check_threads import check_cores
+        data = request.get_json() or {}
+        requested = data.get('cores')
+        if isinstance(requested, bool) or not str(requested).isdecimal() or int(requested) < 1:
+            raise ValueError('Physical cores must be a positive whole number.')
+        selected_host = str(data.get('host') or host())
+        selected_partition = str(data.get('partition') or '')
+        supported = check_cores(selected_host, selected_partition, int(requested))
+        return jsonify(max_cores=supported)
+
     @app.post('/api/browse-path')
     def browse_path():
         data = request.get_json() or {}

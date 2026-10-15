@@ -37,6 +37,36 @@ def check_requested(host: str, partition: str, maximum: int) -> int:
     return supported
 
 
+def check_cores(host: str, partition: str, requested: int) -> int:
+    """Reject a call that cannot fit on any node in the selected partition."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", partition):
+        raise ValueError("Invalid Slurm partition name.")
+    try:
+        process = subprocess.run(
+            ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", host,
+             f"sinfo -p {partition} -N -h -o '%X %Y'"],
+            capture_output=True, text=True, timeout=20, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError(f"Cannot check physical cores on {host}/{partition}: {error}") from error
+    if process.returncode:
+        raise ValueError(f"Cannot check physical cores on {host}/{partition}: "
+                         f"{process.stderr.strip() or 'SSH or sinfo failed'}")
+    sizes = []
+    for line in process.stdout.splitlines():
+        parts = line.split()
+        if len(parts) != 2 or any(not part.isdecimal() or int(part) < 1 for part in parts):
+            raise ValueError(f"Cannot determine physical core capacity for {partition} on {host}.")
+        sizes.append(int(parts[0]) * int(parts[1]))
+    if not sizes:
+        raise ValueError(f"No nodes found in partition {partition} on {host}.")
+    supported = max(sizes)
+    if requested > supported:
+        raise ValueError(f"A solver requests {requested} physical cores, but nodes in {partition} "
+                         f"on {host} have at most {supported}. Reduce its core count.")
+    return supported
+
+
 def check(host: str, partition: str, jobpairs: str) -> None:
     maximum = 1
     with open(jobpairs, encoding="utf-8-sig", newline="") as stream:

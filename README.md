@@ -136,7 +136,7 @@ same job. An unfinished job must be stopped before deletion. When deleting a
 synced job, you can keep its local copy or remove it too; an incomplete last
 download can be synced first.
 
-**Cluster status** shows Slurm nodes, CPU allocation, users with active jobs,
+**Cluster status** shows Slurm nodes, allocated hardware threads, users with active jobs,
 and running or pending jobs across users. It starts with the `CPU-amd`
 partition; choose another partition or all partitions from the page. Select a
 node to see the jobs currently running on it. A running job's row shows its

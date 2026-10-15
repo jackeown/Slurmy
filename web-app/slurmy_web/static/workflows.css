@@ -103,6 +103,9 @@ html[data-theme="dark"] .steps li[data-state="invalid"] > button { color: #ff928
 .path-input-row input { flex: 1 1 auto; width: 100%; min-width: 0; }
 .path-input-row .path-browse { flex: 0 0 auto; margin: 0; align-self: auto; white-space: nowrap; }
 .glob-row > .remove { flex: 0 0 auto; }
+.cluster-active-call { margin: 5px 0 10px 16px; font-size: 12px; }
+.remove { background: #fff1ee; color: var(--red); border-color: #edcfcb; }
+.remove:hover:not(:disabled) { background: #fce4df; }
 .limiter-invocation-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; }
 .limiter-invocation-row textarea { width: 100%; }
 .limiter-invocation-row button { white-space: nowrap; }
@@ -211,8 +214,10 @@ html[data-theme="dark"] .button.secondary,
 html[data-theme="dark"] button.path-item { background: #111c18; color: var(--ink); border-color: var(--line); }
 html[data-theme="dark"] button.danger,
 html[data-theme="dark"] .button.danger { background: #352523; color: #f4b4ac; border-color: #76504b; }
+html[data-theme="dark"] button.remove { background: #352523; color: #f4b4ac; border-color: #76504b; }
 html[data-theme="dark"] button.danger:hover:not(:disabled),
 html[data-theme="dark"] .button.danger:hover:not(:disabled) { background: #4b302d; color: #ffe0da; }
+html[data-theme="dark"] button.remove:hover:not(:disabled) { background: #4b302d; color: #ffe0da; }
 html[data-theme="dark"] th { background: #14201b; }
 html[data-theme="dark"] td { border-bottom-color: #2a3b34; }
 html[data-theme="dark"] tbody tr:hover,

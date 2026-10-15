@@ -219,6 +219,13 @@ if(document.body.dataset.page==='new'){
    updateSolverStatus(card);const section=card.querySelector('.solver-card-section[data-state="invalid"]');if(section&&!section.hidden){section.open=true;section.querySelector('input,textarea,select')?.focus();throw new Error('Complete the highlighted solver section before continuing.');}
   }
   if(step===1&&rootValue('mode')==='interactive'&&[...document.querySelectorAll('#configurations .configuration')].some(card=>card.dataset.state==='invalid'))throw new Error('Give each solver configuration a distinct name.');
+  if(step===1&&rootValue('mode')==='interactive'){
+   const coreInputs=[...document.querySelectorAll('#configurations .configuration [name="cores"]')];
+   const requested=Math.max(...coreInputs.map(input=>Number(input.value)));
+   const response=await fetch('/api/validate-solver-cores',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({host:rootValue('host'),partition:rootValue('partition'),cores:requested})});
+   const result=await response.json();
+   if(!response.ok){const input=coreInputs.find(item=>Number(item.value)===requested);input?.closest('details')?.setAttribute('open','');input?.focus();throw new Error(result.error||'Could not check the selected partition’s core capacity.');}
+  }
   if(step===2){updateProblemStatus();const section=sections[step].querySelector('.problem-card-section[data-state="invalid"]');if(section){section.open=true;throw new Error('Complete the highlighted problem or axiom section before continuing.');}}
   if(step===3){updateLimiterStatus();const section=sections[step].querySelector('.limiter-card-section[data-state="invalid"]');if(section){section.open=true;throw new Error('Complete the highlighted limiter section before continuing.');}}
  }
