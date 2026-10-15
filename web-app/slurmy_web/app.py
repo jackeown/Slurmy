@@ -878,8 +878,17 @@ def create_app():
         with guard:
             if app.config.get('SHUTTING_DOWN'):
                 abort(409, 'The server is stopping. Reopen the app to continue.')
-            if any(op['scope'] == scope and op['state'] == 'running' for op in operations.values()):
-                abort(409, 'An operation for this workflow/job is already running.')
+            active = [op for op in operations.values()
+                      if op['scope'] == scope and op['state'] == 'running']
+            if label == 'stop':
+                # Double clicks and requests from other tabs must join the
+                # existing stop, rather than report it as a conflicting action.
+                stopping = next((op for op in active if op['label'] == 'stop'), None)
+                if stopping:
+                    return jsonify(stopping), 202
+                active = [op for op in active if op['label'] not in {'sync', 'sync_verbose', 'resume'}]
+            if active:
+                abort(409, f"Wait for the active {active[0]['label']} operation to finish.")
             key = secrets.token_hex(12)
             STATE.mkdir(exist_ok=True)
             log = STATE / (key + '.log')
@@ -958,7 +967,7 @@ def create_app():
     @app.post('/api/jobs/<job_id>/delete')
     def delete_job(job_id):
         job_id = safe_job(job_id)
-        job = job_snapshot(job_id)
+        job = job_snapshot(job_id, force=True)
         if job.percent < 100 and job.submission_state != 'stopped':
             abort(409, 'Stop this unfinished job and wait for Stop to complete before deleting it.')
         if job.active_records:
@@ -973,15 +982,13 @@ def create_app():
         script = r'''set -euo pipefail
 job="$HOME/slurmy/jobs/$1"
 [[ -d "$job" && ! -L "$job" ]] || { echo 'Job directory not found or is a symlink.' >&2; exit 2; }
+exec 9> "$job/.submit-controller.lock"
+flock -n 9 || { echo 'The submission controller is still active.' >&2; exit 3; }
 snapshot=$(squeue -h -r -u "$USER" -o '%Z') || { echo 'Cannot confirm Slurm queue state; deletion refused.' >&2; exit 3; }
 if grep -Fxq -- "$job" <<< "$snapshot"; then
     echo 'Slurm still has an active allocation for this job.' >&2
     exit 3
 fi
-flock -n "$job/.submit-controller.lock" true || {
-    echo 'The submission controller is still active.' >&2
-    exit 3
-}
 rm -r -- "$job"
 '''
         try:

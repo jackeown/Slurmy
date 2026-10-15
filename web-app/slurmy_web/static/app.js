@@ -139,23 +139,32 @@ setTheme(document.documentElement.dataset.theme||'light');
 themeToggle?.addEventListener('click',()=>{const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';localStorage.setItem('slurmy-theme',theme);setTheme(theme);});
 $('#host-form')?.addEventListener('submit',event=>{event.preventDefault();const url=new URL(location.href);url.searchParams.set('host',$('#host').value);location.href=url;});
 
-let operationTimer, currentOperationId=null, operationHidden=false;
+let operationTimer, currentOperationId=null, operationHidden=false, jobAction=null;
+function jobActionControls(){
+ if(page!=='job')return;
+ const stopped=jobData?.state==='STOPPED', complete=jobData?.percent>=100;
+ $('#stop-job').disabled=(stopped&&jobAction!=='resume')||complete||jobAction==='stop';
+ $('#stop-job').textContent=jobAction==='stop'?'Stopping…':'Stop job';
+ $('#resume-job').disabled=Boolean(jobAction)||!stopped||complete;
+ for(const id of ['delete-job','sync','sync-verbose','sync-menu-toggle'])$('#'+id).disabled=Boolean(jobAction);
+}
 function lockWorkflowActions(locked){if(page!=='workflow')return;for(const id of ['prepare','submit','submit-only','submit-menu-toggle']){const control=$('#'+id);if(control)control.disabled=locked;}}
 function operationVisibility(){const pane=$('#operation');pane.hidden=operationHidden;const reopen=$('#show-operation');if(reopen)reopen.hidden=!currentOperationId||!operationHidden;}
 async function watchOperation(id){
   clearTimeout(operationTimer);currentOperationId=id;operationVisibility();sessionStorage.setItem('slurmy-operation',id);
   try{
-    const op=await api('/api/operations/'+encodeURIComponent(id));text('#operation-title',`${op.phase} · ${op.state}`);text('#operation-log',op.log||'Starting…');
+    const op=await api('/api/operations/'+encodeURIComponent(id));if(currentOperationId!==id)return;text('#operation-title',`${op.phase} · ${op.state}`);text('#operation-log',op.log||'Starting…');
     const match=op.log.match(/Slurmy job ID: ([A-Za-z0-9._-]+)/);
     $('#submitted-link')?.remove();
     if(match){announceJob(match[1],op.requested_name);if($('#jobs-body'))renderJobs();const node=link('View submitted job →','/jobs/'+encodeURIComponent(match[1])+'?'+params({}));node.id='submitted-link';$('#operation').append(node);refresh();}
+    if(op.scope===host+':'+document.body.dataset.job){jobAction=op.state==='running'?op.label:null;jobActionControls();}
     if(op.state==='running'){lockWorkflowActions(true);operationTimer=setTimeout(()=>watchOperation(id),1500);}
-    else{lockWorkflowActions(false);sessionStorage.removeItem('slurmy-operation');text('#show-operation','View completed operation');await refresh();}
-  }catch(error){lockWorkflowActions(false);text('#operation-log',error.message);sessionStorage.removeItem('slurmy-operation');}
+    else{lockWorkflowActions(false);sessionStorage.removeItem('slurmy-operation');text('#show-operation','View completed operation');await refresh(true);}
+  }catch(error){jobAction=null;jobActionControls();lockWorkflowActions(false);text('#operation-log',error.message);sessionStorage.removeItem('slurmy-operation');}
 }
-$('#dismiss-operation')?.addEventListener('click',()=>{if(page!=='workflow'){clearTimeout(operationTimer);sessionStorage.removeItem('slurmy-operation');currentOperationId=null;$('#operation').hidden=true;return;}operationHidden=true;if(currentOperationId)sessionStorage.setItem('slurmy-operation-hidden',currentOperationId);operationVisibility();});
+$('#dismiss-operation')?.addEventListener('click',()=>{operationHidden=true;if(currentOperationId)sessionStorage.setItem('slurmy-operation-hidden',currentOperationId);operationVisibility();});
 $('#show-operation')?.addEventListener('click',()=>{operationHidden=false;sessionStorage.removeItem('slurmy-operation-hidden');operationVisibility();if(currentOperationId)watchOperation(currentOperationId);});
-async function startOperation(url,data){try{const op=await api(url,data);operationHidden=false;sessionStorage.removeItem('slurmy-operation-hidden');lockWorkflowActions(true);watchOperation(op.id);}catch(error){notice(error.message);}}
+async function startOperation(url,data){if(page==='job'){if(jobAction&&!(data.action==='stop'&&['sync','sync_verbose','resume'].includes(jobAction)))return;clearTimeout(operationTimer);currentOperationId=null;jobAction=data.action;jobActionControls();}try{const op=await api(url,data);operationHidden=false;sessionStorage.removeItem('slurmy-operation-hidden');lockWorkflowActions(true);watchOperation(op.id);}catch(error){jobAction=null;jobActionControls();notice(error.message);}}
 const runningOperation=sessionStorage.getItem('slurmy-operation');
 if(page==='workflow'){
  api('/api/workflow/active-operation?'+params({directory:document.body.dataset.directory})).then(data=>{const id=data.operation;if(id){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===id;watchOperation(id);}}).catch(()=>{if(runningOperation){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===runningOperation;watchOperation(runningOperation);}});
@@ -277,8 +286,7 @@ async function fetchJob(fresh=false){
  syncTableUrl();
  const submission=data.submission_state==='submitting'?` · submitting batches ${data.submitted_batches}/${data.batch_count}`:data.submission_state==='failed'?' · batch submission stopped before all calls were queued':'';
  text('#job-display-name',data.name);document.title=`${data.name} · Slurmy`;
- if($('#stop-job'))$('#stop-job').disabled=data.state==='STOPPED'||data.percent>=100;
- if($('#resume-job'))$('#resume-job').disabled=data.state!=='STOPPED';
+  jobActionControls();
  const refreshNote=data.percent>=100?' · auto-refresh off (100% complete)':data.total>10000?' · auto-refreshes every 30 seconds':' · auto-refreshes every 10 seconds';
  text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()}${submission}${refreshNote} · completion counts finished calls, not proof-search progress`);
  text('#stat-state',data.state);text('#stat-done',`${data.completed} / ${data.total}`);text('#stat-percent',data.percent.toFixed(1)+'%');text('#stat-issues',data.issues);

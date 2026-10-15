@@ -46,7 +46,8 @@ configuration × problem product into `jobpairs.csv`. Optional
 form are saved as `build-resource-*.sh`. The solver source and problem files
 can remain at their existing paths; they are packaged at submission time.
 Problems can be selected by files, globs, ZIP/tar archives, or a cluster TPTP
-pattern such as `tptp://AGT/*.p`. Cluster TPTP problems remain under the
+pattern such as `tptp://Problems/*/*.p` (all domains) or
+`tptp://Problems/AGT/*.p` (one domain). Cluster TPTP problems remain under the
 shared `/share/Slurmy-TPTP-v9.2.1/Problems/` tree. If custom axioms
 are selected, they replace the default shared TPTP library for that job.
 

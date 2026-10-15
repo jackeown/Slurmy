@@ -6,6 +6,9 @@ job="$HOME/slurmy/jobs/$1"
 [[ -d "$job" && ! -L "$job" ]] || { echo 'Job directory not found.' >&2; exit 2; }
 : > "$job/.stopped"
 for attempt in {1..30}; do
+    # A concurrently starting resume may have cleared the marker after our
+    # initial request. Keep stopping submission until its controller exits.
+    : > "$job/.stopped"
     snapshot=$(squeue -h -r -u "$USER" -o '%i|%Z') || { echo 'Cannot confirm Slurm queue state; job remains marked stopped.' >&2; exit 1; }
     ids=()
     if [[ -n "$snapshot" ]]; then

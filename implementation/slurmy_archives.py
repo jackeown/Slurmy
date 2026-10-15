@@ -22,12 +22,15 @@ TPTP_PROBLEMS = '/share/Slurmy-TPTP-v9.2.1/Problems'
 
 
 def expand_cluster_tptp(pattern: str, host: str) -> list[str]:
-    """List shared cluster TPTP problems without copying them to the laptop."""
+    """List shared TPTP Problems/ globs; accept legacy domain-relative globs too."""
     if not pattern.startswith('tptp://'):
         raise ValueError('Expected a tptp:// problem pattern.')
     relative = pattern.removeprefix('tptp://').strip('/')
     if not relative or '..' in PurePosixPath(relative).parts or '\\' in relative or '\x00' in relative:
         raise ValueError('Enter a relative TPTP Problems glob without parent-directory components.')
+    # Canonical URLs mirror the TPTP layout (Problems/AGT/*.p). The SSH
+    # lookup is rooted in Problems already; older saved URLs omit that prefix.
+    relative = relative.removeprefix('Problems/')
     script = '''import base64, glob, os, sys\nroot = sys.argv[1]\npattern = base64.b64decode(sys.argv[2]).decode()\nfor path in sorted(glob.iglob(os.path.join(root, pattern), recursive=True)):\n    if os.path.isfile(path) and path.endswith(('.p', '.tptp')) and os.path.realpath(path).startswith(root + '/'):\n        sys.stdout.buffer.write(path.encode() + b'\\0')\n'''
     try:
         result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host,
