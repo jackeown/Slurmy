@@ -40,6 +40,43 @@ python -m venv .venv          # Optional: keep dependencies separate from other 
 source .venv/bin/activate     # Skip this line if you skipped the venv.
 python -m pip install -r requirements.txt
 ```
+
+<details>
+<summary><strong>🏫 TU Wien dataLAB cluster access</strong></summary>
+
+<blockquote>
+For TU Wien users, the default SSH alias `datalab` refers to the dataLAB
+cluster. Access is managed by dataLAB, not by Slurmy. Their
+[GPU Cluster guide](https://colab.tuwien.ac.at/spaces/Datalab/pages/241107279/GPU+Cluster#GPUCluster-LogintotheCluster)
+has the current requirements and login instructions. In brief:
+
+1. Complete the **dataLAB Cluster Essentials** TUWEL course linked from the
+   guide.
+2. Create a [dataLAB account](https://login.datalab.tuwien.ac.at/) with your
+   TU Wien credentials and add your SSH public key there.
+3. Request cluster login permission through the dataLAB
+   [Matrix channel](https://matrix.to/#/#gpu:tuwien.ac.at) or the
+   [GPU Slurm Cluster Access request](https://jira.it.tuwien.ac.at/servicedesk/customer/portal/7/create/383).
+   The guide explains which affiliation confirmation to provide.
+4. Once access is approved, add an SSH alias on your computer, replacing the
+   username with your dataLAB account name:
+
+```sshconfig
+Host datalab
+    HostName cluster.datalab.tuwien.ac.at
+    User YOUR_DATALAB_USERNAME
+    AddKeysToAgent yes
+    IdentityFile ~/.ssh/YOUR_PRIVATE_KEY_FILE
+```
+
+Then verify `ssh datalab` works before submitting a workflow. Slurmy uses
+`datalab` by default; set `SLURMY_HOST` or choose another SSH host in the app
+if your alias differs. Choose a partition available to your account in the
+workflow settings. If you are off campus, set up VPN
+access to the TU Wien network to reach the cluster.
+
+</blockquote>
+</details>
 After installation, run Slurmy like this:
 ```
 python web-app/main.py        # Opens the local app; Ctrl-C stops its server.
@@ -114,43 +151,6 @@ node and Slurm ID. For new Slurmy submissions, it also shows call and batch
 counts across users via
 Slurm's queue metadata. Jobs whose private files you can read link to their
 job inspector; older users' jobs may not expose counts.
-
-</blockquote>
-</details>
-
-<details>
-<summary><strong>🏫 TU Wien dataLAB cluster access</strong></summary>
-
-<blockquote>
-For TU Wien users, the default SSH alias `datalab` refers to the dataLAB
-cluster. Access is managed by dataLAB, not by Slurmy. Their
-[GPU Cluster guide](https://colab.tuwien.ac.at/spaces/Datalab/pages/241107279/GPU+Cluster#GPUCluster-LogintotheCluster)
-has the current requirements and login instructions. In brief:
-
-1. Complete the **dataLAB Cluster Essentials** TUWEL course linked from the
-   guide.
-2. Create a [dataLAB account](https://login.datalab.tuwien.ac.at/) with your
-   TU Wien credentials and add your SSH public key there.
-3. Request cluster login permission through the dataLAB
-   [Matrix channel](https://matrix.to/#/#gpu:tuwien.ac.at) or the
-   [GPU Slurm Cluster Access request](https://jira.it.tuwien.ac.at/servicedesk/customer/portal/7/create/383).
-   The guide explains which affiliation confirmation to provide.
-4. Once access is approved, add an SSH alias on your computer, replacing the
-   username with your dataLAB account name:
-
-```sshconfig
-Host datalab
-    HostName cluster.datalab.tuwien.ac.at
-    User YOUR_DATALAB_USERNAME
-    AddKeysToAgent yes
-    IdentityFile ~/.ssh/YOUR_PRIVATE_KEY_FILE
-```
-
-Then verify `ssh datalab` works before submitting a workflow. Slurmy uses
-`datalab` by default; set `SLURMY_HOST` or choose another SSH host in the app
-if your alias differs. Choose a partition available to your account in the
-workflow settings. If you are off campus, set up VPN
-access to the TU Wien network to reach the cluster.
 
 </blockquote>
 </details>
