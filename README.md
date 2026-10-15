@@ -22,31 +22,12 @@ creates a **job**: the individual solver–problem execution are grouped into Sl
 The results of a job can be downloaded in a `.tgz` file, with a summary in a`.csv` file.
 
 <details>
-<summary><strong>🚀 Install and start</strong></summary>
+<summary><strong>🏫 Cluster access</strong></summary>
 
 <blockquote>
-
-Your computer needs to have `python` (3.9+), `bash`, `ssh`, `rsync`, `tar`, and 
-`make`, plus SSH access to a supported Slurm cluster. Linux and macOS are supported; 
-on Windows, use WSL. On macOS, `brew install python rsync` supplies `python` and 
-`rsync` if they are missing. Install Apple's command-line tools if `make` is missing. 
-The system `bash` and `tar` are sufficient (no GNU tar replacement is required).
-The cluster needs the build tools required by your chosen solvers - you do not need 
-to compile solvers locally.
-
-After cloning the project, install Slurmy like this:
-```bash
-python -m venv .venv          # Optional: keep dependencies separate from other projects.
-source .venv/bin/activate     # Skip this line if you skipped the venv.
-python -m pip install -r requirements.txt
-```
-
-<details>
-<summary><strong>🏫 TU Wien dataLAB cluster access</strong></summary>
-
-<blockquote>
-For TU Wien users, the default SSH alias `datalab` refers to the dataLAB
-cluster. Access is managed by dataLAB, not by Slurmy. Their
+Slurmy relies on ssh access to a cluster that offers Slurm.
+For TU Wien users, the default SSH alias `datalab` refers to the dataLAB cluster. 
+Access is managed by dataLAB, not by Slurmy. Their
 [GPU Cluster guide](https://colab.tuwien.ac.at/spaces/Datalab/pages/241107279/GPU+Cluster#GPUCluster-LogintotheCluster)
 has the current requirements and login instructions. In brief:
 
@@ -77,6 +58,28 @@ access to the TU Wien network to reach the cluster.
 
 </blockquote>
 </details>
+
+<details>
+<summary><strong>🚀 Install and start</strong></summary>
+
+<blockquote>
+
+Your computer needs to have `python` (3.9+), `bash`, `ssh`, `rsync`, `tar`, and 
+`make`, plus SSH access to a supported Slurm cluster. Linux and macOS are supported; 
+on Windows, use WSL. On macOS, `brew install python rsync` supplies `python` and 
+`rsync` if they are missing. Install Apple's command-line tools if `make` is missing. 
+The system `bash` and `tar` are sufficient (no GNU tar replacement is required).
+The cluster needs the build tools required by your chosen solvers - you do not need 
+to compile solvers locally.
+
+After cloning the project, install Slurmy like this:
+```bash
+python -m venv .venv          # Optional: keep dependencies separate from other projects.
+source .venv/bin/activate     # Skip this line if you skipped the venv.
+python -m pip install -r requirements.txt
+```
+
+
 After installation, run Slurmy like this:
 ```
 python web-app/main.py        # Opens the local app; Ctrl-C stops its server.
