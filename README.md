@@ -17,8 +17,8 @@ downloaded incrementally.
 The user does not need to use or understand Slurm commands or scripts..
 
 A **workflow** defines the solvers, problems, resource limits, and Slurm cluster 
-parameters. Each time you dispatch a workflow, Slurmy creates a **job**.
-The individual solver–problem pairs are grouped into **batch**s. Each batch is
+parameters. Each time a workflow is dispatched, a (new) **job** is created. The
+individual solver–problem pairs in a job are grouped into **batch**s. Each batch is
 executed as one **job-step**. The resource usage of each solver–problem pair is
 monitored individually. The results of a job can be downloaded in a `.tgz` file,
 with a summary in a`.csv` file.
@@ -29,30 +29,33 @@ with a summary in a`.csv` file.
 <blockquote>
 
 Your computer needs to have `python` (3.9+), `bash`, `ssh`, `rsync`, `tar`, and 
-`make`, plus SSH access to a supported Slurm cluster. Linux and macOS are supported; 
-on Windows, use WSL. On macOS, `brew install python rsync` supplies `python` and 
-`rsync` if they are missing. Install Apple's command-line tools if `make` is missing. 
-The system `bash` and `tar` are sufficient (no GNU tar replacement is required).
+`make`, plus SSH access to a cluster that offers Slurm. Linux and macOS are supported; 
+on Windows, use WSL. On macOS, `brew install python rsync` if they are missing.
+Install macOS's command-line tools if `make` is missing. 
+The macOS `bash` and `tar` are sufficient (no GNU tar replacement is required).
+
+Solvers can be provided as binary executables, or Slurmy can build them on the cluster, i.e.,
+the user's computer does not need to have the same CPU architecture as the cluster, but the
+cluster needs to have the build tools required to build the solvers.
 
 <details open>
 <summary><strong>🏫 Cluster access</strong></summary>
 
 <blockquote>
 
-Slurmy relies on ssh access to a cluster that offers Slurm.
-The cluster needs to have the build tools required by your chosen solvers - you do not need 
-to compile solvers locally.
+Slurmy relies on SSH access to a cluster that offers Slurm.
+These setup notes are for TU Wien users; analogous processes
+apply to other clusters.
 
+TU Wien users must be on the campus network, via VPN if off campus.
+The default SSH alias `datalab` refers to the dataLAB cluster.
+Access is managed by dataLAB, not by Slurmy.
+The [GPU Cluster guide](https://colab.tuwien.ac.at/spaces/Datalab/pages/241107279/GPU+Cluster#GPUCluster-LogintotheCluster)
+has the current requirements and login instructions.
+In brief:
 
-For TU Wien users, the default SSH alias `datalab` refers to the dataLAB cluster. 
-Access is managed by dataLAB, not by Slurmy. Their
-[GPU Cluster guide](https://colab.tuwien.ac.at/spaces/Datalab/pages/241107279/GPU+Cluster#GPUCluster-LogintotheCluster)
-has the current requirements and login instructions. In brief:
-
-1. Complete the **dataLAB Cluster Essentials** TUWEL course linked from the
-   guide.
-2. Create a [dataLAB account](https://login.datalab.tuwien.ac.at/) with your
-   TU Wien credentials and add your SSH public key there.
+1. Complete the **dataLAB Cluster Essentials** TUWEL course linked from the guide.
+2. Create a [dataLAB account](https://login.datalab.tuwien.ac.at/) with your TU Wien credentials and add your SSH public key there.
 3. Request cluster login permission through the dataLAB
    [Matrix channel](https://matrix.to/#/#gpu:tuwien.ac.at) or the
    [GPU Slurm Cluster Access request](https://jira.it.tuwien.ac.at/servicedesk/customer/portal/7/create/383).
@@ -71,8 +74,7 @@ Host datalab
 Then verify `ssh datalab` works before submitting a workflow. Slurmy uses
 `datalab` by default; set `SLURMY_HOST` or choose another SSH host in the app
 if your alias differs. Choose a partition available to your account in the
-workflow settings. If you are off campus, set up VPN
-access to the TU Wien network to reach the cluster.
+workflow settings. 
 
 </blockquote>
 </details>
