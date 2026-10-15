@@ -1,9 +1,8 @@
 <div align="center">
   <img src="implementation/logo.svg" alt="Slurmy logo" width="240">
+</div>
 
 # Slurmy
-
-</div>
 
 Slurmy is a web app that helps you run (multiple) solvers on (multiple) problems 
 on a Slurm cluster, from your own computer. Solvers can be provided ready for 
@@ -26,8 +25,6 @@ with a summary in a`.csv` file.
 <details>
 <summary><strong>🚀 Install and start</strong></summary>
 
-<blockquote>
-
 Your computer needs to have `python` (3.9+), `bash`, `ssh`, `rsync`, `tar`, and 
 `make`, plus SSH access to a cluster that offers Slurm. Linux and macOS are supported; 
 on Windows, use WSL. On macOS, `brew install python rsync` if they are missing.
@@ -40,8 +37,6 @@ cluster needs to have the build tools required to build the solvers.
 
 <details open>
 <summary><strong>🏫 Cluster access</strong></summary>
-
-<blockquote>
 
 Slurmy relies on SSH access to a cluster that offers Slurm.
 These setup notes are for TU Wien users; analogous processes
@@ -73,7 +68,6 @@ Host datalab
 Slurmy uses `datalab` by default. Set the environment variable `SLURMY_HOST` or choose another SSH host in the app
 if your alias differs. 
 
-</blockquote>
 </details>
 
 Install Slurmy like this:
@@ -93,12 +87,11 @@ python web-app/main.py        # Opens the local app; leaves the app running in t
 python web-app/main.py --stop # Stops the background app
 ```
 
-The app runs on in a web browser at `127.0.0.1:8765` by default.
-It is a single-user tool with access to your local files and trusted workflow commands;
-do not expose it as a public web service. Closing the browser tab does not stop
-Slurmy, and stopping the app does not stop cluster jobs.
+The app runs on in a web browser at `127.0.0.1:8765`.
+Closing the browser tab does not stop Slurmy, and stopping the app does not stop cluster jobs.
+Slurmy is a single-user tool with access to your local files and trusted workflow commands;
+do not expose it as a public web service.
 
-</blockquote>
 </details>
 
 <details>
