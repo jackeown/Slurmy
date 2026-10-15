@@ -39,7 +39,7 @@ The system `bash` and `tar` are sufficient (no GNU tar replacement is required).
 Slurmy relies on ssh access to a cluster that offers Slurm.
 The cluster needs to have the build tools required by your chosen solvers - you do not need 
 to compile solvers locally.
-  
+
 For TU Wien users, the default SSH alias `datalab` refers to the dataLAB cluster. 
 Access is managed by dataLAB, not by Slurmy. Their
 [GPU Cluster guide](https://colab.tuwien.ac.at/spaces/Datalab/pages/241107279/GPU+Cluster#GPUCluster-LogintotheCluster)
