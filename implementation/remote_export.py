@@ -34,13 +34,14 @@ def safe_name(value: str) -> str:
 
 def export_names(metadata: dict) -> tuple[str, str, str]:
     name = safe_name(str(metadata.get('job_name') or metadata.get('job_id') or 'job'))
-    return f'{name}.csv', f'{name}_logs.tgz', f'{name}_errors.tgz'
+    return (f'{name}_results-summary.csv', f'{name}_solver-stdout.tgz',
+            f'{name}_solver-stderr.tgz')
 
 
 def stream_name(definition: dict, task_id: int, error: bool) -> str:
     solver = safe_name(str(definition.get('solver') or 'solver'))
-    problem = safe_name(Path(str(definition.get('problem') or 'problem')).stem)
-    return f'{solver}_{problem}_{task_id:09d}{".stderr" if error else ""}.log'
+    problem = Path(str(definition.get('problem') or 'problem')).name
+    return f'{solver}___{problem}___{task_id:09d}{".stderr" if error else ""}.log'
 
 
 def records(root: Path) -> dict[int, dict[str, str]]:

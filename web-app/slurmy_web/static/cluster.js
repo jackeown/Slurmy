@@ -113,7 +113,7 @@
     const totals = status.summary;
     find('#cluster-free').textContent = `${totals.free_nodes} / ${totals.nodes}`;
     find('#cluster-utilization').textContent = `${totals.utilization}%`;
-    find('#cluster-utilization').title = `${totals.allocated_cpus.toLocaleString()} of ${totals.total_cpus.toLocaleString()} hardware threads allocated`;
+    find('#cluster-utilization').title = `${totals.allocated_cores.toLocaleString()} of ${totals.total_cores.toLocaleString()} physical cores reserved`;
     find('#cluster-running').textContent = totals.running.toLocaleString();
     find('#cluster-pending').textContent = totals.pending.toLocaleString();
     find('#cluster-user-count').textContent = `· ${status.users.length}`;
@@ -150,7 +150,8 @@
           ? document.createElement('a') : document.createElement('span');
         title.textContent = `${job.name} · ${job.id}`;
         if (title.tagName === 'A') title.href = `/jobs/${encodeURIComponent(job.slurmy_id)}?${new URLSearchParams({host})}`;
-        item.append(title, document.createTextNode(` — ${job.user}, ${job.cpus} hardware threads reserved`));
+        const reserved = job.node_cores[node.name];
+        item.append(title, document.createTextNode(` — ${job.user}, ${reserved == null ? 'core reservation unavailable' : `${reserved} physical cores reserved`}`));
         if (job.active_call) {
           const call = document.createElement('div');
           call.className = 'cluster-active-call';
@@ -177,7 +178,7 @@
     users.replaceChildren();
     const userFilter = find('#cluster-user-filter').value.trim().toLowerCase();
     for (const user of ordered('users', status.users.filter(item => match([item.name], userFilter)))) {
-      users.append(row([user.name, user.jobs, user.running, user.pending, user.allocated_cpus]));
+      users.append(row([user.name, user.jobs, user.running, user.pending, user.allocated_cores]));
     }
     if (!users.children.length) empty(users, 5, 'No matching users.');
 
@@ -195,7 +196,7 @@
       const state = cell(job.state);
       state.title = job.reason || '';
       jobs.append(row([job.id, name, job.user, state, job.nodelist || job.reason || job.nodes,
-                       job.cpus, `${job.elapsed} / ${job.limit}`, slurmyCell(job)]));
+                        job.reserved_cores, `${job.elapsed} / ${job.limit}`, slurmyCell(job)]));
     }
     if (!jobs.children.length) empty(jobs, 8, 'No matching active Slurm jobs.');
   }

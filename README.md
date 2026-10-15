@@ -136,7 +136,7 @@ same job. An unfinished job must be stopped before deletion. When deleting a
 synced job, you can keep its local copy or remove it too; an incomplete last
 download can be synced first.
 
-**Cluster status** shows Slurm nodes, allocated hardware threads, users with active jobs,
+**Cluster status** shows Slurm nodes, reserved physical cores, users with active jobs,
 and running or pending jobs across users. It starts with the `CPU-amd`
 partition; choose another partition or all partitions from the page. Select a
 node to see the jobs currently running on it. A running job's row shows its
@@ -156,9 +156,12 @@ In **Job history**, follow progress and open a job to inspect call outcomes,
 solver comparisons, problems, output streams, and diagnostics. Select call
 outcomes to filter the calls table by multiple statuses; the 3D plot compares outcome
 counts across solvers. **Sync/Download** saves three files under
-`job-results/JOB_ID/`: `<job-name>.csv`, `<job-name>_logs.tgz`, and
-`<job-name>_errors.tgz`. Each archive extracts into its own directory, with
-one descriptively named log per call. Unsafe filename characters in the job
+`job-results/JOB_ID/`: `<job-name>_results-summary.csv`,
+`<job-name>_solver-stdout.tgz`, and `<job-name>_solver-stderr.tgz`.
+Each archive extracts into its own directory, with one log per call named
+`<solver>___<original-problem-filename>___<jobpair-id>.log` (or `.stderr.log`
+for stderr). Problem filenames, including their extensions and characters such
+as `+` and `^`, are preserved exactly. Unsafe filename characters in the job
 name are replaced with hyphens. The arrow menu offers
 **Complete/verbose sync/download**
 for raw per-call archives, Slurm logs, plans, and metadata under

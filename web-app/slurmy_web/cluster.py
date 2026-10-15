@@ -2,6 +2,7 @@
 
 import re
 import json
+import math
 import shutil
 import subprocess
 import time
@@ -18,11 +19,17 @@ if [[ -z "$node" ]]; then sinfo -h -o '%P' | sed 's/\*$//' | sort -u; fi
 printf 'NODES\n'
 if [[ -z "$node" ]]; then
     if [[ "$partition" == all ]]; then
-        sinfo -h -N -o '%N|%T|%c|%C|%m'
+        sinfo -h -N -o '%N|%T|%c|%C|%m|%Z'
     else
-        sinfo -h -N -p "$partition" -o '%N|%T|%c|%C|%m'
+        sinfo -h -N -p "$partition" -o '%N|%T|%c|%C|%m|%Z'
     fi
 fi
+printf 'TOPOLOGY\n'
+# Node details are also needed when only the jobs on one node are requested.
+sinfo -h -N -o '%N|%Z' | sort -u
+printf 'ALLOCATIONS\n'
+allocations=$(scontrol show job -d) || exit 1
+printf '%s\n' "$allocations"
 printf 'JOBS\n'
 format='%i|%u|%j|%T|%D|%C|%M|%l|%N|%R|%Z|%k'
 if [[ -n "$node" ]]; then
@@ -39,7 +46,9 @@ fi
 printf '%s\n' "$jobs"
 printf 'IDENTITY\n%s\n' "$(id -un)"
 printf 'HOSTS\n'
-printf '%s\n' "$jobs" | awk -F'|' 'NF >= 12 && $9 != "(null)" && $9 != "" {print $9}' | sort -u | while IFS= read -r expression; do
+{ printf '%s\n' "$jobs" | awk -F'|' 'NF >= 12 && $9 != "(null)" && $9 != "" {print $9}';
+  printf '%s\n' "$allocations" | sed -n 's/.* Nodes=\([^ ]*\) CPU_IDs=.*/\1/p';
+} | sort -u | while IFS= read -r expression; do
     hosts=$(scontrol show hostnames "$expression" 2>/dev/null | paste -sd, -) || continue
     printf '%s|%s\n' "$expression" "$hosts"
 done
@@ -76,7 +85,8 @@ done
 
 
 def parse_status(host, partition, output):
-    sections = {'PARTITIONS': [], 'NODES': [], 'JOBS': [], 'IDENTITY': [], 'HOSTS': [], 'CALLS': [], 'METADATA': []}
+    sections = {name: [] for name in ('PARTITIONS', 'NODES', 'TOPOLOGY', 'ALLOCATIONS',
+                                     'JOBS', 'IDENTITY', 'HOSTS', 'CALLS', 'METADATA')}
     section = None
     for line in output.splitlines():
         if line in sections:
@@ -93,11 +103,42 @@ def parse_status(host, partition, output):
             call = json.loads(encoded)
             if int(task_id) != call.get('task_id'):
                 continue
-            active_calls[slurm_id] = dict(id=int(task_id), solver=str(call.get('solver_name') or call.get('system') or 'Solver'),
+            active_calls[slurm_id] = dict(id=int(task_id), solver=str(call.get('solver') or call.get('solver_name') or call.get('system') or 'Solver'),
                                           problem=str(call.get('problem') or 'Problem'))
         except (ValueError, TypeError, json.JSONDecodeError):
             continue
     hostlists = dict(line.split('|', 1) for line in sections['HOSTS'] if '|' in line)
+    topology = {}
+    for line in sections['TOPOLOGY']:
+        name, _, value = line.partition('|')
+        if value.isdigit() and int(value) > 0:
+            topology[name] = int(value)
+    # Slurm's CPU_IDs use abstract topology order, with sibling CPUs adjacent.
+    # Count distinct physical cores, not NumCPUs or the call's requested cores:
+    # socket-exclusive jobs may reserve more cores than the solver uses.
+    allocations = {}
+    job_ids = []
+    for line in sections['ALLOCATIONS']:
+        identity = re.search(r'\bJobId=(\S+)', line)
+        if identity:
+            job_ids = [identity[1]]
+            array = re.search(r'\bArrayJobId=(\d+)\s+ArrayTaskId=(\d+)\b', line)
+            if array:
+                job_ids.append(f'{array[1]}_{array[2]}')
+        placement = re.search(r'\bNodes=(\S+)\s+CPU_IDs=([\d,-]+)(?=\s|$)', line)
+        if not placement:
+            continue
+        expression, cpu_ids = placement.groups()
+        for node_name in hostlists.get(expression, expression).split(','):
+            siblings = topology.get(node_name)
+            if not siblings:
+                continue
+            cores = set()
+            for interval in cpu_ids.split(','):
+                first, _, last = interval.partition('-')
+                cores.update(cpu // siblings for cpu in range(int(first), int(last or first) + 1))
+            for job_id in job_ids:
+                allocations.setdefault(job_id, {})[node_name] = len(cores)
     for line in sections['METADATA']:
         fields = line.split('|')
         if len(fields) == 3 and fields[1].isdigit() and fields[2].isdigit():
@@ -106,20 +147,25 @@ def parse_status(host, partition, output):
     seen_nodes = set()
     for line in sections['NODES']:
         fields = line.split('|')
-        if len(fields) != 5:
+        if len(fields) != 6:
             continue
-        name, state, cpus, split, memory = fields
+        name, state, cpus, split, memory, siblings = fields
         if name in seen_nodes:
             continue  # A node can appear in more than one partition.
         try:
             allocated, idle, other, total = map(int, split.split('/'))
+            siblings = int(siblings)
+            if siblings < 1:
+                continue
         except ValueError:
             continue
-        nodes.append(dict(name=name, state=state, cpus=int(cpus), allocated=allocated,
-                          idle=idle, other=other, total=total, memory_mib=int(memory)))
+        nodes.append(dict(name=name, state=state, cores=int(cpus) // siblings,
+                          allocated=math.ceil(allocated / siblings), idle=idle // siblings,
+                          other=math.ceil(other / siblings), total=total // siblings,
+                          memory_mib=int(memory)))
         seen_nodes.add(name)
     jobs = []
-    users = defaultdict(lambda: dict(jobs=0, running=0, pending=0, allocated_cpus=0))
+    users = defaultdict(lambda: dict(jobs=0, running=0, pending=0, allocated_cores=0))
     for line in sections['JOBS']:
         fields = line.split('|', 11)
         if len(fields) != 12:
@@ -133,9 +179,14 @@ def parse_status(host, partition, output):
         # metadata cannot be read; do not imply that missing counts mean zero.
         parts = PurePosixPath(directory).parts
         slurmy = len(parts) >= 5 and parts[-3:-1] == ('slurmy', 'jobs')
+        node_cores = allocations.get(job_id, {})
+        allocated_nodes = hostlists.get(nodelist, '').split(',') if nodelist in hostlists else []
+        reserved_cores = (sum(node_cores.values()) if node_cores and
+                          all(node in node_cores for node in allocated_nodes) else None)
         entry = dict(id=job_id, user=user, name=name, state=state, nodes=node_count,
-                     cpus=cpu_count, elapsed=elapsed, limit=limit, nodelist=nodelist,
-                     hostnames=hostlists.get(nodelist, '').split(',') if nodelist in hostlists else [],
+                     reserved_cores=reserved_cores, node_cores=node_cores,
+                     elapsed=elapsed, limit=limit, nodelist=nodelist,
+                     hostnames=allocated_nodes,
                      reason=reason, slurmy=slurmy, slurmy_id=parts[-1] if slurmy else None,
                      active_call=active_calls.get(job_id) if slurmy else None)
         public = re.fullmatch(r'slurmy:v1:calls=(\d+):batches=(\d+):batch=(\d+)', comment)
@@ -150,7 +201,10 @@ def parse_status(host, partition, output):
         account['jobs'] += 1
         if state.upper().startswith('RUNNING'):
             account['running'] += 1
-            account['allocated_cpus'] += cpu_count
+            if reserved_cores is None:
+                account['allocated_cores'] = None
+            elif account['allocated_cores'] is not None:
+                account['allocated_cores'] += reserved_cores
         elif state.upper().startswith('PENDING'):
             account['pending'] += 1
     allocated = sum(node['allocated'] for node in nodes)
@@ -159,7 +213,7 @@ def parse_status(host, partition, output):
                 partitions=sections['PARTITIONS'], nodes=nodes, jobs=jobs,
                 users=[dict(name=name, **counts) for name, counts in sorted(users.items())],
                 summary=dict(nodes=len(nodes), free_nodes=sum(n['state'].lower().startswith('idle') for n in nodes),
-                             allocated_cpus=allocated, total_cpus=total,
+                             allocated_cores=allocated, total_cores=total,
                              utilization=round(100 * allocated / total, 1) if total else 0,
                              running=sum(j['state'].upper().startswith('RUNNING') for j in jobs),
                              pending=sum(j['state'].upper().startswith('PENDING') for j in jobs)))

@@ -139,10 +139,12 @@ Each call's result CSV includes `szs_status` and `szs_output`; for example,
 `SZS output end Proof` records `Proof` in `szs_output`. The `time` member of a
 call's original result archive measures the entire per-call limiter invocation,
 including the solver. Runsolver's measurements of the solver tree replace that
-fallback when available. Default sync exports only `<job-name>.csv`,
-`<job-name>_logs.tgz`, and `<job-name>_errors.tgz` into `job-results/JOB_ID/`.
+fallback when available. Default sync exports only `<job-name>_results-summary.csv`,
+`<job-name>_solver-stdout.tgz`, and `<job-name>_solver-stderr.tgz` into `job-results/JOB_ID/`.
 Each archive extracts into a same-named top-level directory and contains logs
-named for solver configuration, problem, and jobpair ID. Original archives
+named `<solver>___<original-problem-filename>___<jobpair-id>.log` (or
+`.stderr.log` for stderr). The full problem filename is preserved exactly,
+including its extension and characters such as `+` and `^`. Original archives
 and diagnostics stay on the cluster. Use `slurmy-sync.py --verbose`
 for all raw files under `job-results/verbose/JOB_ID/`.
 

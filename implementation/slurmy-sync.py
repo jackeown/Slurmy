@@ -20,6 +20,7 @@ import tempfile
 import time
 from typing import Any, Sequence
 
+from remote_export import export_names, stream_name
 
 VERSION = "0.2.0"
 DEFAULT_HOST = os.environ.get("SLURMY_HOST", "datalab")
@@ -503,8 +504,8 @@ def consolidate_solver_streams(destination: Path, records: dict[int, dict[str, A
         metadata = json.loads((destination / 'metadata.json').read_text(encoding='utf-8'))
     except (OSError, ValueError):
         metadata = {}
-    job_name = re.sub(r'[^A-Za-z0-9._-]+', '-', str(metadata.get('job_name') or destination.name)).strip('._-')[:80] or 'job'
-    outputs = (destination / f'{job_name}_logs.tgz', destination / f'{job_name}_errors.tgz')
+    names = export_names({**metadata, 'job_name': metadata.get('job_name') or destination.name})
+    outputs = tuple(destination / name for name in names[1:])
     try:
         definitions = {int(item['task_id']): item for item in
                        (json.loads(line) for line in (destination / 'manifest.jsonl').read_text(encoding='utf-8').splitlines())}
@@ -541,11 +542,8 @@ def consolidate_solver_streams(destination: Path, records: dict[int, dict[str, A
                         if stream is None:
                             continue
                         definition = definitions.get(task_id, {})
-                        solver = re.sub(r'[^A-Za-z0-9._-]+', '-', str(definition.get('solver') or 'solver')).strip('._-')[:80] or 'solver'
-                        problem = re.sub(r'[^A-Za-z0-9._-]+', '-', Path(str(definition.get('problem') or 'problem')).stem).strip('._-')[:80] or 'problem'
-                        suffix = '.log' if stdout else '.stderr.log'
                         archive_root = outputs[0 if stdout else 1].name.removesuffix('.tgz')
-                        info = tarfile.TarInfo(f'{archive_root}/{solver}_{problem}_{task_id:09d}{suffix}')
+                        info = tarfile.TarInfo(f'{archive_root}/{stream_name(definition, task_id, not stdout)}')
                         info.size = member.size
                         info.mode = 0o600
                         (stdout_tar if stdout else stderr_tar).addfile(info, stream)
@@ -645,7 +643,15 @@ def compact_sync_loop(args: argparse.Namespace) -> int:
             raise SyncError(f'Remote export failed (SSH exit {code}); existing local files were kept.')
         if expected is None:
             raise SyncError('Remote export did not report its three output filenames.')
-        if destination.is_dir() and any(item.name not in expected for item in destination.iterdir()):
+        # A previous concise download uses the old three filenames. Keep it
+        # until the replacement download succeeds, rather than treating it as
+        # a verbose result directory that must be moved out of the way.
+        job_name = expected[0].removesuffix('_results-summary.csv')
+        old_names = {f'{job_name}.csv', f'{job_name}_logs.tgz', f'{job_name}_errors.tgz'}
+        old_files = ([item for item in destination.iterdir() if item.name in old_names and item.is_file()]
+                     if destination.is_dir() else [])
+        allowed_names = set(expected) | {item.name for item in old_files}
+        if destination.is_dir() and any(item.name not in allowed_names for item in destination.iterdir()):
             if args.output:
                 raise SyncError('This output directory contains verbose files; choose an empty directory for the three-file download.')
             legacy = Path.cwd() / 'job-results' / 'verbose' / job_id
@@ -673,6 +679,8 @@ def compact_sync_loop(args: argparse.Namespace) -> int:
             for row in csv.DictReader(source):
                 total += 1
                 completed += row.get('complete', '').lower() == 'true'
+        for path in old_files:
+            path.unlink(missing_ok=True)
         print(f'Downloaded {completed}/{total} calls ({percentage(completed, total):.1f}%) to {destination}', flush=True)
         if not args.follow or (total and completed == total):
             return 0
