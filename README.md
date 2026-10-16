@@ -17,8 +17,7 @@ compared in a graphical interface, and results can be downloaded incrementally t
 your computer. 
 The user does not need to use or understand SLURM commands or scripts.
 
-## Slurmy terminology
-
+**Slurmy terminology:**
 A **workflow** defines the solvers, problems, resource limits, and SLURM cluster 
 parameters.
 Each time a workflow is dispatched, a (new) **job** is created.
