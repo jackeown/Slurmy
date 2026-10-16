@@ -152,7 +152,7 @@ The number of solver-problem pairs in each batch (that is run as one SLURM task)
 a suggested value is provided.
 The maximal nummber of SLURM tasks WHAT??
 
-**Save the workflow settings"**
+**Save the workflow settings:**
 This generates all the files and scripts that get used to execute a job based on the workflow.
 It does not submit the job to SLURM.
 
