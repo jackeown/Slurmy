@@ -5,29 +5,35 @@
 # Slurmy
 
 Slurmy is a web app that helps you run (multiple) solvers on (multiple) problems 
-on a Slurm cluster, from your own computer. Solvers can be provided ready for 
-execution on the cluster, or can be built on the cluster - your computer need 
-not have the same architecture as the cluster. Problems are provided as
-local `glob`s of problem files, or as `.tgz`s of problem files. Slurmy
-executes a job that runs all the solvers on all the problems with resource limits
-and resource reporting. Solvers' outputs can be viewed as they are produced, 
-solvers' performances can be seen in a grphical interface, and results can be
-downloaded incrementally. 
-The user does not need to use or understand Slurm commands or scripts..
+on a SLURM cluster, from your local computer.
+Solvers can be provided ready for execution on the cluster, or can be built on the
+cluster - your computer need not have the same architecture as the cluster.
+Problems are provided as `glob`s of problem files on your computer, or as `.tgz`s
+of problem files.
+Slurmy runs all the solvers on all the problems using the SLURM cluster's nodes,
+with resource limits and resource reporting.
+Solvers' outputs can be viewed as they are produced, solvers' performances can be
+compared in a graphical interface, and results can be downloaded incrementally to
+your computer. 
+The user does not need to use or understand SLURM commands or scripts.
 
-A **workflow** defines the solvers, problems, resource limits, and Slurm cluster 
-parameters. Each time a workflow is dispatched, a (new) **job** is created. The
-individual solver–problem pairs in a job are grouped into **batch**s. Each batch is
-executed as one **job-step**. The resource usage of each solver–problem pair is
-monitored individually. The results of a job can be downloaded in a `.tgz` file,
-with a summary in a`.csv` file.
+## Slurmy terminology
+
+A **workflow** defines the solvers, problems, resource limits, and SLURM cluster 
+parameters.
+Each time a workflow is dispatched, a (new) **job** is created.
+The individual solver–problem pairs in a job are grouped into **batch**s.
+Each batch is executed as one SLURM **task**.
+The resource usage of each solver–problem pair is monitored individually.
+The results of a job can be downloaded in a `.tgz` file, with a summary in a`.csv`
+file.
 
 <details>
 <summary><strong>🚀 Install and start</strong></summary>
 <blockquote>
   
 Your computer needs to have `python` (3.9+), `bash`, `ssh`, `rsync`, `tar`, and 
-`make`, plus SSH access to a cluster that offers Slurm. Linux and macOS are supported; 
+`make`, plus SSH access to a cluster that offers SLURM. Linux and macOS are supported; 
 on Windows, use WSL. On macOS, `brew install python rsync` if they are missing.
 Install macOS's command-line tools if `make` is missing. 
 The macOS `bash` and `tar` are sufficient (no GNU tar replacement is required).
@@ -40,7 +46,7 @@ cluster needs to have the build tools required to build the solvers.
 <summary><strong>🏫 Cluster access</strong></summary>
 <blockquote>
 
-Slurmy relies on SSH access to a cluster that offers Slurm.
+Slurmy relies on SSH access to a cluster that offers SLURM.
 These setup notes are for TU Wien users; analogous processes
 apply to other clusters.
 
@@ -50,7 +56,6 @@ Access is managed by dataLAB, not by Slurmy.
 The [GPU Cluster guide](https://colab.tuwien.ac.at/spaces/Datalab/pages/241107279/GPU+Cluster#GPUCluster-LogintotheCluster)
 has the current requirements and login instructions.
 In brief:
-
 1. Complete the **dataLAB Cluster Essentials** TUWEL course linked from the guide.
 2. Create a [dataLAB account](https://login.datalab.tuwien.ac.at/) with your TU Wien credentials and add your SSH public key there.
 Verify `ssh datalab` works. 
@@ -91,7 +96,8 @@ python web-app/main.py --stop # Stops the background app
 ```
 
 The app runs on in a web browser at `127.0.0.1:8765`.
-Closing the browser tab does not stop Slurmy, and stopping the app does not stop cluster jobs.
+Closing the browser tab does not stop Slurmy, and stopping the app does not stop SLURM
+cluster jobs.
 Slurmy is a single-user tool with access to your local files and trusted workflow commands;
 do not expose it as a public web service.
 
