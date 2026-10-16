@@ -110,15 +110,51 @@ do not expose it as a public web service.
 <blockquote>
 
 Workflows are reusable definitions; a job is one particular run of a workflow.
-The example workflows for Vampire, E, and Drodi are read-only; duplicate one to
-edit it.
+The 
+Open **New workflow** in the app, or duplicate one of the example workflows for under **Workflows**.
 Saved workflows live in `workflows/my-workflows/`. 
 
-**STEPS**
-Open **New workflow** in the app, or start with an example under **Workflows**.
-The guided form covers cluster specification, solver commands and builds, local or shared cluster
-problems, optional TPTP axioms, the resource limiter (`runsolver` is the default), and Slurm settings.
-Saving a workflow creates and saves its definition locally; it does not submit a job.
+**Give the workflow a home:**
+Provide a name for the workflow, specify where it will run, and the ssh host alias.
+
+**Specify the solver configurations:**
+`Build solver configurations here × problem sources` is used to specify a new solver configurations.
+The other options allow resuse of existing configurations.
+Each **New Configuration** requires:
+- A configuration name.
+- A "root" directory on the local computer.
+- The command to run the solver, using the available placeholder parameters as required.
+- A selection where the solver gets built, either "No build" if a binary is available on the local computer,
+or "Build from source" to build the solver on a cluster compute node (which ensures library compatibility,
+etc.
+In the latter case specify the source directory on the local computer, and a script in that directory that
+is run to build the solver.
+- Resource and SLURM parameters for each execution of the solver: wall clock limit, CPU limit, memory limit,
+number of cores to allocate, number of threads to use per core, whether an entire CPU must be reserved for
+the execution, and whether an entire cluster node must be reserved for the execution.
+
+**Select the problems:**
+The problems can come from the local computer, or from shared space on the cluster.
+Problems are selected as globs of problem files and `.tgz` files (that conptain problem files).
+For problems in the TPTP format, the source of `include` files, e.g., axiom files, are 
+similarly selected as globs.
+
+**Workflow settings:**
+The tool used to monitor resource usage for one solver-problem pair execution is specified with
+the available placeholder parameters.
+The tool can also be built from source by specifying the source directory on the local computer,
+and a script in that directory that is run to build the tool.
+
+**SLURM settings:**
+The solver-problem pairs can be run in problem major order, i.e., for each problm run all solvers,
+or solution major order, i.e., for each solver run all problems, or random order.
+The number of solver-problem pairs in each batch (that is run as one SLURM task) can be varied;
+a suggested value is provided.
+The maximal nummber of SLURM tasks WHAT??
+
+**Save the workflow settings"**
+This generates all the files and scripts that get used to execute a job based on the workflow.
+It does not submit the job to SLURM.
 
 See [workflow structure and Makefile targets](workflows/README.md) for the files the
 app creates and how to use a workflow from the command line.
