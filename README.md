@@ -114,6 +114,7 @@ The example workflows for Vampire, E, and Drodi are read-only; duplicate one to
 edit it.
 Saved workflows live in `workflows/my-workflows/`. 
 
+**STEPS**
 Open **New workflow** in the app, or start with an example under **Workflows**.
 The guided form covers cluster specification, solver commands and builds, local or shared cluster
 problems, optional TPTP axioms, the resource limiter (`runsolver` is the default), and Slurm settings.
@@ -136,19 +137,23 @@ work below the web interface.
 resources on the cluster, and submits the job. The arrow menu also offers
 prepare-only and dispatch-already-prepared actions.
 
-Use **Stop job** to cancel
-remaining Slurm work and **Resume job** to run only unfinished calls in the
-same job. An unfinished job must be stopped before deletion. When deleting a
-synced job, you can keep its local copy or remove it too; an incomplete last
-download can be synced first.
+Use **Stop job** to cancel remaining SLURM cluster tasks, and **Resume job** to
+run only unfinished tasks in the job.
+An unfinished job must be stopped before deletion.
 
-**Cluster status** shows Slurm nodes, reserved physical cores, users with active jobs,
-and running or pending jobs across users. It starts with the `CPU-amd`
-partition; choose another partition or all partitions from the page. Select a
-node to see the jobs currently running on it. A running job's row shows its
-node and Slurm ID. For new Slurmy submissions, it also shows call and batch
-counts across users. Jobs whose private files you can read link to their
-job inspector; older users' jobs might not expose counts.
+When deleting a job whose results have been downloaded to your computer, you can
+keep the local data or remove it too.
+An incomplete last download can be synced first. WHAT???
+
+**Cluster status** shows SLURM nodes, reserved physical cores, users with active 
+jobs, and running or pending tasks across users.
+It defaults to the `CPU-amd` cluster; choose another cluster or all clusters from 
+the page.
+Select a node to see the tasks currently running on it.
+A running task's row shows its node and SLURM ID.
+For new Slurmy submissions, it also shows call WHAT?? and batch counts across users.
+Jobs whose private files you can read link to their job inspector WHAT??; older users' jobs
+might not expose counts.
 
 </blockquote>
 </details>
