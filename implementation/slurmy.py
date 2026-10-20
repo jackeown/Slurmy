@@ -236,10 +236,12 @@ def write_script(path: Path, content: str) -> None:
 
 def generate(jobpairs: Path, building: Path, limiter_file: Path,
              axioms_file: Path | None = None, batch_size: int = 1, progress=None,
-             max_outstanding: int = 32) -> Path:
+             max_outstanding: int = 32, pair_order: str | None = None) -> Path:
     tasks = read_pairs(jobpairs)
     positive(str(batch_size), 'batch size')
     positive(str(max_outstanding), 'maximum outstanding SLURM tasks')
+    if pair_order is not None and pair_order not in PAIR_ORDERS:
+        raise SlurmyError("Invalid solver-problem pair order")
     builds = read_builds(building)
     axioms, axiom_destinations = read_axioms(axioms_file, progress)
     if progress:
@@ -279,8 +281,17 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
     batches: list[list[dict]] = []
     # Pairs execute sequentially, so exclusivity does not split batches.
     # Each allocation satisfies the strongest requirement in its batch.
+    # Solver-major order starts a fresh batch at each configuration boundary.
+    configuration_fields = ('solver', 'solver_root', 'command', 'wc_limit', 'cpu_limit',
+                            'mem_limit', 'cores', 'threads_per_core', 'cpus',
+                            'exclusive_cpu', 'exclusive_node')
+
+    def configuration(task):
+        return tuple(task[key] for key in configuration_fields)
     for task in tasks:
-        if not batches or len(batches[-1]) >= batch_size:
+        new_configuration = (bool(batches) and pair_order == 'solver-major'
+                             and configuration(task) != configuration(batches[-1][-1]))
+        if not batches or len(batches[-1]) >= batch_size or new_configuration:
             batches.append([task])
         else:
             batches[-1].append(task)
@@ -295,9 +306,9 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         (assets / "plans").mkdir()
         (assets / "builds").mkdir()
         metadata = {"slurmy_version": VERSION, "workflow_directory": str(jobpairs.parent), "task_count": len(tasks), "batch_count": len(batches),
-                    "batch_size": batch_size, "result_columns": RESULT_COLUMNS,
+                    "batch_size": batch_size, "pair_order": pair_order, "result_columns": RESULT_COLUMNS,
                     "planned_batch_tasks": [[t["task_id"] for t in batch] for batch in batches],
-                    "batch_policy": "one solver-problem pair at a time per batch; allocation satisfies all pairs including node/socket exclusivity",
+                    "batch_policy": "one solver-problem pair at a time per batch; solver-major batches do not span configurations; allocation satisfies all pairs including node/socket exclusivity",
                     "buffers": {"per_call_seconds": 30, "per_call_memory_mib": 128, "batch_seconds": 60}}
         (assets / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
         (assets / "manifest.jsonl").write_text("".join(json.dumps(t) + "\n" for t in tasks))
@@ -463,11 +474,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument('--axioms-file', type=Path, help='optional file with one TPTP axiom path or glob per line')
     parser.add_argument("--batch-size", type=int, default=1, help="maximum solver-problem pairs owned by one SLURM array task; solver-problem pairs run sequentially (default: 1)")
     parser.add_argument("--max-outstanding", type=int, default=32, help="maximum pending/running SLURM tasks from one job (default: 32)")
+    parser.add_argument('--pair-order', choices=PAIR_ORDERS,
+                        help='declared input ordering; solver-major keeps configurations in separate batches')
     args = parser.parse_args(argv)
     try:
         output = generate(args.jobpairs.resolve(), args.building.resolve(), args.resource_limiter_template.resolve(),
                           args.axioms_file.resolve() if args.axioms_file else None, args.batch_size,
-                          max_outstanding=args.max_outstanding)
+                          max_outstanding=args.max_outstanding, pair_order=args.pair_order)
     except (SlurmyError, OSError, ValueError) as exc:
         parser.error(str(exc))
     print(f"Prepared {output}. Inspect its companion files, then run it to build and submit.")

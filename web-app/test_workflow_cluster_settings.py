@@ -1,5 +1,8 @@
 """Reservation propagation and shared-only workflow planning."""
 import json
+import csv
+import io
+import tarfile
 import os
 from pathlib import Path
 import subprocess
@@ -13,6 +16,46 @@ from slurmy_archives import tptp_relative, browse_cluster_tptp
 
 
 class ClusterSettingsTests(unittest.TestCase):
+    def test_two_solvers_use_only_1429_selected_archive_problems(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            archive = root / 'SETProblems.tgz'
+            with tarfile.open(archive, 'w:gz') as output:
+                for index in range(1429):
+                    body = b'fof(example,axiom,$true).\n'
+                    info = tarfile.TarInfo(f'SET/SET{index:04d}+1.p')
+                    info.size = len(body)
+                    output.addfile(info, io.BytesIO(body))
+            (root / 'unselected.p').touch()
+            (root / 'limiter').touch()
+            data = dict(name='email-regression', host='datalab', partition='CPU-amd',
+                        mode='interactive', batch_size=500, pair_order='solver-major',
+                        configurations=[dict(solver_name=name, solver_directory=str(root),
+                            command='./solver {{problem}}', wc_limit=6, cpu_limit=3,
+                            mem_limit='100MiB', cores=8) for name in ('VampireCASC', 'BuiltE')],
+                        globs=[str(archive)], building_mode='create',
+                        resources=[dict(root=str(root), mode='none', role='solver')],
+                        limiter_mode='inline', limiter=f'{root}/limiter {{{{solver_command}}}}')
+            with patch.object(workflows, 'check_requested'), patch('slurmy_archives.CACHE', root/'cache'):
+                destination, files, count = workflows.specification(data, root/'workflow')
+            self.assertEqual(count, 2858)
+            rows = list(csv.DictReader(io.StringIO(files['jobpairs.csv'])))
+            self.assertEqual([row['solver_name'] for row in rows], ['VampireCASC']*1429+['BuiltE']*1429)
+            self.assertEqual(len({row['problem'] for row in rows}), 1429)
+            self.assertTrue(all(Path(row['problem']).name.startswith('SET') for row in rows))
+            destination.mkdir()
+            for name, body in files.items():
+                (destination/name).write_text(body)
+            generate(destination/'jobpairs.csv', destination/'building.txt',
+                     destination/'resource_limiter_template.txt', batch_size=500, pair_order='solver-major')
+            metadata = json.loads((destination/'submit.sh.files/metadata.json').read_text())
+            self.assertEqual(metadata['task_count'], 2858)
+            self.assertEqual(metadata['batch_count'], 6)
+            self.assertEqual([len(batch) for batch in metadata['planned_batch_tasks']], [500,500,429,500,500,429])
+            for batch in metadata['planned_batch_tasks']:
+                self.assertEqual(len({rows[index]['solver_name'] for index in batch}), 1)
+            self.assertEqual(sorted(task for batch in metadata['planned_batch_tasks'] for task in batch), list(range(2858)))
+
     def test_thread_validation_checks_nodes_and_reports_errors(self):
         from slurmy_web.app import create_app
         with patch.object(workflows, 'migrate_user_runs'):

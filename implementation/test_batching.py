@@ -13,7 +13,7 @@ from slurmy import COLUMNS, REPO, generate
 
 
 class SequentialBatchTests(unittest.TestCase):
-    def prepare(self, root, flags, size):
+    def prepare(self, root, flags, size, pair_order=None):
         problem = root/'example.p'
         problem.touch()
         (root/'limiter').touch()
@@ -29,7 +29,7 @@ class SequentialBatchTests(unittest.TestCase):
             writer.writeheader(); writer.writerows(rows)
         (root/'building.txt').write_text(json.dumps([{'root':str(root)}]))
         (root/'limiter.txt').write_text(f'{root}/limiter {{{{solver_command}}}}')
-        generate(pairs,root/'building.txt',root/'limiter.txt',batch_size=size)
+        generate(pairs,root/'building.txt',root/'limiter.txt',batch_size=size,pair_order=pair_order)
         return root/'submit.sh.files'
 
     def test_100_pairs_per_batch_even_with_alternating_socket_and_node_requests(self):
@@ -42,6 +42,21 @@ class SequentialBatchTests(unittest.TestCase):
                 plan=(assets/'plans'/f'batch_{i:06d}.sh').read_text()
                 self.assertIn('EXCLUSIVE_CPU=1',plan)
                 self.assertIn('EXCLUSIVE_NODE=1',plan)
+
+    def test_mixed_orders_keep_configurations_and_exclusivity_in_one_batch(self):
+        for order in ('problem-major', 'random'):
+            with self.subTest(order=order), tempfile.TemporaryDirectory() as folder:
+                assets = self.prepare(Path(folder), [(False, False), (True, False), (False, True)],
+                                      100, pair_order=order)
+                metadata = json.loads((assets/'metadata.json').read_text())
+                self.assertEqual(metadata['planned_batch_tasks'], [[0,1,2]])
+
+    def test_solver_major_starts_new_batch_at_configuration_boundary(self):
+        with tempfile.TemporaryDirectory() as folder:
+            assets = self.prepare(Path(folder), [(False, False), (False, False)],
+                                  100, pair_order='solver-major')
+            metadata = json.loads((assets/'metadata.json').read_text())
+            self.assertEqual(metadata['planned_batch_tasks'], [[0],[1]])
 
     def test_remote_submission_preserves_sequential_plan_and_exclusive_allocation(self):
         for flags in ([(False,False),(True,False)],[(False,False),(False,True)],[(False,False)]*2):

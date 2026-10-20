@@ -194,10 +194,10 @@
         const item = document.createElement('div');
         const title = job.slurmy && job.user === status.user
           ? document.createElement('a') : document.createElement('span');
-        title.textContent = `${job.name} · ${job.id}`;
+        title.textContent = `${job.name} · task ${job.id}`;
         if (title.tagName === 'A') title.href = `/jobs/${encodeURIComponent(job.slurmy_id)}?${new URLSearchParams({host})}`;
-        const reserved = job.node_cores[node.name];
-        item.append(title, document.createTextNode(` — ${job.user}, ${reserved == null ? 'core allocation unavailable' : `${reserved} physical cores allocated`}`));
+        const allocated = job.node_cores[node.name];
+        item.append(title, document.createTextNode(` — ${job.user}, ${allocated == null ? 'core allocation unavailable' : `${allocated} physical cores allocated`}`));
         if (job.active_call) {
           const call = document.createElement('div');
           call.className = 'cluster-active-call';

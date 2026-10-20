@@ -501,20 +501,29 @@ def create_app():
 
     @app.get('/api/jobs')
     def jobs():
+        # Update submission records before copying them: preparation may have
+        # replaced metadata, and remote submission may already have printed its ID.
         with guard:
-            announced = list(announced_jobs.items())
-        # Once dispatch has started, do not make the user wait for the first
-        # SSH snapshot just to see it.  A later poll merges in remote history.
-        local = [item.copy() for (item_host, _), item in announced if item_host == host()]
-        for item in local:
-            if not item.get('provisional'):
-                continue
-            operation_key = item['id'].removeprefix('dispatching-')
-            operation = operations.get(operation_key)
-            log_path = STATE / (operation_key + '.log')
-            if operation and log_path.is_file():
-                item['phase'] = submission_phase(log_path.read_text(encoding='utf-8', errors='replace')[-16384:])
-                item['state'] = 'DISPATCHING' if operation['state'] == 'running' else operation['state'].upper()
+            dispatching = [op for op in operations.values()
+                           if op.get('provisional_job_id') and not op.get('job_id') and op['state'] == 'running']
+        for operation in dispatching:
+            log_path = STATE / (operation['id'] + '.log')
+            log = log_path.read_text(encoding='utf-8', errors='replace') if log_path.is_file() else ''
+            if 'Submission phase:' in log or re.search(r'^bash ./submit.sh$', log, re.MULTILINE):
+                operation['preparation_complete'] = True
+            match = re.search(r'^Slurmy job ID: ([A-Za-z0-9._-]+)$', log, re.MULTILINE)
+            if match and not operation.get('job_id'):
+                announce_operation_job(operation, match.group(1), Path(operation['operation_cwd']),
+                                       {'SLURMY_HOST': operation['operation_host']})
+            with guard:
+                item = announced_jobs.get((operation['operation_host'], operation['provisional_job_id']))
+                if item:
+                    details = dispatch_metadata(operation, Path(operation['operation_cwd']))
+                    item['total'] = int(details.get('task_count', 0) or 0)
+                    item['phase'] = submission_phase(log[-16384:])
+                    item['state'] = 'DISPATCHING' if operation['state'] == 'running' else operation['state'].upper()
+        with guard:
+            local = [item.copy() for (item_host, _), item in announced_jobs.items() if item_host == host()]
         value = snapshot()
         items = [summary(job) for job in value.jobs]
         updated = value.fetched_epoch
@@ -884,6 +893,18 @@ def create_app():
             archived = workflows.delete_workflow(path)
         return jsonify(deleted=expected, archived=str(archived))
 
+    def dispatch_metadata(operation, cwd):
+        """Never show a previous preparation's count for a newly prepared job."""
+        metadata = cwd / 'submit.sh.files' / 'metadata.json'
+        try:
+            if (operation['label'] == 'prepare and dispatch SLURM job'
+                    and not operation.get('preparation_complete')
+                    and metadata.stat().st_mtime < operation['started']):
+                return {}
+            return json.loads(metadata.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            return {}
+
     def announce_operation_job(operation, job_id, cwd, environment):
         """Expose a dispatched job as soon as its ID appears in the operation log.
 
@@ -891,11 +912,8 @@ def create_app():
         later poll.  Keeping this short-lived local record makes the submission
         visible immediately in both Job history and the originating workflow.
         """
-        metadata = cwd / 'submit.sh.files' / 'metadata.json'
-        try:
-            details = json.loads(metadata.read_text(encoding='utf-8'))
-        except (OSError, json.JSONDecodeError):
-            details = {}
+        operation['preparation_complete'] = True
+        details = dispatch_metadata(operation, cwd)
         directory = str(details.get('workflow_directory', cwd))
         with guard:
             provisional = operation.get('provisional_job_id')
@@ -910,11 +928,7 @@ def create_app():
 
     def announce_dispatching(operation, cwd, environment):
         """Show a dispatching row while submit.sh is still running."""
-        metadata = cwd / 'submit.sh.files' / 'metadata.json'
-        try:
-            details = json.loads(metadata.read_text(encoding='utf-8'))
-        except (OSError, json.JSONDecodeError):
-            details = {}
+        details = dispatch_metadata(operation, cwd)
         provisional = f"dispatching-{operation['id']}"
         directory = str(details.get('workflow_directory', cwd))
         operation['provisional_job_id'] = provisional

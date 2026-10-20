@@ -251,11 +251,11 @@ def specification(data, destination_override=None, progress=None):
             progress('phase', 'Checking solver-problem pairs and generating submission scripts', 0, 0)
         generate(staging / 'jobpairs.csv', staging / 'building.txt', staging / 'resource_limiter_template.txt',
                  staging / 'axiom-globs.txt' if axiom_patterns else None, batch_size, progress=progress,
-                 max_outstanding=max_outstanding)
+                 max_outstanding=max_outstanding, pair_order=pair_order)
     if progress:
         progress('phase', 'Preparing workflow preview', 0, 0)
     files['Makefile'] = (f'REPO_ROOT := ../../..\nBATCH_SIZE := {batch_size}\nSLURMY_MAX_OUTSTANDING := {max_outstanding}\n'
-                         + (f'PAIR_ORDER := {pair_order}\n' if configs else '') +
+                         + f'PAIR_ORDER := {pair_order}\n' +
                          f'SLURMY_HOST := {host}\n'
                          f'SLURMY_PARTITION := {partition}\nSLURMY_RESERVATION := {reservation}\ninclude $(REPO_ROOT)/implementation/templates/workflow.mk\n')
     if axiom_patterns:

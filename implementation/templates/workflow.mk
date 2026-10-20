@@ -34,7 +34,7 @@ submit.sh: Makefile $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES
 		printf '♻️  Inputs changed; refreshing generated submission files.\n'; \
 		rm -f -- submit.sh; rm -rf -- submit.sh.files; \
 	fi
-	python '$(REPO_ROOT)/implementation/slurmy.py' '$(JOBPAIRS)' '$(BUILDING)' '$(LIMITER)' --batch-size '$(BATCH_SIZE)' --max-outstanding '$(SLURMY_MAX_OUTSTANDING)' $(if $(AXIOMS),--axioms-file '$(AXIOMS)')
+	python '$(REPO_ROOT)/implementation/slurmy.py' '$(JOBPAIRS)' '$(BUILDING)' '$(LIMITER)' --batch-size '$(BATCH_SIZE)' --pair-order '$(PAIR_ORDER)' --max-outstanding '$(SLURMY_MAX_OUTSTANDING)' $(if $(AXIOMS),--axioms-file '$(AXIOMS)')
 	@printf '\n✅ Prepared the explicit jobpairs. Inspect submit.sh.files/.\n👉 make prepare-submit prepares again and dispatches; make submit dispatches these prepared files as-is.\n'
 
 build: prepare

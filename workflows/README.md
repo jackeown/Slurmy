@@ -90,6 +90,32 @@ ceiling and is retried; the batch is not discarded. The per-job setting is a
 ceiling on *simultaneously pending or running* batches, not on the total
 number that can run over the lifetime of a job.
 
+Workflow progress during **Prepare & dispatch** waits for the current preparation's
+metadata rather than displaying a previous preparation's solver-problem pair
+count. Once preparation produces fresh metadata, its count appears; unchanged
+prepared files become authoritative when dispatch begins. When remote submission
+reports the Slurmy job ID, the temporary dispatching row is replaced immediately,
+even while further batches are still being submitted. Cluster history supplies
+running state and completion progress on subsequent refreshes.
+
+In an expanded cluster node, `task 894551_0` identifies one SLURM array task
+running one Slurmy batch: `894551` is the array job ID and `0` is its index
+within that array. The index is not a job-wide batch number; another array can
+also have index `0`. Two task entries on a node mean two batch allocations there.
+Each batch runs its solver-problem pairs sequentially. An 8-core request is not
+a promise of a fixed number of batches on each node: other allocations, memory,
+and scheduler placement can affect where tasks run. The displayed physical core
+count describes the allocation on that node.
+
+For example, two configurations with 1,429 problems each produce 2,858
+solver-problem pairs. With a batch size of 500, the current packing rule produces
+six batches: 500, 500, 429 for the first configuration and 500, 500, 429 for
+the second. Solver-major order keeps each configuration in its own batches.
+Problem-major and random order fill batches in their selected order and can
+mix configurations. All pairs in a batch still run sequentially. Direct users
+of `implementation/slurmy.py` can declare the input ordering with `--pair-order`;
+workflow Makefiles pass `PAIR_ORDER` automatically.
+
 `BUILD_RECIPES` lists build scripts whose changes should trigger fresh
 submission-file generation. All-pairs workflows add a rule to create
 `jobpairs.csv` from configurations and problem globs; see the

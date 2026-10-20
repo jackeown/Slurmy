@@ -307,6 +307,9 @@ def import_bundle(stream, name):
         reservation = workflows.alias(settings['reservation']) if settings.get('reservation') else ''
         batch = workflows.positive(str(settings.get('batch_size', 1)), 'batch size')
         maximum = workflows.positive(str(settings.get('max_outstanding', 32)), 'outstanding tasks')
+        pair_order = payload.get('pair_order') or 'solver-major'
+        if pair_order not in workflows.PAIR_ORDERS:
+            raise ValueError('Invalid solver-problem pair order in workflow archive.')
         (staging/'jobpairs.csv').write_text(workflows.csv_text(normalized))
         (staging/'building.txt').write_text(json.dumps(resources, indent=2))
         (staging/'resource_limiter_template.txt').write_text(limiter + '\n')
@@ -323,12 +326,12 @@ def import_bundle(stream, name):
         check_pairs.unlink();check_builds.unlink()
 
         repo = os.path.relpath(workflows.REPO, destination)
-        makefile = f'REPO_ROOT := {repo}\nBATCH_SIZE := {batch}\nSLURMY_MAX_OUTSTANDING := {maximum}\nSLURMY_HOST := {host}\nSLURMY_PARTITION := {partition}\nSLURMY_RESERVATION := {reservation}\n'
+        makefile = f'REPO_ROOT := {repo}\nBATCH_SIZE := {batch}\nPAIR_ORDER := {pair_order}\nSLURMY_MAX_OUTSTANDING := {maximum}\nSLURMY_HOST := {host}\nSLURMY_PARTITION := {partition}\nSLURMY_RESERVATION := {reservation}\n'
         if axiom_lines:
             (staging/'axiom-globs.txt').write_text('\n'.join(axiom_lines)+'\n');makefile += 'AXIOMS := axiom-globs.txt\n'
         makefile += 'include $(REPO_ROOT)/implementation/templates/workflow.mk\n'
         (staging/'Makefile').write_text(makefile)
-        data = dict(name=name, host=host, partition=partition, reservation=reservation, batch_size=batch, max_outstanding=maximum,
+        data = dict(name=name, host=host, partition=partition, reservation=reservation, batch_size=batch, max_outstanding=maximum, pair_order=pair_order,
                     mode='jobpairs', jobpairs=str(destination/'jobpairs.csv'), building_mode='existing', building_file=str(destination/'building.txt'),
                     limiter_mode='inline', limiter=limiter, axiom_mode='custom' if axiom_lines else 'cluster', axiom_globs=axiom_lines, _created_at=time.time())
         if payload.get('editor_mode') in {'interactive', 'configurations'} and len(shared_roots) <= 1:

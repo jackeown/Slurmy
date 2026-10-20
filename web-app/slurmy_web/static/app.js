@@ -242,7 +242,7 @@ function renderJobs(){
  const body=$('#jobs-body');body.replaceChildren();
  for(const job of filtered.slice(jobsPage*perPage,(jobsPage+1)*perPage)){
   const title=job.provisional?el('div',job.name,'job-link'):link(job.name,'/jobs/'+encodeURIComponent(job.id)+'?'+params({}));title.className='job-link';title.append(el('small',job.id));
-  const progress=el('div');if(job.total){progress.append(el('span',`${job.completed} / ${job.total} · ${job.percent.toFixed(1)}%`,'progress-label'));const bar=el('progress');bar.max=100;bar.value=job.percent;bar.setAttribute('aria-label',`${job.percent.toFixed(1)} percent complete`);progress.append(bar);}else progress.append(el('span','Awaiting cluster metadata…','progress-label'));
+  const progress=el('div');if(job.total){progress.append(el('span',`${job.completed} / ${job.total} · ${job.percent.toFixed(1)}%`,'progress-label'));const bar=el('progress');bar.max=100;bar.value=job.percent;bar.setAttribute('aria-label',`${job.percent.toFixed(1)} percent complete`);progress.append(bar);}else progress.append(el('span',job.provisional?'Preparing submission metadata…':'Awaiting cluster metadata…','progress-label'));
   if(job.phase)progress.append(el('small',job.phase,'submission-phase'));
   else if(job.submission_state==='submitting')progress.append(el('small',`Submitting batches: ${job.submitted_batches} / ${job.batch_count} accepted`,'submission-phase'));
   const cells=[title,badge(job.state),progress,job.issues?el('strong',job.issues,'error'):'—',new Date(job.created*1000).toLocaleString()];
