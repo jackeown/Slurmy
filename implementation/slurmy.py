@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Prepare an explicit table of jobpairs for Slurm; Python runs locally only."""
+"""Prepare an explicit table of solver-problem pairs for Slurm; Python runs locally only."""
 from __future__ import annotations
 
 import argparse
@@ -37,7 +37,7 @@ class SlurmyError(ValueError):
 def order_jobpairs(rows: list[dict], order: str) -> list[dict]:
     """Order calls reproducibly without changing their contents."""
     if order not in PAIR_ORDERS:
-        raise SlurmyError(f"jobpair order must be one of: {', '.join(PAIR_ORDERS)}")
+        raise SlurmyError(f"solver-problem pair order must be one of: {', '.join(PAIR_ORDERS)}")
     result = list(rows)
     if order == "problem-major":
         result.sort(key=lambda row: row["problem"])
@@ -463,7 +463,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("building", type=Path)
     parser.add_argument("resource_limiter_template", type=Path)
     parser.add_argument('--axioms-file', type=Path, help='optional file with one TPTP axiom path or glob per line')
-    parser.add_argument("--batch-size", type=int, default=1, help="maximum jobpairs owned by one Slurm array task; calls run sequentially (default: 1)")
+    parser.add_argument("--batch-size", type=int, default=1, help="maximum solver-problem pairs owned by one Slurm array task; calls run sequentially (default: 1)")
     parser.add_argument("--max-outstanding", type=int, default=32, help="maximum pending/running Slurm tasks from one job (default: 32)")
     args = parser.parse_args(argv)
     try:

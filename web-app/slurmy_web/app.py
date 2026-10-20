@@ -672,6 +672,17 @@ def create_app():
         value = workflows.existing(data.get('value'), data.get('kind'))
         return jsonify(path=str(value))
 
+    @app.post('/api/validate-threads')
+    def validate_threads():
+        from check_threads import check_requested
+        data = request.get_json() or {}
+        requested = data.get('threads_per_core')
+        if isinstance(requested, bool) or not str(requested).isdecimal() or int(requested) < 1:
+            raise ValueError('Threads per core must be a positive whole number.')
+        supported = check_requested(workflows.alias(data.get('host') or host()),
+                                    workflows.alias(data.get('partition')), int(requested))
+        return jsonify(supported=supported)
+
     @app.post('/api/validate-solver-cores')
     def validate_solver_cores():
         from check_threads import check_cores

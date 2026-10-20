@@ -205,7 +205,7 @@ counts across solvers. **Sync/Download** saves three files under
 `job-results/JOB_ID/`: `<job-name>_results-summary.csv`,
 `<job-name>_solver-stdout.tgz`, and `<job-name>_solver-stderr.tgz`.
 Each archive extracts into its own directory, with one log per call named
-`<solver>___<original-problem-filename>___<jobpair-id>.log` (or `.stderr.log`
+`<solver>___<original-problem-filename>___<solver-problem-pair-id>.log` (or `.stderr.log`
 for stderr). Problem filenames, including their extensions and characters such
 as `+` and `^`, are preserved exactly. Unsafe filename characters in the job
 name are replaced with hyphens. The arrow menu offers

@@ -142,7 +142,7 @@ including the solver. Runsolver's measurements of the solver tree replace that
 fallback when available. Default sync exports only `<job-name>_results-summary.csv`,
 `<job-name>_solver-stdout.tgz`, and `<job-name>_solver-stderr.tgz` into `job-results/JOB_ID/`.
 Each archive extracts into a same-named top-level directory and contains logs
-named `<solver>___<original-problem-filename>___<jobpair-id>.log` (or
+named `<solver>___<original-problem-filename>___<solver-problem-pair-id>.log` (or
 `.stderr.log` for stderr). The full problem filename is preserved exactly,
 including its extension and characters such as `+` and `^`. Original archives
 and diagnostics stay on the cluster. Use `slurmy-sync.py --verbose`

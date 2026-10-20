@@ -13,6 +13,30 @@ from slurmy_archives import tptp_relative, browse_cluster_tptp
 
 
 class ClusterSettingsTests(unittest.TestCase):
+    def test_thread_validation_checks_nodes_and_reports_errors(self):
+        from slurmy_web.app import create_app
+        with patch.object(workflows, 'migrate_user_runs'):
+            app = create_app()
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session['csrf'] = 'test'
+        def request(value):
+            return client.post('/api/validate-threads', json=dict(host='datalab', partition='CPU-amd',
+                               threads_per_core=value), headers={'X-CSRF-Token':'test'})
+        with patch('check_threads.subprocess.run') as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = '2\n2\n'
+            self.assertEqual(request(2).json, {'supported':2})
+            self.assertEqual(request(3).status_code, 400)
+            self.assertIn('supports 2', request(3).json['error'])
+            run.return_value.stdout = '1\n2\n'
+            self.assertIn('mixed', request(1).json['error'])
+            run.return_value.returncode = 1
+            run.return_value.stderr = 'Connection refused'
+            self.assertIn('Connection refused', request(1).json['error'])
+        for value in (0, -1, True, 1.5, ''):
+            self.assertEqual(request(value).status_code, 400)
+
     def test_versioned_and_legacy_paths_and_traversal(self):
         self.assertEqual(tptp_relative('tptp://TPTP-v9.2.1/Problems/AGT/*.p'), 'TPTP-v9.2.1/Problems/AGT/*.p')
         self.assertEqual(tptp_relative('tptp://Problems/AGT/*.p'), 'TPTP-v9.2.1/Problems/AGT/*.p')

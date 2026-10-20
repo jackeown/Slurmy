@@ -39,7 +39,9 @@ def export_names(metadata: dict) -> tuple[str, str, str]:
 
 
 def stream_name(definition: dict, task_id: int, error: bool) -> str:
-    solver = safe_name(str(definition.get('solver') or 'solver'))
+    solver = str(definition.get('solver') or 'solver').replace('/', '-')
+    if solver in {'.', '..'} or '\x00' in solver:
+        raise ValueError('Invalid solver configuration name for log export.')
     problem = Path(str(definition.get('problem') or 'problem')).name
     return f'{solver}___{problem}___{task_id:09d}{".stderr" if error else ""}.log'
 

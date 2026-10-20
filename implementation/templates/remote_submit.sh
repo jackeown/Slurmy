@@ -90,7 +90,7 @@ for plan in plans/batch_*.sh; do
     source "$plan"
     MAX_THREADS_PER_CORE=${MAX_THREADS_PER_CORE:-1}
     (( MAX_THREADS_PER_CORE >= 1 && MAX_THREADS_PER_CORE <= THREADS_PER_CORE )) || {
-        echo "A jobpair in $plan requests $MAX_THREADS_PER_CORE threads per core; partition $PARTITION supports $THREADS_PER_CORE." >&2; exit 1;
+        echo "A solver-problem pair in $plan requests $MAX_THREADS_PER_CORE threads per core; partition $PARTITION supports $THREADS_PER_CORE." >&2; exit 1;
     }
     if ! declare -p TASK_THREADS_PER_CORE &>/dev/null; then
         TASK_THREADS_PER_CORE=()
@@ -118,7 +118,7 @@ for plan in plans/batch_*.sh; do
         (( capacity <= socket_capacity )) || capacity=$socket_capacity
     fi
     (( capacity > 0 && MAX_CPUS <= SOCKETS && MAX_CORES <= MAX_CPUS * CORES_PER_SOCKET )) || {
-        echo "A jobpair in $plan cannot fit this partition's nodes." >&2; exit 1;
+        echo "A solver-problem pair in $plan cannot fit this partition's nodes." >&2; exit 1;
     }
     # A Slurm task owns the full planned batch; only PARALLEL calls run at once.
     for ((first=0; first<${#TASK_IDS[@]}; first+=${#TASK_IDS[@]})); do

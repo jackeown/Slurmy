@@ -101,11 +101,11 @@ def specification(data, destination_override=None, progress=None):
     host, partition = alias(data.get('host')), alias(data.get('partition'))
     reservation = alias(data['reservation'].strip()) if data.get('reservation', '').strip() else ''
     data['reservation'] = reservation
-    batch_size = positive(str(data.get('batch_size') or 1), 'jobpairs per Slurm task')
+    batch_size = positive(str(data.get('batch_size') or 1), 'solver-problem pairs per Slurm task')
     max_outstanding = positive(str(data.get('max_outstanding', 32)), 'maximum outstanding Slurm tasks')
     pair_order = data.get('pair_order') or 'solver-major'
     if pair_order not in PAIR_ORDERS:
-        raise ValueError('Choose Problem Major, Solver Major, or random jobpair order.')
+        raise ValueError('Choose Problem Major, Solver Major, or random solver-problem pair order.')
     mode = data.get('mode')
     configs, patterns = [], []
     if mode == 'jobpairs':

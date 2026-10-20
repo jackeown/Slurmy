@@ -30,7 +30,7 @@ class ExportTests(unittest.TestCase):
         (self.root / 'metadata.json').write_text(json.dumps({
             'job_name': 'study', 'task_count': len(self.problems)}))
         for task_id, problem in enumerate(self.problems):
-            definitions.append({'task_id': task_id, 'solver': 'E_solver',
+            definitions.append({'task_id': task_id, 'solver': 'E_solver + strategy',
                                 'problem': '/problems/SET/' + problem})
             archive = f'batch_0_task_{task_id}.tar.gz'
             with tarfile.open(self.root / 'results' / archive, 'w:gz') as output:
@@ -53,7 +53,7 @@ class ExportTests(unittest.TestCase):
             with tarfile.open(directory / f'{archive_root}.tgz') as archive:
                 members = [member for member in archive if member.isfile()]
                 self.assertEqual([member.name for member in members], [
-                    f'{archive_root}/E_solver___{problem}___{task_id:09d}{suffix}'
+                    f'{archive_root}/E_solver + strategy___{problem}___{task_id:09d}{suffix}'
                     for task_id, problem in enumerate(self.problems)])
                 for member in members:
                     self.assertEqual(archive.extractfile(member).read(), f'solver {stream}'.encode())

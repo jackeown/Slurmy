@@ -40,13 +40,13 @@ placement_failure() {
     local task_id=$1 need=$2 socket_limit=$3 wave_start=$4
     if (( wave_start == 0 )) && [[ ${SLURM_RESTART_COUNT:-0} =~ ^[0-9]+$ ]] && (( ${SLURM_RESTART_COUNT:-0} < 5 )); then
         local array_id="${SLURM_ARRAY_JOB_ID:?}_${SLURM_ARRAY_TASK_ID:?}"
-        echo "Batch $BATCH_ID: allocated cores cannot satisfy jobpair $task_id (cores=$need sockets=$socket_limit exclusive_cpu=$EXCLUSIVE_CPU). No calls started; requeuing $array_id for another placement (retry $((${SLURM_RESTART_COUNT:-0} + 1))/5)." >&2
+        echo "Batch $BATCH_ID: allocated cores cannot satisfy solver-problem pair $task_id (cores=$need sockets=$socket_limit exclusive_cpu=$EXCLUSIVE_CPU). No calls started; requeuing $array_id for another placement (retry $((${SLURM_RESTART_COUNT:-0} + 1))/5)." >&2
         if scontrol requeue "$array_id"; then exit 0; fi
         echo "Batch $BATCH_ID: Slurm refused the requeue; no calls started." >&2
     elif (( wave_start == 0 )); then
-        echo "Batch $BATCH_ID: allocated cores still cannot satisfy jobpair $task_id (cores=$need sockets=$socket_limit exclusive_cpu=$EXCLUSIVE_CPU) after placement retries. No calls started; adjust the call's socket/core request or batch concurrency." >&2
+        echo "Batch $BATCH_ID: allocated cores still cannot satisfy solver-problem pair $task_id (cores=$need sockets=$socket_limit exclusive_cpu=$EXCLUSIVE_CPU) after placement retries. No calls started; adjust the call's socket/core request or batch concurrency." >&2
     else
-        echo "Batch $BATCH_ID: allocated cores cannot satisfy jobpair $task_id (cores=$need sockets=$socket_limit exclusive_cpu=$EXCLUSIVE_CPU). Earlier waves may have completed, so this batch will not be requeued." >&2
+        echo "Batch $BATCH_ID: allocated cores cannot satisfy solver-problem pair $task_id (cores=$need sockets=$socket_limit exclusive_cpu=$EXCLUSIVE_CPU). Earlier waves may have completed, so this batch will not be requeued." >&2
     fi
     exit 1
 }
@@ -54,7 +54,7 @@ failed=0
 for ((first=0; first<${#TASK_IDS[@]}; first+=PARALLEL)); do
 result=$(printf '%s/results/batch_%06d_task_%09d.csv' "$JOB_DIR" "$BATCH_ID" "${TASK_IDS[$first]}")
 if [[ -f "$result" ]] && awk -F, 'NR==2 {gsub(/"/, "", $2); found=1; complete=($2=="true")} END {exit(found && complete ? 0 : 1)}' "$result"; then
-    echo "Jobpair ${TASK_IDS[$first]} already completed; keeping its saved result."
+    echo "Solver-problem pair ${TASK_IDS[$first]} already completed; keeping its saved result."
     continue
 fi
 USED=()

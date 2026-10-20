@@ -1,7 +1,7 @@
-# Slurmy: from workflow creation to jobpair execution
+# Slurmy: from workflow creation to solver-problem pair execution
 
 This diagram follows **creating a workflow in the UI → Prepare & dispatch
-job → executing one jobpair**.
+job → executing one solver-problem pair**.
 
 There are three execution locations:
 
@@ -300,13 +300,13 @@ CLUSTER COMPUTE NODE — EXECUTE A BATCH
   │ Other batches can execute concurrently in other allocations.             │
   └──────────────────────────────────┬─────────────────────────────────────────┘
                                      │
-                                     │ For one unfinished jobpair:
+                                     │ For one unfinished solver-problem pair:
                                      │
                                      │ taskset -c CPU_MASK \
                                      │   bash "$JOB_DIR/call.sh" TASK_ID BATCH_ID
                                      ▼
   ┌────────────────────────────────────────────────────────────────────────────┐
-  │ 15. call.sh sets up one jobpair                                          │
+  │ 15. call.sh sets up one solver-problem pair                                          │
   │                                                                          │
   │ Load calls/TASK_ID/config.sh                                             │
   │                                                                          │
@@ -427,7 +427,7 @@ optional when a recipe obtains its own source.
 
 ## Process chain on the compute node
 
-Stripped of preparation and monitoring, one jobpair follows this chain:
+Stripped of preparation and monitoring, one solver-problem pair follows this chain:
 
 ```text
 Slurm starts batch.sh

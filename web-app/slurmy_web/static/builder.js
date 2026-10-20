@@ -26,7 +26,7 @@ if(document.body.dataset.page==='new'){
   throw new Error('The progress stream ended before the workflow operation completed.');
  }
  function prefillExamples(root){root.querySelectorAll('input[placeholder],textarea[placeholder]').forEach(input=>{if(!input.value && input.name!=='glob')input.value=input.placeholder;});}
- function add(template,target){const node=$('#'+template).content.firstElementChild.cloneNode(true);prefillExamples(node);if(node.matches('.configuration'))node.querySelector('[name="solver_name"]').value='';$('.remove',node).addEventListener('click',()=>{node.remove();if(target==='globs'||target==='axiom-globs')updateProblemStatus();if(target==='limiter-resources')updateLimiterStatus();updateStepStates();});$('#'+target).append(node);setupBrowsers(node);shellEditors(node);window.initCollapsibles?.();if(node.matches('.configuration'))updateSolverStatus(node);if(target==='globs'||target==='axiom-globs')updateProblemStatus();if(target==='limiter-resources')updateLimiterStatus();updateStepStates();return node;}
+ function add(template,target){const node=$('#'+template).content.firstElementChild.cloneNode(true);prefillExamples(node);if(node.matches('.configuration'))node.querySelector('[name="solver_name"]').value='';$('.remove',node).addEventListener('click',()=>{node.remove();if(target==='globs'||target==='axiom-globs')updateProblemStatus();if(target==='limiter-resources')updateLimiterStatus();updateStepStates();});$('#'+target).append(node);setupBrowsers(node);shellEditors(node);window.initCollapsibles?.();if(node.matches('.configuration')){updateSolverStatus(node);queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}if(target==='globs'||target==='axiom-globs')updateProblemStatus();if(target==='limiter-resources')updateLimiterStatus();updateStepStates();return node;}
  $('#add-configuration').addEventListener('click',()=>{const card=add('configuration-template','configurations');$('#builder-error').hidden=true;visibility();card.scrollIntoView({behavior:'smooth',block:'start'});});
  $('#add-glob').addEventListener('click',()=>add('glob-template','globs'));
   $('#add-tptp-glob').addEventListener('click',()=>{const row=add('glob-template','globs');const input=row.querySelector('[name="glob"]');input.value='tptp://TPTP-v9.2.1/Problems/*/*.p';input.dataset.validated='';updateProblemStatus();input.focus();});
@@ -35,7 +35,7 @@ if(document.body.dataset.page==='new'){
  function addResource(role,values){const node=add('resource-template',role==='limiter'?'limiter-resources':'solver-resources');node.dataset.resourceRole=role;node.dataset.resourceOrder=resourceOrder++;const caption=$('h3',node);const toggle=$('.collapse-toggle',caption);caption.textContent=role==='limiter'?'Limiter resource':'Cluster build for imported solver';if(toggle){toggle.setAttribute('aria-label',`Collapse ${caption.textContent}`);caption.prepend(toggle);}if(role==='solver')node.querySelector('[name="artifact"]').placeholder='solver';else $('.remove',node).hidden=true;fill(node,values);if(role==='limiter')updateLimiterStatus();return node;}
  $('#add-solver-resource').addEventListener('click',()=>{addResource('solver',{mode:'script',artifact:''});visibility();});
  function configurationTitle(card){const name=card.querySelector('[name="solver_name"]').value.trim(),caption=$('h3',card);const toggle=$('.collapse-toggle',caption);caption.textContent=name?`${name} Configuration`:'Solver configuration';if(toggle){toggle.setAttribute('aria-label',`${card.classList.contains('collapsed')?'Expand':'Collapse'} ${caption.textContent}`);caption.prepend(toggle);}}
- function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field){field.value=value??'';field.refreshShell?.();}}if(node.matches('.configuration')){configurationTitle(node);updateSolverStatus(node);}}
+ function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field){field.value=value??'';field.refreshShell?.();}}if(node.matches('.configuration')){configurationTitle(node);updateSolverStatus(node);queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}}
  for(const name of ['name','host','partition','reservation','batch_size','max_outstanding','pair_order','mode','jobpairs','configurations_file','limiter_mode','limiter_file','limiter']){const field=form.querySelector(`[name="${name}"]`);if(field&&initial[name]!==undefined)field.value=initial[name];}
  $('[name="limiter_mode"]').value='inline';$('[name="limiter_file"]').value='';
  if(!editing&&!initial.limiter){$('[name="limiter_mode"]').value='inline';$('[name="limiter"]').value=`${repoRoot}/implementation/build/runsolver/runsolver --cpu-limit {{cpu_limit}} --wall-clock-limit {{wc_limit}} --rss-swap-limit {{mem_limit_mib}} --timestamp --watcher-data {{watcher_log}} --var {{var_file}} --solver-data {{solver_log}} {{solver_command}}`;}
@@ -167,6 +167,31 @@ if(document.body.dataset.page==='new'){
   updateStepStates();
  }
  form.addEventListener('input',event=>{if(event.target.matches('[name="limiter"]')||event.target.closest('#limiter-resources'))updateLimiterStatus();});
+ const threadChecks=new WeakMap();
+ function checkThreads(input){
+  const prior=threadChecks.get(input);if(prior){clearTimeout(prior.timer);prior.controller?.abort();}
+  const state={};threadChecks.set(input,state);delete input.dataset.threadValid;
+  const status=input.closest('label').querySelector('.thread-validation');
+  const card=input.closest('.configuration');
+  const value=input.value.trim(), selectedHost=rootValue('host'), partition=rootValue('partition');
+  const report=(message,valid)=>{status.replaceChildren(document.createTextNode(message));status.className='thread-validation validation '+(valid?'valid':'invalid');input.setAttribute('aria-invalid',String(!valid));};
+  if(!/^[1-9][0-9]*$/.test(value)){report('Enter a positive whole number.',false);updateSolverStatus(card);return;}
+  status.className='thread-validation validation';status.replaceChildren(el('span',undefined,'spinner'),document.createTextNode(' Checking compute nodes…'));input.removeAttribute('aria-invalid');
+  updateSolverStatus(card);
+  state.timer=setTimeout(async()=>{
+   state.controller=new AbortController();
+   try{
+    const response=await fetch('/api/validate-threads',{method:'POST',signal:state.controller.signal,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({host:selectedHost,partition,threads_per_core:Number(value)})});
+    const result=await response.json();if(threadChecks.get(input)!==state||!input.isConnected)return;
+    if(!response.ok)throw new Error(result.error||'Could not validate compute nodes.');
+    input.dataset.threadValid='true';report(`Valid · ${selectedHost}/${partition} supports up to ${result.supported} threads per core.`,true);
+   }catch(error){if(error.name==='AbortError'||threadChecks.get(input)!==state||!input.isConnected)return;report(error.message,false);}
+   updateSolverStatus(card);
+  },350);
+ }
+ form.addEventListener('input',event=>{if(event.target.name==='threads_per_core')checkThreads(event.target);else if(['host','partition'].includes(event.target.name))form.querySelectorAll('[name="threads_per_core"]').forEach(checkThreads);});
+ form.addEventListener('change',event=>{if(['host','partition'].includes(event.target.name))form.querySelectorAll('[name="threads_per_core"]').forEach(checkThreads);});
+ form.querySelectorAll('[name="threads_per_core"]').forEach(checkThreads);
  function updateSolverStatus(card){
   const value=name=>card.querySelector(`[name="${name}"]`).value.trim();
   const buildSelected=rootValue('building_mode')==='create'&&value('build_mode')==='script';
@@ -177,7 +202,7 @@ if(document.body.dataset.page==='new'){
    !/^\.\/solver(?:\s|$)/.test(value('command'));
   const buildReady=!buildSelected||((!value('build_source')||pathReady('build_source'))&&pathReady('build_script'));
   const positive=name=>{const input=card.querySelector(`[name="${name}"]`);return input.value.trim()!==''&&input.validity.valid&&Number(input.value)>0;};
-  const limitsReady=['wc_limit','cpu_limit','cores','threads_per_core'].every(positive)&&
+  const limitsReady=card.querySelector('[name="threads_per_core"]').dataset.threadValid==='true'&&['wc_limit','cpu_limit','cores','threads_per_core'].every(positive)&&
    /^\s*(?:\d+(?:\.\d+)?)(?:\s*(?:[kmgpt]i?b?|b))?\s*$/i.test(value('mem_limit'))&&
    ['exclusive_cpu','exclusive_node'].every(name=>['true','false'].includes(value(name)));
   for(const [section,ready,good,bad] of [

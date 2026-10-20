@@ -65,7 +65,7 @@ def main() -> int:
     parser.add_argument("--problem-globs-file", type=Path, help="one glob per line, relative to this file")
     parser.add_argument("--output", type=Path, default=Path("jobpairs.csv"))
     parser.add_argument("--order", choices=PAIR_ORDERS, default="solver-major",
-                        help="jobpair order; random is reproducible for unchanged inputs")
+                        help="solver-problem pair order; random is reproducible for unchanged inputs")
     args = parser.parse_args()
     try:
         patterns = [p for group in args.problems for p in group]
@@ -77,7 +77,7 @@ def main() -> int:
         count = expand(args.configurations, patterns, args.output, args.order)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
-    print(f"Wrote {count} explicit jobpairs to {args.output}")
+    print(f"Wrote {count} explicit solver-problem pairs to {args.output}")
     return 0
 
 

@@ -1,4 +1,4 @@
-# Shared targets for explicit jobpair experiments. No solver limits live here.
+# Shared targets for explicit solver-problem pair experiments. No solver limits live here.
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := all
 BATCH_SIZE ?= 1
