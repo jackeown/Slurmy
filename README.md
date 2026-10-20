@@ -149,7 +149,7 @@ The solver-problem pairs can be run in problem major order, i.e., for each probl
 or solution major order, i.e., for each solver run all problems, or random order.
 The number of solver-problem pairs in each batch (that is run as one SLURM task) can be varied;
 a suggested value is provided.
-The maximal nummber of SLURM tasks WHAT??
+(Suggested explanation for review: By default, each Slurmy job may have at most 32 SLURM tasks pending or running simultaneously. As tasks finish, Slurmy submits more. This is a configurable submission window, not a limit on the total number of tasks or a fixed cluster limit. Concurrent Slurmy submissions under the same cluster account share available submission capacity.)
 
 **Save the workflow settings:**
 This generates all the files and scripts that get used to execute a job based on the workflow.

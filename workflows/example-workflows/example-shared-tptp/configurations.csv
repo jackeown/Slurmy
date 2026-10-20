@@ -1,0 +1,2 @@
+solver_name,command,solver_directory,wc_limit,cpu_limit,mem_limit,cores,cpus,exclusive_cpu,exclusive_node
+E shared TPTP,./eprover --auto --cpu-limit={{cpu_limit}} {{problem}},../example-e/bin,6,3,1GiB,1,auto,false,false

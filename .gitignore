@@ -19,3 +19,5 @@ __pycache__/
 /workflows/my-workflows/*/
 /workflows/my-workflows/.deleted-workflows/
 /workflows/my-workflows/.problem-archives/
+
+/workflows/example-workflows/example-shared-tptp/jobpairs.csv

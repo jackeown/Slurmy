@@ -1120,9 +1120,12 @@ class RemoteCollector:
             raise ValueError('Invalid problem path.')
         script = r'''set -euo pipefail
 root=$(realpath -e -- "$HOME/slurmy/jobs/$1/rootfs")
-if [[ "$2" == /share/Slurmy-TPTP-v9.2.1/Problems/* ]]; then
+if [[ "$2" == share/TPTP/*/Problems/* ]]; then
+    root=$(realpath -e -- /share/TPTP)
+    file=$(realpath -e -- "/$2")
+elif [[ "$2" == share/Slurmy-TPTP-v9.2.1/Problems/* ]]; then
     root=$(realpath -e -- /share/Slurmy-TPTP-v9.2.1/Problems)
-    file=$(realpath -e -- "$2")
+    file=$(realpath -e -- "/$2")
 else
     file=$(realpath -e -- "$root/$2")
 fi

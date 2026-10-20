@@ -27,12 +27,14 @@ if [[ -n ${SLURMY_RESUME_JOB_ID:-} ]]; then
     JOB_ID=$SLURMY_RESUME_JOB_ID
     [[ "$JOB_ID" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Invalid SLURMY_RESUME_JOB_ID.' >&2; exit 1; }
     echo "Resuming accepted batches for $JOB_ID; no inputs are rebuilt or uploaded."
-    ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" < "$ASSETS/remote_submit.sh"
+    ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" < "$ASSETS/remote_submit.sh"
     exit $?
 fi
 
 # Catch topology mismatches before building, packaging, or uploading anything.
 python "$ASSETS/check_threads.py" "$ASSETS/manifest.jsonl" --host "$HOST" --partition "$SLURMY_PARTITION"
+
+[[ -z ${SLURMY_RESERVATION:-} || ${SLURMY_RESERVATION} =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo 'Invalid reservation' >&2; exit 1; }
 
 # 1. Build each non-empty building.txt recipe remotely and fetch its outputs.
 echo 'Submission phase: Building dependencies on cluster compute nodes'
@@ -69,7 +71,7 @@ fi
 
 # 4. Calculate allocations using cluster topology, then submit each batch.
 echo 'Submission phase: Submitting Slurm batches'
-if ! ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" < "$ASSETS/remote_submit.sh"; then
+if ! ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" < "$ASSETS/remote_submit.sh"; then
     echo "Submission connection failed. Some batches may already be accepted; inspect job $JOB_ID before retrying." >&2
     echo "To resume only unaccepted batches: SLURMY_RESUME_JOB_ID=$JOB_ID bash ./submit.sh" >&2
     exit 1

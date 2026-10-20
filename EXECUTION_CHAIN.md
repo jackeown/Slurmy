@@ -21,7 +21,7 @@ YOUR COMPUTER
   │ Select:                                                                  │
   │   • Solver configurations and commands                                   │
   │   • Solver runtime directories and optional build recipes                 │
-  │   • Problems: files, globs, archives, or tptp://Problems/*/*.p              │
+  │   • Problems: files, globs, archives, or tptp://TPTP-v9.2.1/Problems/*/*.p              │
   │   • Default/shared TPTP axioms or custom axioms                            │
   │   • Per-call CPU, wall-time, memory, core and thread limits                │
   │   • Resource limiter, normally runsolver                                  │
@@ -358,7 +358,7 @@ CLUSTER COMPUTE NODE — EXECUTE A BATCH
   │                                                                          │
   │ For example:                                                            │
   │                                                                          │
-  │ ./vampire --mode casc /share/Slurmy-TPTP-v9.2.1/Problems/AGT/EXAMPLE.p     │
+  │ ./vampire --mode casc /share/TPTP/TPTP-v9.2.1/Problems/AGT/EXAMPLE.p     │
   │                                                                          │
   │ Or a problem path under "$JOB_DIR/rootfs/..." for an uploaded problem.    │
   │                                                                          │

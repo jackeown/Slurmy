@@ -22,7 +22,7 @@ to that file; the web app normally saves absolute paths.
 | `solver_name` | Optional display label for this solver configuration. |
 | `command` | Solver shell command; may use the placeholders below. |
 | `solver_directory` | Local runtime directory, copied to the cluster and used as the command's working directory. |
-| `problem` | Local problem file, or `tptp:/share/Slurmy-TPTP-v9.2.1/Problems/...` for a shared cluster problem. |
+| `problem` | Local problem file, or `tptp:/share/TPTP/TPTP-v9.2.1/Problems/...` for a shared cluster problem. |
 | `wc_limit`, `cpu_limit` | Positive wall-clock and total CPU limits in seconds. |
 | `mem_limit` | Positive memory limit, e.g. `500MB`, `2GiB`; a bare number means MB. |
 | `cores` | Maximum physical cores for the call. |

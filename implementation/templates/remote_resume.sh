@@ -13,4 +13,4 @@ flock -n "$job/.submit-controller.lock" true || { echo 'The submission controlle
 cd "$job"
 source ./submission_context.sh
 rm -- .stopped
-exec bash ./remote_submit.sh "$1" "$SAVED_PARTITION" "$SAVED_MAX_OUTSTANDING" "$SAVED_JOB_PREFIX" "$SAVED_JOB_NAME_B64" 1
+exec bash ./remote_submit.sh "$1" "$SAVED_PARTITION" "$SAVED_MAX_OUTSTANDING" "$SAVED_JOB_PREFIX" "$SAVED_JOB_NAME_B64" 1 "${SAVED_RESERVATION:--}"

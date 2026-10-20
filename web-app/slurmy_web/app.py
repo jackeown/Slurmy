@@ -684,6 +684,13 @@ def create_app():
         supported = check_cores(selected_host, selected_partition, int(requested))
         return jsonify(max_cores=supported)
 
+    @app.post('/api/browse-tptp')
+    def browse_tptp():
+        from slurmy_archives import browse_cluster_tptp
+        data = request.get_json() or {}
+        selected_host = workflows.alias(data.get('host') or host())
+        return jsonify(browse_cluster_tptp(data.get('directory') or 'tptp://', selected_host))
+
     @app.post('/api/browse-path')
     def browse_path():
         data = request.get_json() or {}

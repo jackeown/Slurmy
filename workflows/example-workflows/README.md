@@ -9,7 +9,8 @@ compute nodes, not your laptop.
 | [example-vampire](example-vampire/) | Vampire, built from the included source snapshot. |
 | [example-e](example-e/) | E, built from source. |
 | [example-drodi](example-drodi/) | Drodi, built from source. |
-| [example-combined](example-combined/) | All three configurations × ten shared problems. |
+| [example-shared-tptp](example-shared-tptp/) | E × two versioned shared cluster TPTP problems; no local problem files. |
+| [example-combined](example-combined/) | All three configurations × ten bundled local problems. |
 | [example-template](example-template/README.md) | Minimal starting point for your own solver. |
 
 ## 🚀 Run an example
@@ -70,3 +71,8 @@ resources; `make submit` builds them again before packaging.
 and downloaded binaries. In the four solver examples, `make pairs-clean`
 also removes the generated `jobpairs.csv`, so edits to configurations or problem
 selection can be expanded again.
+
+Shared collection paths use `tptp://TPTP-v9.2.1/Problems/...` and resolve under
+`/share/TPTP/` on the cluster. The other solver examples intentionally retain
+their bundled local problem selections. Optional `SLURMY_RESERVATION` applies
+to solver and build submissions alike.

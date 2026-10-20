@@ -1,0 +1,2 @@
+tptp://TPTP-v9.2.1/Problems/PUZ/PUZ001+1.p
+tptp://TPTP-v9.2.1/Problems/ALG/ALG002-1.p

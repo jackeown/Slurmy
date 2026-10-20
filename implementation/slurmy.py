@@ -98,7 +98,10 @@ def read_pairs(filename: Path) -> list[dict]:
                 raise SlurmyError(f"{label}: solver_name must be at most 80 characters with no control characters")
             cluster_problem = row["problem"].startswith('tptp:')
             problem = Path(row["problem"][5:]) if cluster_problem else path_at(row["problem"], filename.parent)
-            if cluster_problem and (not str(problem).startswith('/share/Slurmy-TPTP-v9.2.1/Problems/') or '..' in problem.parts):
+            versioned_problem = (str(problem).startswith('/share/TPTP/') and
+                                 len(problem.parts) >= 6 and problem.parts[4] == 'Problems')
+            legacy_problem = str(problem).startswith('/share/Slurmy-TPTP-v9.2.1/Problems/')
+            if cluster_problem and (not (versioned_problem or legacy_problem) or '..' in problem.parts):
                 raise SlurmyError(f"{label}: invalid cluster TPTP problem: {problem}")
             if not row["problem"] or (not cluster_problem and not problem.is_file()):
                 raise SlurmyError(f"{label}: problem does not exist: {problem}")
@@ -325,13 +328,16 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
                 + task["limiter_command"] + "\n"
             )
             write_script(call / "limiter.sh", limiter_script)
+            default_tptp = '/share/TPTP/TPTP-v9.2.1'
+            if task['remote_problem'] and task['problem'].startswith('/share/TPTP/'):
+                default_tptp = str(Path('/').joinpath(*Path(task['problem']).parts[1:4]))
             config = "".join(key.upper() + "=" + shlex.quote(str(value)) + "\n" for key, value in {
                 "task_id": task["task_id"], "task_key": task["task_key"], "batch_id": task["batch_id"],
                 "cores": task["cores"], "threads_per_core": task["threads_per_core"],
                 "cpus": task["cpus"], "wc_limit": task["wc_limit"],
                     "solver_root_rel": task['solver_root'].lstrip("/"),
                     "tptp_root_rel": '.slurmy-tptp' if axioms else '',
-                    "tptp_default_root": os.environ.get('SLURMY_TPTP_ROOT', '/share/Slurmy-TPTP-v9.2.1')}.items())
+                    "tptp_default_root": os.environ.get('SLURMY_TPTP_ROOT') or default_tptp}.items())
             (call / "config.sh").write_text(config)
             if progress and (index % 100 == 0 or index == len(tasks)):
                 progress('calls', 'Generating solver call scripts', index, len(tasks))
@@ -409,7 +415,8 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
                        + ('--in-place ' if build.source == build.root else '')
                        + f'--output {shlex.quote(str(build.root))} '
                        + f'--artifact={shlex.quote(build.artifact or ".slurmy-built")} '
-                       + '--sbatch-option="--partition=${SLURMY_PARTITION:?Set SLURMY_PARTITION}"')
+                       + '--sbatch-option="--partition=${SLURMY_PARTITION:?Set SLURMY_PARTITION}" '
+                       + '${SLURMY_RESERVATION:+--sbatch-option=--reservation=$SLURMY_RESERVATION}')
             commands.append((i, command))
         if parallel_builds and build_total > 1:
             build_lines += [f'echo "Starting {build_total} independent cluster builds in parallel"', 'build_pids=()', 'build_names=()']

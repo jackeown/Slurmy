@@ -46,9 +46,9 @@ configuration × problem product into `jobpairs.csv`. Optional
 form are saved as `build-resource-*.sh`. The solver source and problem files
 can remain at their existing paths; they are packaged at submission time.
 Problems can be selected by files, globs, ZIP/tar archives, or a cluster TPTP
-pattern such as `tptp://Problems/*/*.p` (all domains) or
-`tptp://Problems/AGT/*.p` (one domain). Cluster TPTP problems remain under the
-shared `/share/Slurmy-TPTP-v9.2.1/Problems/` tree. If custom axioms
+pattern such as `tptp://TPTP-v9.2.1/Problems/*/*.p` (all domains) or
+`tptp://TPTP-v9.2.1/Problems/AGT/*.p` (one domain). Cluster TPTP problems remain under the
+shared `/share/TPTP/TPTP-v9.2.1/Problems/` tree. If custom axioms
 are selected, they replace the default shared TPTP library for that job.
 
 The three core inputs are `jobpairs.csv`, `building.txt`, and
@@ -123,3 +123,16 @@ specific job rather than the latest one.
 
 </blockquote>
 </details>
+
+The optional **Slurm reservation** beside the partition field accepts a code
+such as `E192-04`. It is passed to both cluster build tasks and solver tasks,
+and retained when a stopped job resumes. CLI workflows can set
+`SLURMY_RESERVATION := E192-04` in their Makefile; leave it empty for normal scheduling.
+
+To use only shared problems, add a cluster TPTP source without adding a local
+source. **Browse cluster TPTP…** lists `/share/TPTP/` on the selected SSH host.
+Open a version and its `Problems/` directory, then choose a file or select a
+directory to form an editable recursive `/**/*.p` glob. For example,
+`tptp://TPTP-v9.2.1/Problems/AGT/*.p` resolves to
+`/share/TPTP/TPTP-v9.2.1/Problems/AGT/*.p`. A shared problem uses its version's
+axiom library unless custom axioms or `SLURMY_TPTP_ROOT` override it.

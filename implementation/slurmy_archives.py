@@ -18,29 +18,73 @@ ARCHIVE_SUFFIXES = ('.zip', '.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2', '.ta
 PROBLEM_SUFFIXES = ('.p', '.tptp')
 AXIOM_SUFFIXES = ('.ax', '.p', '.tptp')
 CACHE = Path(__file__).resolve().parents[1] / 'workflows/my-workflows' / '.problem-archives'
-TPTP_PROBLEMS = '/share/Slurmy-TPTP-v9.2.1/Problems'
+TPTP_ROOT = '/share/TPTP'
+TPTP_DEFAULT_VERSION = 'TPTP-v9.2.1'
+
+
+def tptp_relative(pattern: str) -> str:
+    if not isinstance(pattern, str) or not pattern.startswith('tptp://'):
+        raise ValueError('Expected a tptp:// path.')
+    relative = pattern[len('tptp://'):].strip('/')
+    if '..' in PurePosixPath(relative).parts or '\\' in relative or any(ord(c) < 32 for c in relative):
+        raise ValueError('Enter a TPTP path without parent-directory components or control characters.')
+    # Preserve older saved workflows, which omitted the collection version.
+    if relative and not relative.startswith('TPTP-'):
+        relative = TPTP_DEFAULT_VERSION + '/' + (relative if relative.startswith('Problems/') else 'Problems/' + relative)
+    return relative
+
+
+def remote_tptp(host: str, relative: str, browse: bool = False):
+    script = r'''import base64, glob, json, os, sys
+root = sys.argv[1]
+relative = '' if sys.argv[2] == '-' else base64.b64decode(sys.argv[2]).decode()
+mode = sys.argv[3]
+def contained(path):
+    return os.path.realpath(path).startswith(os.path.realpath(root) + '/')
+if mode == 'browse':
+    path = os.path.join(root, relative)
+    if not (os.path.realpath(path) == os.path.realpath(root) or contained(path)) or not os.path.isdir(path):
+        raise SystemExit('TPTP directory is missing or outside /share/TPTP.')
+    entries = []
+    for entry in os.scandir(path):
+        if entry.name.startswith('.') or not contained(entry.path): continue
+        directory = entry.is_dir()
+        if directory or (entry.is_file() and entry.name.endswith(('.p', '.tptp'))):
+            entries.append(dict(name=entry.name, path='tptp://' + os.path.relpath(entry.path, root), directory=directory))
+    entries.sort(key=lambda item: (not item['directory'], item['name'].casefold()))
+    current = 'tptp://' + relative
+    parent = 'tptp://' + (os.path.dirname(relative) if relative else '')
+    print(json.dumps(dict(directory=current, parent=parent, items=entries[:1000], truncated=len(entries)>1000)))
+else:
+    for path in sorted(glob.iglob(os.path.join(root, relative), recursive=True)):
+        rel = os.path.relpath(path, root).split(os.sep)
+        if len(rel) >= 3 and rel[1] == 'Problems' and os.path.isfile(path) and path.endswith(('.p', '.tptp')) and contained(path):
+            sys.stdout.buffer.write(path.encode() + b'\0')
+'''
+    try:
+        result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host,
+                                 'python3', '-', TPTP_ROOT, base64.b64encode(relative.encode()).decode() or '-',
+                                 'browse' if browse else 'glob'],
+                                input=script.encode(), capture_output=True, timeout=120, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError(f'Could not access cluster TPTP collection: {error}') from error
+    if result.returncode:
+        raise ValueError(result.stderr.decode(errors='replace').strip() or 'Could not access cluster TPTP collection.')
+    return result.stdout
+
+
+def browse_cluster_tptp(pattern: str, host: str) -> dict:
+    relative = tptp_relative(pattern)
+    if any(char in relative for char in '*?['):
+        raise ValueError('Browse a directory; add a glob after selecting it.')
+    return json.loads(remote_tptp(host, relative, browse=True))
 
 
 def expand_cluster_tptp(pattern: str, host: str) -> list[str]:
-    """List shared TPTP Problems/ globs; accept legacy domain-relative globs too."""
-    if not pattern.startswith('tptp://'):
-        raise ValueError('Expected a tptp:// problem pattern.')
-    relative = pattern.removeprefix('tptp://').strip('/')
-    if not relative or '..' in PurePosixPath(relative).parts or '\\' in relative or '\x00' in relative:
-        raise ValueError('Enter a relative TPTP Problems glob without parent-directory components.')
-    # Canonical URLs mirror the TPTP layout (Problems/AGT/*.p). The SSH
-    # lookup is rooted in Problems already; older saved URLs omit that prefix.
-    relative = relative.removeprefix('Problems/')
-    script = '''import base64, glob, os, sys\nroot = sys.argv[1]\npattern = base64.b64decode(sys.argv[2]).decode()\nfor path in sorted(glob.iglob(os.path.join(root, pattern), recursive=True)):\n    if os.path.isfile(path) and path.endswith(('.p', '.tptp')) and os.path.realpath(path).startswith(root + '/'):\n        sys.stdout.buffer.write(path.encode() + b'\\0')\n'''
-    try:
-        result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host,
-                                 'python3', '-', TPTP_PROBLEMS, base64.b64encode(relative.encode()).decode()],
-                                input=script.encode(), capture_output=True, timeout=120, check=False)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ValueError(f'Could not list cluster TPTP problems: {error}') from error
-    if result.returncode:
-        raise ValueError(f'Could not list cluster TPTP problems: {result.stderr.decode(errors="replace").strip()}')
-    files = ['tptp:' + path.decode() for path in result.stdout.split(b'\0') if path]
+    relative = tptp_relative(pattern)
+    if not relative:
+        raise ValueError('Select a TPTP version and Problems glob.')
+    files = ['tptp:' + path.decode() for path in remote_tptp(host, relative).split(b'\0') if path]
     if not files:
         raise ValueError(f'No TPTP problems matched {pattern} on {host}.')
     return files
