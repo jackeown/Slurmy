@@ -487,7 +487,7 @@ def write_summary(destination: Path, summary: dict[str, Any]) -> Path:
 
 
 def consolidate_solver_streams(destination: Path, records: dict[int, dict[str, Any]]) -> None:
-    """Atomically publish separate stdout/stderr archives from saved call archives."""
+    """Atomically publish separate stdout/stderr archives from saved solver-problem pair archives."""
     sources = []
     for task_id, record in sorted(records.items()):
         name = str(record.get('archive', ''))
@@ -548,7 +548,7 @@ def consolidate_solver_streams(destination: Path, records: dict[int, dict[str, A
                         info.mode = 0o600
                         (stdout_tar if stdout else stderr_tar).addfile(info, stream)
                 if index % 1000 == 0 or index == len(sources):
-                    print(f'Consolidating solver logs: {index}/{len(sources)} call archives', flush=True)
+                    print(f'Consolidating solver logs: {index}/{len(sources)} solver-problem pair archives', flush=True)
         for source, target in zip(temporary, outputs):
             os.replace(source, target)
         fd, marker_name = tempfile.mkstemp(prefix='.solver-streams.', suffix='.tmp', dir=destination)
@@ -681,7 +681,7 @@ def compact_sync_loop(args: argparse.Namespace) -> int:
                 completed += row.get('complete', '').lower() == 'true'
         for path in old_files:
             path.unlink(missing_ok=True)
-        print(f'Downloaded {completed}/{total} calls ({percentage(completed, total):.1f}%) to {destination}', flush=True)
+        print(f'Downloaded {completed}/{total} solver-problem pairs ({percentage(completed, total):.1f}%) to {destination}', flush=True)
         if not args.follow or (total and completed == total):
             return 0
         time.sleep(max(15, args.interval))
@@ -694,7 +694,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Incrementally download a Slurmy job's results and write live summary metadata."
         ),
     )
-    parser.add_argument("--version", action="version", version=f"Slurmy sync {VERSION}")
+    parser.add_argument("--version", action="version", version=f"Slurmy download {VERSION}")
     parser.add_argument(
         "job_id",
         nargs="?",
@@ -714,10 +714,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--follow",
         action="store_true",
-        help="keep syncing until every planned task has a complete result",
+        help="keep downloading until every planned task has a complete result",
     )
     parser.add_argument('--verbose', action='store_true',
-                        help='download all raw per-call archives, Slurm logs, plans, and metadata')
+                        help='download all raw per-solver-problem pair archives, SLURM logs, plans, and metadata')
     parser.add_argument(
         "--interval",
         type=float,
@@ -744,10 +744,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return sync_loop(args) if args.verbose else compact_sync_loop(args)
     except KeyboardInterrupt:
-        print("\nSlurmy sync stopped; already downloaded files were kept.", file=sys.stderr)
+        print("\nSlurmy download stopped; already downloaded files were kept.", file=sys.stderr)
         return 130
     except (OSError, SyncError) as exc:
-        print(f"Slurmy sync: {exc}", file=sys.stderr)
+        print(f"Slurmy download: {exc}", file=sys.stderr)
         return 1
 
 

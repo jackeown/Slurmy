@@ -101,8 +101,8 @@ def specification(data, destination_override=None, progress=None):
     host, partition = alias(data.get('host')), alias(data.get('partition'))
     reservation = alias(data['reservation'].strip()) if data.get('reservation', '').strip() else ''
     data['reservation'] = reservation
-    batch_size = positive(str(data.get('batch_size') or 1), 'solver-problem pairs per Slurm task')
-    max_outstanding = positive(str(data.get('max_outstanding', 32)), 'maximum outstanding Slurm tasks')
+    batch_size = positive(str(data.get('batch_size') or 1), 'solver-problem pairs per SLURM task')
+    max_outstanding = positive(str(data.get('max_outstanding', 32)), 'maximum outstanding SLURM tasks')
     pair_order = data.get('pair_order') or 'solver-major'
     if pair_order not in PAIR_ORDERS:
         raise ValueError('Choose Problem Major, Solver Major, or random solver-problem pair order.')
@@ -248,7 +248,7 @@ def specification(data, destination_override=None, progress=None):
             (staging / filename).write_text(body, encoding='utf-8')
         (staging / 'building.txt').write_text(building_text(staging))
         if progress:
-            progress('phase', 'Checking calls and generating submission scripts', 0, 0)
+            progress('phase', 'Checking solver-problem pairs and generating submission scripts', 0, 0)
         generate(staging / 'jobpairs.csv', staging / 'building.txt', staging / 'resource_limiter_template.txt',
                  staging / 'axiom-globs.txt' if axiom_patterns else None, batch_size, progress=progress,
                  max_outstanding=max_outstanding)

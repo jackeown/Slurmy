@@ -152,13 +152,13 @@ def submission_phase(log):
         if line.startswith(('Build progress: ', 'Packaging progress: ', 'Submission phase: ', 'Submission waiting: ',
                             'Submission progress: ', 'Submission complete: ')):
             phase = line
-        elif match := re.fullmatch(r'Batch \d+: Slurm \d+ \((\d+/\d+) accepted\)', line):
+        elif match := re.fullmatch(r'Batch \d+: SLURM \d+ \((\d+/\d+) accepted\)', line):
             phase = f'Submitting batches: {match.group(1)} accepted'
     return phase
 
 
 def unfinished_call(job, task_id, progress):
-    """Explain a missing result using this call's actual Slurm batch."""
+    """Explain a missing result using this solver-problem pair's actual SLURM batch."""
     if job.submission_state == 'stopped':
         return 'stopped', 'After resume', 'This job was stopped. Resume it to run this unfinished call.', ''
     batch_id = job.task_batches.get(task_id)
@@ -175,34 +175,34 @@ def unfinished_call(job, task_id, progress):
     if record:
         log = job.logs.get(f'slurm_{record.array_job_id}_{record.array_task_id}.out', '')
     excerpt = next((line.strip() for line in reversed(log.splitlines()) if line.strip()), '')[:240]
-    suffix = f' Last Slurm log line: {excerpt}' if excerpt else ''
+    suffix = f' Last SLURM log line: {excerpt}' if excerpt else ''
     if record and record.source == 'queue':
         code = record.state.upper().split()[0]
         if code in {'RUNNING', 'COMPLETING'}:
             if progress and progress.state == 'running':
-                return 'running', 'Running', f'Call started in Slurm batch {batch_id}; no result saved yet.', log
-            return 'batch starting', 'Yes', f'Slurm batch {batch_id} is {code.lower()}, but this call has not recorded a start yet.{suffix}', log
-        return 'queued', 'Yes', f'Slurm batch {batch_id} is {code.lower()}: {record.location}.{suffix}', log
+                return 'running', 'Running', f'Solver-problem pair started in SLURM batch {batch_id}; no result saved yet.', log
+            return 'batch starting', 'Yes', f'SLURM batch {batch_id} is {code.lower()}, but this solver-problem pair has not recorded a start yet.{suffix}', log
+        return 'queued', 'Yes', f'SLURM batch {batch_id} is {code.lower()}: {record.location}.{suffix}', log
     if record:
         code = record.state.upper().split()[0].rstrip('+')
         label = {'COMPLETED': 'result missing', 'TIMEOUT': 'batch timed out',
                  'OUT_OF_MEMORY': 'batch out of memory', 'NODE_FAIL': 'node failed',
                  'CANCELLED': 'batch cancelled', 'FAILED': 'batch failed',
                  'PREEMPTED': 'batch preempted'}.get(code, 'batch ' + code.lower())
-        reason = (f'Slurm batch {batch_id} ended as {code}, but this call has no saved result.'
+        reason = (f'SLURM batch {batch_id} ended as {code}, but this solver-problem pair has no saved result.'
                   f'{suffix} See its batch log for details.')
         return label, 'No', reason, log
     if progress and progress.state != 'running':
-        return 'result missing', 'No', f'Call recorded {progress.state}, but no result was saved. Slurm no longer reports batch {batch_id}.', log
+        return 'result missing', 'No', f'Solver-problem pair recorded {progress.state}, but no result was saved. SLURM no longer reports batch {batch_id}.', log
     if batch_id not in job.submitted_batches and job.submitted_batches:
         if job.submission_state == 'submitting':
-            return 'awaiting submission', 'Yes', f'Batch {batch_id} is waiting for a free Slurm submission slot.', log
-        return 'not submitted', 'No', f'Batch {batch_id} was planned but has no Slurm submission. Submission may have stopped partway through.', log
+            return 'awaiting submission', 'Yes', f'Batch {batch_id} is waiting for a free SLURM submission slot.', log
+        return 'not submitted', 'No', f'Batch {batch_id} was planned but has no SLURM submission. Submission may have stopped partway through.', log
     if not job.submission_offsets and not job.slurm:
         recent = time.time() - job.created_epoch < 180
-        return ('preparing submission', 'Unknown', 'No Slurm submission recorded yet; preparation may still be underway.', log) if recent else (
-            'not submitted', 'No', 'No Slurm submission was recorded for this job.', log)
-    return 'scheduler status unknown', 'Unknown', f'No current or historical Slurm record is available for batch {batch_id}; cannot tell whether it will run.', log
+        return ('preparing submission', 'Unknown', 'No SLURM submission recorded yet; preparation may still be underway.', log) if recent else (
+            'not submitted', 'No', 'No SLURM submission was recorded for this job.', log)
+    return 'scheduler status unknown', 'Unknown', f'No current or historical SLURM record is available for batch {batch_id}; cannot tell whether it will run.', log
 
 
 def task_rows(job):
@@ -257,7 +257,7 @@ CALL_SORT_FIELDS = {'id', 'solver', 'problem', 'state', 'will_run', 'node', 'rea
 
 def sorted_call_rows(rows, field, direction):
     if field not in CALL_SORT_FIELDS or direction not in {'asc', 'desc'}:
-        abort(400, 'Invalid call sort order.')
+        abort(400, 'Invalid solver-problem pair sort order.')
     # Keep absent measurements last in either direction, and IDs stable for ties.
     present = [row for row in rows if row[field] is not None and row[field] != '']
     missing = [row for row in rows if row[field] is None or row[field] == '']
@@ -554,7 +554,7 @@ def create_app():
         name = display_name((request.get_json() or {}).get('name', ''))
         job = job_snapshot(job_id)
         if job.active_records or job.submission_state == 'submitting':
-            abort(409, 'Wait until every Slurm allocation for this job has finished before renaming its directory.')
+            abort(409, 'Wait until every SLURM allocation for this job has finished before renaming its directory.')
         with guard:
             if any(op['state'] == 'running' and
                    (op['scope'] == host() + ':' + job_id or op.get('job_id') == job_id)
@@ -604,7 +604,7 @@ def create_app():
                     temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
                     temporary.replace(path)
         except (OSError, ValueError, TypeError) as exc:
-            warning = f'Cluster job renamed, but local synced results need attention: {exc}'
+            warning = f'Cluster job renamed, but local downloaded results need attention: {exc}'
         with guard:
             announced = announced_jobs.pop((host(), job_id), None)
             if announced:
@@ -618,7 +618,7 @@ def create_app():
         job = job_snapshot(job_id)
         result = job.results.get(task_id)
         if not result or not result.archive:
-            abort(404, 'Output is available after this call saves its result archive.')
+            abort(404, 'Output is available after this solver-problem pair saves its result archive.')
         value = app.config.get('COLLECTOR', RemoteCollector)(host(), 10).fetch_task_output(job_id, result)
         payload = asdict(value)
         command = job.tasks.get(task_id).limiter_command if task_id in job.tasks else ''
@@ -648,7 +648,7 @@ def create_app():
         job = job_snapshot(job_id, force=request.args.get('fresh') == '1')
         definition = job.tasks.get(task_id)
         if not definition:
-            abort(404, 'Call not found in this job.')
+            abort(404, 'Solver-problem pair not found in this job.')
         path = definition.problem
         rows = [row for row in task_rows(job) if row['problem'] == path]
         page_number, per_page, sort, direction = call_page_args('wall')
@@ -918,7 +918,8 @@ def create_app():
                     return jsonify(stopping), 202
                 active = [op for op in active if op['label'] not in {'sync', 'sync_verbose', 'resume'}]
             if active:
-                abort(409, f"Wait for the active {active[0]['label']} operation to finish.")
+                active_label = {'sync': 'download', 'sync_verbose': 'verbose download'}.get(active[0]['label'], active[0]['label'])
+                abort(409, f"Wait for the active {active_label} operation to finish.")
             key = secrets.token_hex(12)
             STATE.mkdir(exist_ok=True)
             log = STATE / (key + '.log')
@@ -926,7 +927,7 @@ def create_app():
                                    code=None, started=time.time(), operation_cwd=str(cwd),
                                    operation_host=environment.get('SLURMY_HOST', 'datalab'),
                                    requested_name=requested_name)
-            show_dispatching = label in {'prepare and dispatch Slurm job', 'dispatch prepared Slurm job'}
+            show_dispatching = label in {'prepare and dispatch SLURM job', 'dispatch prepared SLURM job'}
         if show_dispatching:
             announce_dispatching(operations[key], cwd, environment)
         def run():
@@ -960,9 +961,9 @@ def create_app():
                        'PATH': str(Path(sys.executable).parent) + os.pathsep + os.environ.get('PATH', '')}
         # Makefiles are trusted user workflows; only this explicit click executes them.
         target = 'prepare' if action == 'all' else action
-        label = {'prepare': 'prepare Slurm submission',
-                 'prepare-submit': 'prepare and dispatch Slurm job',
-                 'submit': 'dispatch prepared Slurm job'}[target]
+        label = {'prepare': 'prepare SLURM submission',
+                 'prepare-submit': 'prepare and dispatch SLURM job',
+                 'submit': 'dispatch prepared SLURM job'}[target]
         requested_name = display_name(data['name']) if target != 'prepare' and data.get('name', '').strip() else None
         if requested_name and target == 'submit' and (path / 'submit.sh').is_file() and \
                 'JOB_NAME_B64' not in (path / 'submit.sh').read_text(encoding='utf-8'):
@@ -988,7 +989,7 @@ def create_app():
             slurm_id = str(data.get('slurm_id', ''))
             valid = {r.array_job_id for r in job.active_records}
             if slurm_id not in valid or not slurm_id.isdigit():
-                raise ValueError('Choose an active Slurm ID from this job.')
+                raise ValueError('Choose an active SLURM ID from this job.')
             argv = [sys.executable, str(REPO/'implementation/slurmy-cancel.py'), slurm_id, '--host', host()]
         else:
             raise ValueError('Unknown job action.')
@@ -1001,7 +1002,7 @@ def create_app():
         if job.percent < 100 and job.submission_state != 'stopped':
             abort(409, 'Stop this unfinished job and wait for Stop to complete before deleting it.')
         if job.active_records:
-            abort(409, 'This job still has active Slurm allocations. Cancel them and wait for completion before deleting it.')
+            abort(409, 'This job still has active SLURM allocations. Cancel them and wait for completion before deleting it.')
         with guard:
             if any(op['scope'] == host() + ':' + job_id and op['state'] == 'running' for op in operations.values()):
                 abort(409, 'Wait for the active job operation to finish before deleting it.')
@@ -1014,9 +1015,9 @@ job="$HOME/slurmy/jobs/$1"
 [[ -d "$job" && ! -L "$job" ]] || { echo 'Job directory not found or is a symlink.' >&2; exit 2; }
 exec 9> "$job/.submit-controller.lock"
 flock -n 9 || { echo 'The submission controller is still active.' >&2; exit 3; }
-snapshot=$(squeue -h -r -u "$USER" -o '%Z') || { echo 'Cannot confirm Slurm queue state; deletion refused.' >&2; exit 3; }
+snapshot=$(squeue -h -r -u "$USER" -o '%Z') || { echo 'Cannot confirm SLURM queue state; deletion refused.' >&2; exit 3; }
 if grep -Fxq -- "$job" <<< "$snapshot"; then
-    echo 'Slurm still has an active allocation for this job.' >&2
+    echo 'SLURM still has an active allocation for this job.' >&2
     exit 3
 fi
 rm -r -- "$job"
@@ -1090,7 +1091,10 @@ rm -r -- "$job"
             if operation.get('job_id') != match.group(1):
                 announce_operation_job(operation, match.group(1), Path(operation['operation_cwd']),
                                        {'SLURMY_HOST': operation['operation_host']})
-        return jsonify(**operations[key], log=content, phase=submission_phase(content))
+        op = operations[key]
+        phase = ({'sync': 'Download results', 'sync_verbose': 'Download complete/verbose results'}.get(op['label'])
+                 or submission_phase(content))
+        return jsonify(**op, log=content, phase=phase)
 
     @app.get('/api/workflow/active-operation')
     def active_workflow_operation():
@@ -1109,7 +1113,7 @@ rm -r -- "$job"
             abort(409, 'This server is managed externally.')
         with guard:
             if any(op['state'] == 'running' for op in operations.values()):
-                abort(409, 'Wait for active build/submit/sync operations before stopping the app.')
+                abort(409, 'Wait for active build/submit/download operations before stopping the app.')
             app.config['SHUTTING_DOWN'] = True
         threading.Timer(0.3, callback).start()
         return jsonify(stopped=True)

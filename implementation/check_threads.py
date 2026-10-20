@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check requested hardware threads against a Slurm partition before preparing."""
+"""Check requested hardware threads against a SLURM partition before preparing."""
 from __future__ import annotations
 
 import argparse
@@ -12,7 +12,7 @@ import sys
 
 def check_requested(host: str, partition: str, maximum: int) -> int:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", partition):
-        raise ValueError("Invalid Slurm partition name.")
+        raise ValueError("Invalid SLURM partition name.")
     try:
         process = subprocess.run(
             ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", host,
@@ -38,9 +38,9 @@ def check_requested(host: str, partition: str, maximum: int) -> int:
 
 
 def check_cores(host: str, partition: str, requested: int) -> int:
-    """Reject a call that cannot fit on any node in the selected partition."""
+    """Reject a solver-problem pair that cannot fit on any node in the selected partition."""
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", partition):
-        raise ValueError("Invalid Slurm partition name.")
+        raise ValueError("Invalid SLURM partition name.")
     try:
         process = subprocess.run(
             ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", host,
@@ -93,5 +93,5 @@ if __name__ == "__main__":
     try:
         check(arguments.host, arguments.partition, arguments.jobpairs)
     except (OSError, subprocess.TimeoutExpired, ValueError) as error:
-        print(f"Slurm topology preflight: {error}", file=sys.stderr)
+        print(f"SLURM topology preflight: {error}", file=sys.stderr)
         sys.exit(1)

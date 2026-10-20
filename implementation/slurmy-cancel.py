@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Select and cancel an active Slurm job over SSH."""
+"""Select and cancel an active SLURM job over SSH."""
 
 from __future__ import annotations
 
@@ -108,10 +108,10 @@ def active_jobs(host: str, timeout: float) -> list[ActiveJob]:
 
 def choose_job(jobs: Sequence[ActiveJob], host: str) -> str | None:
     if not jobs:
-        print(f"No active Slurm jobs were found on {host}.")
+        print(f"No active SLURM jobs were found on {host}.")
         return None
 
-    print(f"Active Slurm jobs on {host}:\n")
+    print(f"Active SLURM jobs on {host}:\n")
     for index, job in enumerate(jobs, start=1):
         state = ", ".join(sorted(job.states))
         elements = f" · {job.elements} array elements" if job.elements > 1 else ""
@@ -137,21 +137,21 @@ def choose_job(jobs: Sequence[ActiveJob], host: str) -> str | None:
 def cancel_job(host: str, job_id: str, timeout: float) -> None:
     if not SLURM_ID_RE.fullmatch(job_id):
         raise CancelError(
-            "invalid Slurm job ID; use a base ID such as 12345 or an element such as 12345_7"
+            "invalid SLURM job ID; use a base ID such as 12345 or an element such as 12345_7"
         )
     run_remote(host, REMOTE_CANCEL, job_id, timeout=timeout)
-    print(f"Cancellation requested for Slurm job {job_id} on {host}.")
+    print(f"Cancellation requested for SLURM job {job_id} on {host}.")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="slurmy-cancel.py",
-        description="Select an active Slurm job or cancel a specified job over SSH.",
+        description="Select an active SLURM job or cancel a specified job over SSH.",
     )
     parser.add_argument(
         "job_id",
         nargs="?",
-        help="Slurm job ID to cancel immediately; omit to choose from active jobs",
+        help="SLURM job ID to cancel immediately; omit to choose from active jobs",
     )
     parser.add_argument(
         "--host",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Coordinate one user's Slurmy submissions on a shared Slurm login filesystem.
+"""Coordinate one user's Slurmy submissions on a shared SLURM login filesystem.
 
 This runs on the cluster head node. The lock covers the queue snapshot and
 sbatch itself, so simultaneous Slurmy submitters cannot both claim one slot.
@@ -159,7 +159,7 @@ def main() -> int:
         try:
             submitted = command(["sbatch", *sbatch_args], timeout=60)
         except (OSError, subprocess.TimeoutExpired) as exc:
-            print(f"ERROR|Could not confirm sbatch acceptance: {exc}. Inspect Slurm before retrying.")
+            print(f"ERROR|Could not confirm sbatch acceptance: {exc}. Inspect SLURM before retrying.")
             return 2
         message = (submitted.stdout + "\n" + submitted.stderr).strip().replace("\n", " ")
         if submitted.returncode == 0:
@@ -174,13 +174,13 @@ def main() -> int:
             return 0
         if any(token.casefold() in message.casefold() for token in LIMIT_ERRORS):
             if total == 0:
-                print(f"ERROR|Slurm rejected submission with no queued jobs: {message}")
+                print(f"ERROR|SLURM rejected submission with no queued jobs: {message}")
                 return 2
             prior = capacity_record.get("observed")
             capacity_record.update(observed=min(total, prior) if isinstance(prior, int) and prior > 0 else total,
                                    observed_at=now)
             save_json(capacity_file, capacity_record)
-            print(f"WAIT|Slurm rejected submission at {total} user jobs; "
+            print(f"WAIT|SLURM rejected submission at {total} user jobs; "
                   f"observed ceiling {capacity_record['observed']} (expires in five minutes): {message}")
             return 0
         print(f"ERROR|sbatch rejected submission: {message}")

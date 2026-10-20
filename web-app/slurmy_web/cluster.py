@@ -1,4 +1,4 @@
-"""Small, read-only Slurm overview for the selected SSH host and partition."""
+"""Small, read-only SLURM overview for the selected SSH host and partition."""
 
 import re
 import json
@@ -69,7 +69,7 @@ printf '%s\n' "$jobs" | while IFS='|' read -r slurm_id user name state nodes cpu
 done
 printf 'METADATA\n'
 # Only metadata from the connected account's own, direct Slurmy job folders is
-# readable. Slurm exposes other users' queue entries, not their private files.
+# readable. SLURM exposes other users' queue entries, not their private files.
 printf '%s\n' "$jobs" | awk -F'|' 'NF >= 12 {print $11}' | sort -u | while IFS= read -r directory; do
     case "$directory" in "$HOME"/slurmy/jobs/*) ;; *) continue ;; esac
     name=${directory##*/}
@@ -94,7 +94,7 @@ def parse_status(host, partition, output):
         elif section and line:
             sections[section].append(line)
     if section != 'METADATA':
-        raise RuntimeError('Incomplete Slurm status response.')
+        raise RuntimeError('Incomplete SLURM status response.')
     metadata = {}
     active_calls = {}
     for line in sections['CALLS']:
@@ -113,7 +113,7 @@ def parse_status(host, partition, output):
         name, _, value = line.partition('|')
         if value.isdigit() and int(value) > 0:
             topology[name] = int(value)
-    # Slurm's CPU_IDs use abstract topology order, with sibling CPUs adjacent.
+    # SLURM's CPU_IDs use abstract topology order, with sibling CPUs adjacent.
     # Count distinct physical cores, not NumCPUs or the call's requested cores:
     # socket-exclusive jobs may reserve more cores than the solver uses.
     allocations = {}
@@ -192,7 +192,7 @@ def parse_status(host, partition, output):
         public = re.fullmatch(r'slurmy:v1:calls=(\d+):batches=(\d+):batch=(\d+)', comment)
         if public and slurmy:
             entry.update(jobpairs=int(public.group(1)), batches=int(public.group(2)),
-                         batch_index=int(public.group(3)), metadata_source='Slurm comment')
+                         batch_index=int(public.group(3)), metadata_source='SLURM comment')
         if slurmy and directory in metadata:
             entry.update(metadata[directory])
             entry['metadata_source'] = 'private job files'
@@ -221,9 +221,9 @@ def parse_status(host, partition, output):
 
 def fetch_status(host, partition, timeout=12, node=None):
     if not PARTITION_RE.fullmatch(partition):
-        raise ValueError('Invalid Slurm partition name.')
+        raise ValueError('Invalid SLURM partition name.')
     if node is not None and not PARTITION_RE.fullmatch(node):
-        raise ValueError('Invalid Slurm node name.')
+        raise ValueError('Invalid SLURM node name.')
     if shutil.which('ssh') is None:
         raise RuntimeError('ssh is not installed or not on PATH')
     command = ['ssh', '-T', '-o', 'BatchMode=yes', '-o', f'ConnectTimeout={timeout}',

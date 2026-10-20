@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Prepare an explicit table of solver-problem pairs for Slurm; Python runs locally only."""
+"""Prepare an explicit table of solver-problem pairs for SLURM; Python runs locally only."""
 from __future__ import annotations
 
 import argparse
@@ -35,7 +35,7 @@ class SlurmyError(ValueError):
 
 
 def order_jobpairs(rows: list[dict], order: str) -> list[dict]:
-    """Order calls reproducibly without changing their contents."""
+    """Order solver-problem pairs reproducibly without changing their contents."""
     if order not in PAIR_ORDERS:
         raise SlurmyError(f"solver-problem pair order must be one of: {', '.join(PAIR_ORDERS)}")
     result = list(rows)
@@ -123,7 +123,7 @@ def read_pairs(filename: Path) -> list[dict]:
             task["task_key"] = hashlib.sha256(json.dumps(task, sort_keys=True).encode()).hexdigest()[:16]
             tasks.append(task)
     if not tasks:
-        raise SlurmyError("jobpairs.csv contains no calls")
+        raise SlurmyError("jobpairs.csv contains no solver-problem pairs")
     return tasks
 
 
@@ -239,7 +239,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
              max_outstanding: int = 32) -> Path:
     tasks = read_pairs(jobpairs)
     positive(str(batch_size), 'batch size')
-    positive(str(max_outstanding), 'maximum outstanding Slurm tasks')
+    positive(str(max_outstanding), 'maximum outstanding SLURM tasks')
     builds = read_builds(building)
     axioms, axiom_destinations = read_axioms(axioms_file, progress)
     if progress:
@@ -277,12 +277,10 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             values[name] = '"${' + name.upper() + '}"'
         task["limiter_command"] = render(limiter, values)
     batches: list[list[dict]] = []
-    # Node-exclusive calls get their own batch. Other batches run sequentially.
+    # Pairs execute sequentially, so exclusivity does not split batches.
+    # Each allocation satisfies the strongest requirement in its batch.
     for task in tasks:
-        if task["exclusive_node"]:
-            batches.append([task])
-        elif (not batches or len(batches[-1]) >= batch_size or batches[-1][0]["exclusive_node"]
-              or batches[-1][0]["exclusive_cpu"] != task["exclusive_cpu"]):
+        if not batches or len(batches[-1]) >= batch_size:
             batches.append([task])
         else:
             batches[-1].append(task)
@@ -299,7 +297,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         metadata = {"slurmy_version": VERSION, "workflow_directory": str(jobpairs.parent), "task_count": len(tasks), "batch_count": len(batches),
                     "batch_size": batch_size, "result_columns": RESULT_COLUMNS,
                     "planned_batch_tasks": [[t["task_id"] for t in batch] for batch in batches],
-                    "batch_policy": "one call at a time per batch; node-exclusive calls get a batch of their own",
+                    "batch_policy": "one solver-problem pair at a time per batch; allocation satisfies all pairs including node/socket exclusivity",
                     "buffers": {"per_call_seconds": 30, "per_call_memory_mib": 128, "batch_seconds": 60}}
         (assets / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
         (assets / "manifest.jsonl").write_text("".join(json.dumps(t) + "\n" for t in tasks))
@@ -340,13 +338,13 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
                     "tptp_default_root": os.environ.get('SLURMY_TPTP_ROOT') or default_tptp}.items())
             (call / "config.sh").write_text(config)
             if progress and (index % 100 == 0 or index == len(tasks)):
-                progress('calls', 'Generating solver call scripts', index, len(tasks))
+                progress('calls', 'Generating solver-problem pair scripts', index, len(tasks))
         for i, batch in enumerate(batches):
             config = shell_array("TASK_IDS", [t["task_id"] for t in batch])
             for name, key in (("TASK_CORES", "cores"), ("TASK_CPUS", "cpus"), ("TASK_WALL", "wc_limit")):
                 config += shell_array(name, [t[key] for t in batch])
             config += shell_array("TASK_MEMORY", [math.ceil(t['mem_limit'] / 2**20) for t in batch])
-            config += f"BATCH_ID={i}\nEXCLUSIVE_CPU={int(batch[0]['exclusive_cpu'])}\nEXCLUSIVE_NODE={int(batch[0]['exclusive_node'])}\n"
+            config += f"BATCH_ID={i}\nEXCLUSIVE_CPU={int(any(t['exclusive_cpu'] for t in batch))}\nEXCLUSIVE_NODE={int(any(t['exclusive_node'] for t in batch))}\n"
             config += f"MEMORY_MIB={len(batch) * (max(math.ceil(t['mem_limit'] / 2**20) for t in batch) + 128)}\n"
             config += f"WALL_SECONDS={60 + sum(t['wc_limit'] + 30 for t in batch)}\n"
             config += shell_array("TASK_THREADS_PER_CORE", [t["threads_per_core"] for t in batch])
@@ -354,7 +352,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             config += f"MAX_THREADS_PER_CORE={max(t['threads_per_core'] for t in batch)}\n"
             (assets / "plans" / f"batch_{i:06d}.sh").write_text(config)
             if progress and ((i + 1) % 100 == 0 or i + 1 == len(batches)):
-                progress('batches', 'Generating Slurm batch plans', i + 1, len(batches))
+                progress('batches', 'Generating SLURM batch plans', i + 1, len(batches))
         if progress:
             progress('phase', 'Finalizing submission files', 0, 0)
         for name in ("submit.sh", "remote_prepare.sh", "remote_finish_upload.sh", "remote_submit.sh", "batch.sh", "call.sh", "timed_call.sh", "csv.sh", "workflow_name.sh"):
@@ -463,8 +461,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("building", type=Path)
     parser.add_argument("resource_limiter_template", type=Path)
     parser.add_argument('--axioms-file', type=Path, help='optional file with one TPTP axiom path or glob per line')
-    parser.add_argument("--batch-size", type=int, default=1, help="maximum solver-problem pairs owned by one Slurm array task; calls run sequentially (default: 1)")
-    parser.add_argument("--max-outstanding", type=int, default=32, help="maximum pending/running Slurm tasks from one job (default: 32)")
+    parser.add_argument("--batch-size", type=int, default=1, help="maximum solver-problem pairs owned by one SLURM array task; solver-problem pairs run sequentially (default: 1)")
+    parser.add_argument("--max-outstanding", type=int, default=32, help="maximum pending/running SLURM tasks from one job (default: 32)")
     args = parser.parse_args(argv)
     try:
         output = generate(args.jobpairs.resolve(), args.building.resolve(), args.resource_limiter_template.resolve(),

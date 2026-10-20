@@ -1,4 +1,4 @@
-"""Regression checks for job action coordination, without contacting Slurm."""
+"""Regression checks for job action coordination, without contacting SLURM."""
 import tempfile
 import unittest
 from pathlib import Path
@@ -90,7 +90,7 @@ class JobOperationTests(unittest.TestCase):
         self.action('unknown')  # Cache the unfinished job without starting work.
         self.job = SimpleNamespace(percent=20, submission_state='stopped', active_records=[], task_count=10)
         with patch.object(web.subprocess, 'run', return_value=SimpleNamespace(
-                returncode=1, stderr='Slurm still has an active allocation for this job.')) as run:
+                returncode=1, stderr='SLURM still has an active allocation for this job.')) as run:
             response = self.client.post('/api/jobs/test-job/delete', json={}, headers=self.headers)
         self.assertEqual(self.fetch.call_count, 2)
         self.assertEqual(response.status_code, 409)

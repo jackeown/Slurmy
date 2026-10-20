@@ -67,14 +67,14 @@ accepted. The [build guide](build/README.md) covers standalone builds.
 
 `resource_limiter_template.txt` is one shell invocation beginning with the
 limiter executable path inside a declared resource root. The default is
-runsolver. Its command should enforce the per-call limits and invoke
+runsolver. Its command should enforce the per-solver-problem pair limits and invoke
 `{{solver_command}}`. For runsolver, a useful template is:
 
 ```text
 /home/me/runsolver/runsolver --cpu-limit {{cpu_limit}} --wall-clock-limit {{wc_limit}} --rss-swap-limit {{mem_limit_mib}} --timestamp --watcher-data {{watcher_log}} --var {{var_file}} --solver-data {{solver_log}} {{solver_command}}
 ```
 
-The log placeholders designate per-call files: runsolver's watcher log,
+The log placeholders designate per-solver-problem pair files: runsolver's watcher log,
 measurement variables, and captured solver output. The runner does not add
 these flags behind your back. The template can also use solver placeholders.
 The job inspector shows the exact rendered invocation and distinguishes empty
@@ -98,16 +98,16 @@ bash ./submit.sh
 Direct `slurmy.py` preparation does not connect to the cluster and refuses to overwrite an
 existing `submit.sh` or `submit.sh.files/`. Submission builds resources on
 compute nodes, downloads their artifacts, packages local inputs, and submits
-Slurm tasks. Dispatch checks threads per core over SSH before any build or
+SLURM tasks. Dispatch checks threads per core over SSH before any build or
 upload. Workflow Makefiles also check during `make prepare`, and the web
 builder checks before previewing or saving. The generated `submit.sh.files/` directory holds readable remote
-prepare/submit scripts, batch and call runners, call definitions, build
+prepare/submit scripts, batch and solver-problem pair runners, solver-problem pair definitions, build
 drivers, and metadata. Use the workflow's `make prepare-submit` to handle
 regeneration when inputs change.
 
-Each batch contains up to `--batch-size` calls, run sequentially. Different
-batches can run concurrently across nodes. A node-exclusive call gets its own
-batch. The batch's Slurm wall-time budget includes all its calls; memory and
+Each batch contains up to `--batch-size` solver-problem pairs, run sequentially. Different
+batches can run concurrently across nodes. Whole-node and whole-socket requirements do not split batches: the entire
+batch receives an allocation satisfying all its solver-problem pairs. The batch's SLURM wall-time budget includes all its solver-problem pairs; memory and
 core reservations cover its largest call. Slurmy uses a rolling submission
 window (32 pending/running batches per job by default) so large jobs can fit
 cluster submission limits. Set `SLURMY_MAX_OUTSTANDING` in a workflow Makefile
@@ -119,7 +119,7 @@ recorded as a temporary observed ceiling (not treated as a permanent exact
 limit). Other users sharing an account or QoS may also affect that ceiling.
 
 Remote jobs live under `~/slurmy/jobs/JOB_ID/`; build jobs live under
-`~/slurmy/builds/`. Results publish per call, so completed calls can be synced
+`~/slurmy/builds/`. Results publish per solver-problem pair, so completed solver-problem pairs can be downloaded
 before the entire job finishes. A partially interrupted submission can be
 resumed using its prepared files; earlier accepted batches and saved results
 are retained. Remote job directories and build directories are private to
@@ -129,17 +129,17 @@ Uploads are unpacked in a private staging directory and published by an
 atomic rename only after completion. SSH failures during preparation/upload
 are reported without dispatching a batch. Once `sbatch` begins accepting
 batches, submission is checkpointed per batch rather than globally atomic:
-Slurm cannot roll back allocations already accepted before a connection loss.
+SLURM cannot roll back allocations already accepted before a connection loss.
 Inspect the reported job ID before attempting a retry.
 If the prepared submit script reports a connection loss during batch submission,
 `SLURMY_RESUME_JOB_ID=JOB_ID bash ./submit.sh` resumes its checkpointed batch
 list without rebuilding or re-uploading inputs.
 
-Each call's result CSV includes `szs_status` and `szs_output`; for example,
+Each solver-problem pair's result CSV includes `szs_status` and `szs_output`; for example,
 `SZS output end Proof` records `Proof` in `szs_output`. The `time` member of a
-call's original result archive measures the entire per-call limiter invocation,
+solver-problem pair's original result archive measures the entire per-solver-problem pair limiter invocation,
 including the solver. Runsolver's measurements of the solver tree replace that
-fallback when available. Default sync exports only `<job-name>_results-summary.csv`,
+fallback when available. Default download exports only `<job-name>_results-summary.csv`,
 `<job-name>_solver-stdout.tgz`, and `<job-name>_solver-stderr.tgz` into `job-results/JOB_ID/`.
 Each archive extracts into a same-named top-level directory and contains logs
 named `<solver>___<original-problem-filename>___<solver-problem-pair-id>.log` (or
@@ -168,10 +168,10 @@ when available; `SLURMY_TPTP_ROOT` can override it.
 | --- | --- |
 | `slurmy-pairs.py` | Expand configurations × all selected problem globs into an explicit `jobpairs.csv`; supports problem-major, solver-major, or reproducible random order. |
 | `slurmy-sync.py` | Download the three-file job export into `job-results/JOB_ID/`; `--verbose` downloads raw files, and `--follow` keeps updating. |
-| `slurmy-cancel.py` | Choose an active Slurm allocation to cancel, or provide its ID non-interactively. |
+| `slurmy-cancel.py` | Choose an active SLURM allocation to cancel, or provide its ID non-interactively. |
 | `slurmy-job.py` | Stop or resume an entire Slurmy job by ID (`stop` or `resume`); resume keeps completed calls. |
 | `check_threads.py` | Check requested threads per core against the selected partition before preparation or dispatch. |
-| `build/slurmy-build.py` | Run one build recipe as a Slurm job and download its artifacts; see the [build guide](build/README.md). |
+| `build/slurmy-build.py` | Run one build recipe as a SLURM job and download its artifacts; see the [build guide](build/README.md). |
 | `submit_coordinator.py` | Cluster-side helper that serializes `sbatch` attempts and fairly shares a user's available submission slots. It is packaged automatically; users do not run it directly. |
 | `templates/workflow.mk` | Shared targets for every workflow Makefile; see the [workflow guide](../workflows/README.md). |
 

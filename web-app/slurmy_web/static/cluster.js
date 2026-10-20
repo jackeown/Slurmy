@@ -97,13 +97,13 @@
     return values.some(value => String(value ?? '').toLowerCase().includes(filter));
   }
   function slurmyCell(job) {
-    const result = cell(job.jobpairs == null ? (job.slurmy ? 'Metadata unavailable' : '—') : `${job.jobpairs.toLocaleString()} calls / ${job.batches.toLocaleString()} batches`);
+    const result = cell(job.jobpairs == null ? (job.slurmy ? 'Metadata unavailable' : '—') : `${job.jobpairs.toLocaleString()} solver-problem pairs / ${job.batches.toLocaleString()} batches`);
     result.title = job.metadata_source || '';
     if (job.jobpairs != null && job.metadata_source === 'private job files') {
       result.replaceChildren();
       const a = document.createElement('a');
       a.href = `/jobs/${encodeURIComponent(job.slurmy_id)}?${new URLSearchParams({host})}`;
-      a.textContent = `${job.jobpairs.toLocaleString()} calls / ${job.batches.toLocaleString()} batches →`;
+      a.textContent = `${job.jobpairs.toLocaleString()} solver-problem pairs / ${job.batches.toLocaleString()} batches →`;
       result.append(a);
     }
     return result;
@@ -113,7 +113,7 @@
     const totals = status.summary;
     find('#cluster-free').textContent = `${totals.free_nodes} / ${totals.nodes}`;
     find('#cluster-utilization').textContent = `${totals.utilization}%`;
-    find('#cluster-utilization').title = `${totals.allocated_cores.toLocaleString()} of ${totals.total_cores.toLocaleString()} physical cores reserved`;
+    find('#cluster-utilization').title = `${totals.allocated_cores.toLocaleString()} of ${totals.total_cores.toLocaleString()} physical cores allocated`;
     find('#cluster-running').textContent = totals.running.toLocaleString();
     find('#cluster-pending').textContent = totals.pending.toLocaleString();
     find('#cluster-user-count').textContent = `· ${status.users.length}`;
@@ -151,13 +151,13 @@
         title.textContent = `${job.name} · ${job.id}`;
         if (title.tagName === 'A') title.href = `/jobs/${encodeURIComponent(job.slurmy_id)}?${new URLSearchParams({host})}`;
         const reserved = job.node_cores[node.name];
-        item.append(title, document.createTextNode(` — ${job.user}, ${reserved == null ? 'core reservation unavailable' : `${reserved} physical cores reserved`}`));
+        item.append(title, document.createTextNode(` — ${job.user}, ${reserved == null ? 'core allocation unavailable' : `${reserved} physical cores allocated`}`));
         if (job.active_call) {
           const call = document.createElement('div');
           call.className = 'cluster-active-call';
           const detail = document.createElement('a');
           detail.href = `/jobs/${encodeURIComponent(job.slurmy_id)}?${new URLSearchParams({host, call: job.active_call.id})}`;
-          detail.textContent = `${job.active_call.solver} — ${job.active_call.problem.split('/').pop()} · call ${job.active_call.id}`;
+          detail.textContent = `${job.active_call.solver} — ${job.active_call.problem.split('/').pop()} · solver-problem pair ${job.active_call.id}`;
           detail.title = job.active_call.problem;
           call.append(detail);
           item.append(call);
@@ -198,7 +198,7 @@
       jobs.append(row([job.id, name, job.user, state, job.nodelist || job.reason || job.nodes,
                         job.reserved_cores, `${job.elapsed} / ${job.limit}`, slurmyCell(job)]));
     }
-    if (!jobs.children.length) empty(jobs, 8, 'No matching active Slurm tasks.');
+    if (!jobs.children.length) empty(jobs, 8, 'No matching active SLURM tasks.');
   }
 
   async function refresh(fresh = false) {

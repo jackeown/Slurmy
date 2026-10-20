@@ -14,9 +14,9 @@ target_dir="$base/$new_id"
 if [[ "$source_dir" != "$target_dir" && ( -e "$target_dir" || -L "$target_dir" ) ]]; then
     echo "Destination job ID already exists: $new_id" >&2; exit 3
 fi
-queue=$(squeue -h -u "$USER" -o '%Z') || { echo 'Could not verify Slurm queue state.' >&2; exit 4; }
+queue=$(squeue -h -u "$USER" -o '%Z') || { echo 'Could not verify SLURM queue state.' >&2; exit 4; }
 if grep -Fxq -- "$source_dir" <<< "$queue"; then
-    echo 'This job still has a queued or running Slurm allocation. Rename it after the job finishes.' >&2
+    echo 'This job still has a queued or running SLURM allocation. Rename it after the job finishes.' >&2
     exit 4
 fi
 if [[ "$source_dir" != "$target_dir" ]]; then mv -- "$source_dir" "$target_dir"; fi

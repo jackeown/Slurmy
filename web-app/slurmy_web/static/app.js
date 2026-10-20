@@ -36,19 +36,19 @@ function renderOutcomes(outcomes){
  const items=(outcomes||[]).filter(item=>Number.isFinite(item.count)&&item.count>0);
  const total=items.reduce((sum,item)=>sum+item.count,0);
  chart.replaceChildren();breakdown.replaceChildren();chart.classList.toggle('is-empty',total===0);
- if(!total){chart.style.background='';chart.setAttribute('aria-label','No call outcomes yet');breakdown.append(el('p','No call outcomes yet.','muted'));window.outcomeCubeData=[];window.renderOutcomeCube?.([]);return;}
+ if(!total){chart.style.background='';chart.setAttribute('aria-label','No solver-problem pair outcomes yet');breakdown.append(el('p','No solver-problem pair outcomes yet.','muted'));window.outcomeCubeData=[];window.renderOutcomeCube?.([]);return;}
  let start=0,other=0;const segments=[];const labels=[];
  for(const item of items){
   const color=outcomeColors[item.label.toLowerCase()]||otherOutcomeColors[other++%otherOutcomeColors.length];
   item.color=color;
   const end=start+item.count/total*100;segments.push(`${color} ${start}% ${end}%`);start=end;
-  const percent=item.count/total*100;const row=el('button',undefined,'outcome-row outcome-row-button');row.type='button';row.setAttribute('aria-label',`Toggle calls with ${item.label}${item.source?` (${item.source})`:''}`);const active=outcomeSelected(item);row.setAttribute('aria-pressed',String(active));row.classList.toggle('selected',active);row.addEventListener('click',()=>chooseOutcome(item));
+  const percent=item.count/total*100;const row=el('button',undefined,'outcome-row outcome-row-button');row.type='button';row.setAttribute('aria-label',`Toggle solver-problem pairs with ${item.label}${item.source?` (${item.source})`:''}`);const active=outcomeSelected(item);row.setAttribute('aria-pressed',String(active));row.classList.toggle('selected',active);row.addEventListener('click',()=>chooseOutcome(item));
   const name=el('span',undefined,'outcome-name');const swatch=el('span',undefined,'outcome-swatch');swatch.style.backgroundColor=color;swatch.setAttribute('aria-hidden','true');name.append(swatch,el('span',item.label));if(item.source)name.append(el('small',`(${item.source})`,'outcome-source'));
   row.append(name,el('span',item.count.toLocaleString(),'outcome-count'),el('strong',`${percent.toFixed(1)}%`,'outcome-percent'));breakdown.append(row);
   labels.push(`${item.label}${item.source?` (${item.source})`:''}: ${item.count} (${percent.toFixed(1)}%)`);
  }
  chart.style.background=`conic-gradient(${segments.join(',')})`;
- chart.setAttribute('aria-label',`Call outcomes for ${total} calls. ${labels.join('; ')}`);
+ chart.setAttribute('aria-label',`Solver-problem pair outcomes for ${total} solver-problem pairs. ${labels.join('; ')}`);
  chart.title=labels.join('\n');
  window.outcomeCubeData=items;window.renderOutcomeCube?.(items);
  updateOutcomeFilter();
@@ -186,15 +186,15 @@ async function deleteJob(id, control, redirect=false){
  try{
   const options=await api(`/api/jobs/${encodeURIComponent(id)}/delete-options?`+params({}));
   if(options.synced&&Number(options.percent_complete)<100){
-   if(confirm(`The last download of “${id}” was ${options.percent_complete==null?'not verified':`${Number(options.percent_complete).toFixed(1)}% complete`}. Sync the latest results before deleting the cluster job?`)){
-    control.textContent='Syncing…';
+   if(confirm(`The last download of “${id}” was ${options.percent_complete==null?'not verified':`${Number(options.percent_complete).toFixed(1)}% complete`}. Download the latest results before deleting the cluster job?`)){
+    control.textContent='Downloading…';
     const op=await api(`/api/jobs/${encodeURIComponent(id)}/action?`+params({}),{action:'sync'});
     let state=op;
     while(state.state==='running'){
      await new Promise(resolve=>setTimeout(resolve,1500));
      state=await api(`/api/operations/${encodeURIComponent(op.id)}`);
     }
-    if(state.state!=='done')throw new Error(`Sync failed; job was not deleted. ${state.log||''}`);
+    if(state.state!=='done')throw new Error(`Download failed; job was not deleted. ${state.log||''}`);
    }
   }
   const deleteLocal=options.synced&&confirm(`Also delete downloaded results for “${id}” from this laptop?\n\nCancel keeps the local copy; the cluster job will still be deleted.`);
@@ -259,15 +259,15 @@ function renderJobs(){
 }
 async function fetchJobs(){const directory=document.body.dataset.directory;const data=await api('/api/jobs?'+params(directory?{directory}:{}));jobs=data.jobs;renderJobs();text('#connection',`Connected to ${host} · refreshed ${new Date(data.updated*1000).toLocaleTimeString()} · refreshes every 10 seconds`);}
 async function openOutput(task){
- const panel=$('#call-output');panel.hidden=false;$('#stream').closest('label').hidden=false;text('#output-title',`Call ${task.id} · ${task.solver}`);highlightShell($('#command'),`Solver command: ${task.command}\nLimiter command: ${task.limiter_command||'Unavailable for this older job'}\nWorking directory: ${task.directory}`);$('#command').hidden=false;text('#output-info',task.problem);text('#output-text','Loading saved output…');selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
+ const panel=$('#call-output');panel.hidden=false;$('#stream').closest('label').hidden=false;text('#output-title',`Solver-problem pair ${task.id} · ${task.solver}`);highlightShell($('#command'),`Solver command: ${task.command}\nLimiter command: ${task.limiter_command||'Unavailable for this older job'}\nWorking directory: ${task.directory}`);$('#command').hidden=false;text('#output-info',task.problem);text('#output-text','Loading saved output…');selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
  try{const data=await api(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/output/${task.id}?`+params({}));selectedOutput=data;renderOutput();}catch(error){text('#output-text',error.message);}
 }
 function openDiagnostic(task){
  const panel=$('#call-output');panel.hidden=false;$('#stream').closest('label').hidden=true;
- text('#output-title',`Call ${task.id} · batch diagnostic`);
+ text('#output-title',`Solver-problem pair ${task.id} · batch diagnostic`);
  highlightShell($('#command'),`Solver command: ${task.command}\nLimiter command: ${task.limiter_command}\nWorking directory: ${task.directory}`);
  $('#command').hidden=false;text('#output-info',task.reason);
- text('#output-text',task.diagnostic||'No Slurm log is available for this batch yet.');
+ text('#output-text',task.diagnostic||'No SLURM log is available for this batch yet.');
  selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
 }
 function renderOutput(){if(!selectedOutput)return;const stream=selectedOutput.streams[$('#stream').value];text('#output-text',stream?.exists?(stream.content||'(Empty file)'):'(No file was saved)');text('#output-info',`${stream?.explanation||'Stream unavailable.'}${stream?.exists?` · ${memory(stream.size)}`:''}${stream?.truncated?' · Truncated: beginning and end shown':''}`);}
@@ -284,17 +284,17 @@ async function fetchJob(fresh=false){
  autoRefreshTotal=data.total;autoRefreshPercent=data.percent;
  const lastPage=Math.max(0,Math.ceil(data.matched/perPage)-1);if(taskPage>lastPage){taskPage=lastPage;syncTableUrl();scheduleRefresh();return;}
  syncTableUrl();
- const submission=data.submission_state==='submitting'?` · submitting batches ${data.submitted_batches}/${data.batch_count}`:data.submission_state==='failed'?' · batch submission stopped before all calls were queued':'';
+ const submission=data.submission_state==='submitting'?` · submitting batches ${data.submitted_batches}/${data.batch_count}`:data.submission_state==='failed'?' · batch submission stopped before all solver-problem pairs were queued':'';
  text('#job-display-name',data.name);document.title=`${data.name} · Slurmy`;
   jobActionControls();
  const refreshNote=data.percent>=100?' · auto-refresh off (100% complete)':data.total>10000?' · auto-refreshes every 30 seconds':' · auto-refreshes every 10 seconds';
- text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()}${submission}${refreshNote} · completion counts finished calls, not proof-search progress`);
+ text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()}${submission}${refreshNote} · completion counts finished solver-problem pairs, not proof-search progress`);
  text('#stat-state',data.state);text('#stat-done',`${data.completed} / ${data.total}`);text('#stat-percent',data.percent.toFixed(1)+'%');text('#stat-issues',data.issues);
  renderOutcomes(data.outcomes);
  const tasks=$('#tasks-body');tasks.replaceChildren();
  for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):task.diagnostic?button('Inspect log →',()=>openDiagnostic(task)):'—';const placement=task.node?link(`${task.node} · ${task.slurm_id}`,`/cluster?`+params({partition:'all',nodes:'job',job:jobId})):task.slurm_id?`Queued · ${task.slurm_id}`:'—';tasks.append(tableRow([String(task.id),task.solver||'—',problem,badge(task.state),task.will_run||'—',placement,task.reason||'—',duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
- if(!data.tasks.length)tasks.append(tableRow(['No matching calls.','','','','','','','','','','']));
- text('#page-label',`${data.matched} matching calls ·`);$('#task-page').value=taskPage+1;$('#task-page').max=lastPage+1;text('#task-page-count',lastPage+1);$('#previous').disabled=taskPage===0;$('#next').disabled=(taskPage+1)*perPage>=data.matched;
+ if(!data.tasks.length)tasks.append(tableRow(['No matching solver-problem pairs.','','','','','','','','','','']));
+ text('#page-label',`${data.matched} matching solver-problem pairs ·`);$('#task-page').value=taskPage+1;$('#task-page').max=lastPage+1;text('#task-page-count',lastPage+1);$('#previous').disabled=taskPage===0;$('#next').disabled=(taskPage+1)*perPage>=data.matched;
  const selected=new URLSearchParams(location.search).get('call');if(selected&&data.tasks.some(task=>String(task.id)===selected)){const url=new URL(location.href);url.searchParams.delete('call');history.replaceState(null,'',url);openOutput(data.tasks.find(task=>String(task.id)===selected));}
  const diagnostic=new URLSearchParams(location.search).get('diagnostic');if(diagnostic&&data.tasks.some(task=>String(task.id)===diagnostic)){const url=new URL(location.href);url.searchParams.delete('diagnostic');history.replaceState(null,'',url);openDiagnostic(data.tasks.find(task=>String(task.id)===diagnostic));}
 }
@@ -322,10 +322,10 @@ async function fetchProblem(fresh=false){
  const truncated=$('#problem-truncated');if(truncated)truncated.hidden=!data.truncated;
  const body=$('#problem-tasks-body');body.replaceChildren();
  for(const task of data.tasks){const inspect=task.output?link('Inspect →',`/jobs/${encodeURIComponent(jobId)}?`+params({call:task.id})):task.diagnostic?link('Inspect log →',`/jobs/${encodeURIComponent(jobId)}?`+params({diagnostic:task.id})):'—';body.append(tableRow([String(task.id),task.solver||'—',badge(task.state),task.will_run||'—',task.reason||'—',duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
- text('#problem-page-label',`${data.matched} calls ·`);$('#problem-page').value=problemPage+1;$('#problem-page').max=lastPage+1;text('#problem-page-count',lastPage+1);
+ text('#problem-page-label',`${data.matched} solver-problem pairs ·`);$('#problem-page').value=problemPage+1;$('#problem-page').max=lastPage+1;text('#problem-page-count',lastPage+1);
  $('#problem-previous').disabled=problemPage===0;$('#problem-next').disabled=(problemPage+1)*perPage>=data.matched;
  const refreshNote=data.percent>=100?'auto-refresh off (100% complete)':data.total>10000?'auto-refreshes every 30 seconds':'auto-refreshes every 10 seconds';
- text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()} · ${data.matched} calls on this problem · ${refreshNote}`);
+ text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()} · ${data.matched} solver-problem pairs on this problem · ${refreshNote}`);
 }
 async function refresh(fresh=false){
  if(refreshInFlight)return;
@@ -334,7 +334,7 @@ async function refresh(fresh=false){
  if(page==='job'||page==='problem')lastRefreshStarted=Date.now();
  refreshInFlight=true;beginRefresh();
  try{if(page==='jobs'||page==='workflow')await fetchJobs();else if(page==='job')await fetchJob(fresh);else if(page==='problem')await fetchProblem(fresh);hasLoadedRemote=true;finishRefresh();scheduleStaleWarning();}
- catch(error){remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check your SSH access or VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),11,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='problem')loadingRow($('#problem-tasks-body'),9,'Calls could not be loaded. Use Refresh to try again.',true);else if(page==='jobs'||page==='workflow')loadingRow($('#jobs-body'),6,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
+ catch(error){remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check your SSH access or VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),11,'Solver-problem pairs could not be loaded. Use Refresh to try again.',true);else if(page==='problem')loadingRow($('#problem-tasks-body'),9,'Solver-problem pairs could not be loaded. Use Refresh to try again.',true);else if(page==='jobs'||page==='workflow')loadingRow($('#jobs-body'),6,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
  finally{refreshInFlight=false;if(refreshPending){refreshPending=false;scheduleRefresh();}}
 }
 $('#refresh')?.addEventListener('click',()=>refresh(true));

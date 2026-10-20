@@ -120,7 +120,7 @@ for plan in plans/batch_*.sh; do
     (( capacity > 0 && MAX_CPUS <= SOCKETS && MAX_CORES <= MAX_CPUS * CORES_PER_SOCKET )) || {
         echo "A solver-problem pair in $plan cannot fit this partition's nodes." >&2; exit 1;
     }
-    # A Slurm task owns the full planned batch; only PARALLEL calls run at once.
+    # A SLURM task owns the full planned batch; only PARALLEL calls run at once.
     for ((first=0; first<${#TASK_IDS[@]}; first+=${#TASK_IDS[@]})); do
         count=${#TASK_IDS[@]}
         parallel=1
@@ -281,7 +281,7 @@ for batch in batches/batch_*.sh; do
     OUTSTANDING_IDS+=("$ID")
     if (( BATCH_ID >= submitted )); then submitted=$((submitted + 1)); fi
     printf 'submitting %s %s\n' "$submitted" "$next_batch" > submission.state
-    echo "Batch $BATCH_ID: Slurm $ID ($submitted/$next_batch accepted)"
+    echo "Batch $BATCH_ID: SLURM $ID ($submitted/$next_batch accepted)"
 done
 printf 'complete %s %s\n' "$submitted" "$next_batch" > submission.state
 echo "Submission complete: $submitted/$next_batch batches accepted"

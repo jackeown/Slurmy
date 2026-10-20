@@ -5,9 +5,9 @@ set -euo pipefail
 job="$HOME/slurmy/jobs/$1"
 [[ -d "$job" && ! -L "$job" && -f "$job/.stopped" ]] || { echo 'Stop the job before resuming it.' >&2; exit 2; }
 [[ -f "$job/submission_context.sh" && -f "$job/remote_submit.sh" ]] || { echo 'This job predates resumable submissions.' >&2; exit 2; }
-snapshot=$(squeue -h -r -u "$USER" -o '%Z') || { echo 'Cannot confirm Slurm queue state.' >&2; exit 1; }
+snapshot=$(squeue -h -r -u "$USER" -o '%Z') || { echo 'Cannot confirm SLURM queue state.' >&2; exit 1; }
 if grep -Fxq -- "$job" <<< "$snapshot"; then
-    echo 'Slurm still has active allocations for this job.' >&2; exit 1
+    echo 'SLURM still has active allocations for this job.' >&2; exit 1
 fi
 flock -n "$job/.submit-controller.lock" true || { echo 'The submission controller is still active.' >&2; exit 1; }
 cd "$job"

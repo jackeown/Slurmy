@@ -56,7 +56,7 @@ fi
 
 shopt -s nullglob
 # Progress is one small file per call. Forking `cat` for every file makes a
-# large job's refresh exceed the web request timeout even while Slurm advances.
+# large job's refresh exceed the web request timeout even while SLURM advances.
 emit_file() {
     local line
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -662,7 +662,7 @@ def as_float(value: Any) -> float | None:
 
 
 def inferred_solver_name(command: str) -> str:
-    """Give older calls without a recorded solver a readable fallback name."""
+    """Give older solver-problem pairs without a recorded solver a readable fallback name."""
     try:
         words = shlex.split(command)
     except ValueError:

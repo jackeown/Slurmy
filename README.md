@@ -59,7 +59,7 @@ In brief:
 2. Create a [dataLAB account](https://login.datalab.tuwien.ac.at/) with your TU Wien credentials and add your SSH public key there.
 Verify `ssh datalab` works. 
 4. Request cluster login permission through the dataLAB [Matrix channel](https://matrix.to/#/#gpu:tuwien.ac.at) or the
-[GPU Slurm Cluster Access request](https://jira.it.tuwien.ac.at/servicedesk/customer/portal/7/create/383).
+[GPU SLURM Cluster Access request](https://jira.it.tuwien.ac.at/servicedesk/customer/portal/7/create/383).
 The guide explains which affiliation confirmation to provide.
 5. Once access is approved, add an SSH alias on your computer, replacing the username with your dataLAB account name:
 
@@ -185,7 +185,7 @@ It defaults to the `CPU-amd` cluster; choose another cluster or all clusters fro
 the page.
 Select a node to see the tasks currently running on it.
 A running task's row shows its node and SLURM ID.
-For new Slurmy submissions, it also shows call WHAT?? and batch counts across users.
+For new Slurmy submissions, it also shows solver-problem pair WHAT?? and batch counts across users.
 Jobs whose private files you can read link to their job inspector WHAT??; older users' jobs
 might not expose counts.
 
@@ -197,19 +197,19 @@ might not expose counts.
 
 <blockquote>
 
-In **Job history**, follow progress and open a job to inspect call outcomes,
-solver comparisons, problems, output streams, and diagnostics. Select call
-outcomes to filter the calls table by multiple statuses; the 3D plot compares outcome
-counts across solvers. **Sync/Download** saves three files under
+In **Job history**, follow progress and open a job to inspect solver-problem pair outcomes,
+solver comparisons, problems, output streams, and diagnostics. Select solver-problem pair
+outcomes to filter the solver-problem pairs table by multiple statuses; the 3D plot compares outcome
+counts across solvers. **Download** saves three files under
 `job-results/JOB_ID/`: `<job-name>_results-summary.csv`,
 `<job-name>_solver-stdout.tgz`, and `<job-name>_solver-stderr.tgz`.
-Each archive extracts into its own directory, with one log per call named
+Each archive extracts into its own directory, with one log per solver-problem pair named
 `<solver>___<original-problem-filename>___<solver-problem-pair-id>.log` (or `.stderr.log`
 for stderr). Problem filenames, including their extensions and characters such
 as `+` and `^`, are preserved exactly. Unsafe filename characters in the job
 name are replaced with hyphens. The arrow menu offers
-**Complete/verbose sync/download**
-for raw per-call archives, Slurm logs, plans, and metadata under
+**Complete/verbose download**
+for raw per-solver-problem pair archives, SLURM logs, plans, and metadata under
 `job-results/verbose/JOB_ID/`.
 
 </blockquote>
@@ -229,7 +229,7 @@ for raw per-call archives, Slurm logs, plans, and metadata under
 - [`implementation/`](implementation/README.md) — job runner, submission templates,
   build tooling, and optional command-line utilities. Not really of interest
   to someone who wants to run jobs on the cluster, but interesting if you want
-  to see how the execution-with-Slurm magic happens.
+  to see how the execution-with-SLURM magic happens.
 
 </blockquote>
 </details>

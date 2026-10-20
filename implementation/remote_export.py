@@ -129,12 +129,12 @@ def export(root: Path) -> None:
                                 row[field] = 'true'
                     writer.writerow({field: row.get(field, '') for field in EXPORT_FIELDS})
                     if (task_id + 1) % 1000 == 0 or task_id + 1 == count:
-                        print(f'Exporting calls and logs: {task_id + 1}/{count}', flush=True)
+                        print(f'Exporting solver-problem pairs and logs: {task_id + 1}/{count}', flush=True)
             for name in names:
                 os.replace(staging / name, directory / name)
             (staging / '.signature').write_text(signature + '\n', encoding='ascii')
             os.replace(staging / '.signature', signature_file)
-        print(f'Export ready: {count} calls', flush=True)
+        print(f'Export ready: {count} solver-problem pairs', flush=True)
         print('EXPORT_FILES|' + '|'.join(names), flush=True)
 
 

@@ -42,7 +42,7 @@ placement_failure() {
         local array_id="${SLURM_ARRAY_JOB_ID:?}_${SLURM_ARRAY_TASK_ID:?}"
         echo "Batch $BATCH_ID: allocated cores cannot satisfy solver-problem pair $task_id (cores=$need sockets=$socket_limit exclusive_cpu=$EXCLUSIVE_CPU). No calls started; requeuing $array_id for another placement (retry $((${SLURM_RESTART_COUNT:-0} + 1))/5)." >&2
         if scontrol requeue "$array_id"; then exit 0; fi
-        echo "Batch $BATCH_ID: Slurm refused the requeue; no calls started." >&2
+        echo "Batch $BATCH_ID: SLURM refused the requeue; no calls started." >&2
     elif (( wave_start == 0 )); then
         echo "Batch $BATCH_ID: allocated cores still cannot satisfy solver-problem pair $task_id (cores=$need sockets=$socket_limit exclusive_cpu=$EXCLUSIVE_CPU) after placement retries. No calls started; adjust the call's socket/core request or batch concurrency." >&2
     else

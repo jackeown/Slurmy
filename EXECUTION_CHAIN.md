@@ -6,8 +6,8 @@ job → executing one solver-problem pair**.
 There are three execution locations:
 
 - **Your computer:** browser, local web server, workflow files, and submission tools.
-- **Cluster login/head node:** receives files and calls `sbatch`.
-- **Cluster compute nodes:** build resources and execute solver calls.
+- **Cluster login/head node:** receives files and solver-problem pairs `sbatch`.
+- **Cluster compute nodes:** build resources and execute solver-problem pairs.
 
 ## Full execution chain
 
@@ -25,7 +25,7 @@ YOUR COMPUTER
   │   • Default/shared TPTP axioms or custom axioms                            │
   │   • Per-call CPU, wall-time, memory, core and thread limits                │
   │   • Resource limiter, normally runsolver                                  │
-  │   • SSH host, Slurm partition, batch size, submission window               │
+  │   • SSH host, SLURM partition, batch size, submission window               │
   │                                                                          │
   │ UI: templates/new.html + static/builder.js                                │
   └──────────────────────────────────┬─────────────────────────────────────────┘
@@ -106,7 +106,7 @@ YOUR COMPUTER
   │   • Assign task IDs and batch IDs                                        │
   │   • Render commands and relocate packaged paths                          │
   │   • Group calls into sequential batches                                  │
-  │   • Give node-exclusive calls their own batches                          │
+  │   • Use the strongest socket/node exclusivity in each batch                          │
   │                                                                          │
   │ Generated locally:                                                      │
   │                                                                          │
@@ -172,14 +172,14 @@ CLUSTER LOGIN / HEAD NODE — BUILD PHASE
   │ Implemented in implementation/build/slurmy-build.py                       │
   └──────────────────────────────────┬─────────────────────────────────────────┘
                                      │
-                                     │ Slurm queues and allocates the build
+                                     │ SLURM queues and allocates the build
                                      ▼
 
 CLUSTER COMPUTE NODE — BUILD PHASE
 ══════════════════════════════════════════════════════════════════════════════════
 
   ┌────────────────────────────────────────────────────────────────────────────┐
-  │ 9. Slurm executes job.sh                                                 │
+  │ 9. SLURM executes job.sh                                                 │
   │                                                                          │
   │   • Extract source into the build working directory                       │
   │   • Run: bash "$SLURMY_BUILD_ROOT/recipe.sh"                              │
@@ -237,12 +237,12 @@ CLUSTER LOGIN / HEAD NODE — SOLVER-JOB SUBMISSION
                                      │ bash -s ... < remote_submit.sh
                                      ▼
   ┌────────────────────────────────────────────────────────────────────────────┐
-  │ 12. remote_submit.sh resolves the actual Slurm allocations                │
+  │ 12. remote_submit.sh resolves the actual SLURM allocations                │
   │                                                                          │
   │ Working directory: ~/slurmy/jobs/JOB_ID/                                 │
   │                                                                          │
   │   • Hold this job’s submission-controller lock                           │
-  │   • Validate Slurm core-allocation / cgroup configuration                 │
+  │   • Validate SLURM core-allocation / cgroup configuration                 │
   │   • Inspect the partition’s socket/core/thread topology                   │
   │   • Resolve automatic socket requirements                                │
   │   • Check every planned batch fits the nodes                             │
@@ -256,27 +256,27 @@ CLUSTER LOGIN / HEAD NODE — SOLVER-JOB SUBMISSION
                                      │
                                      │ python3 submit_coordinator.py \
                                      │   attempt JOB_ID MAX_OUTSTANDING \
-                                     │   -- [Slurm options] batch.sh
+                                     │   -- [SLURM options] batch.sh
                                      ▼
   ┌────────────────────────────────────────────────────────────────────────────┐
   │ 13. submit_coordinator.py controls submission capacity                    │
   │                                                                          │
   │   • Acquire ~/slurmy/submit.lock                                         │
-  │   • Inspect the user’s current Slurm queue                               │
+  │   • Inspect the user’s current SLURM queue                               │
   │   • Account for other active Slurmy submitters                            │
   │   • Respect the per-job outstanding window and known submission limits   │
   │                                                                          │
   │ No capacity? → return WAIT → remote_submit.sh sleeps and retries          │
   │                                                                          │
   │ Capacity available?                                                      │
-  │   → subprocess: sbatch [Slurm options] batch.sh                           │
-  │   → return ACCEPTED with the Slurm job ID                                │
+  │   → subprocess: sbatch [SLURM options] batch.sh                           │
+  │   → return ACCEPTED with the SLURM job ID                                │
   │                                                                          │
   │ remote_submit.sh checkpoints accepted batches in submission.csv.         │
   │ Submission continues as capacity becomes available.                      │
   └──────────────────────────────────┬─────────────────────────────────────────┘
                                      │
-                                     │ Slurm queues the batch
+                                     │ SLURM queues the batch
                                      │ and assigns an allocation
                                      ▼
 
@@ -284,7 +284,7 @@ CLUSTER COMPUTE NODE — EXECUTE A BATCH
 ══════════════════════════════════════════════════════════════════════════════════
 
   ┌────────────────────────────────────────────────────────────────────────────┐
-  │ 14. Slurm starts batch.sh                                                │
+  │ 14. SLURM starts batch.sh                                                │
   │                                                                          │
   │ JOB_DIR = SLURM_SUBMIT_DIR = ~/slurmy/jobs/JOB_ID                         │
   │ BATCH_ID = exported SLURMY_BATCH_ID                                      │
@@ -395,7 +395,7 @@ CLUSTER COMPUTE NODE — EXECUTE A BATCH
                                      ├── batch.sh advances to the next call
                                      │
                                      └── After the last call, batch.sh exits
-                                         Slurm records the allocation’s end
+                                         SLURM records the allocation’s end
 
 
 MONITORING BACK TO YOUR BROWSER
@@ -418,7 +418,7 @@ MONITORING BACK TO YOUR BROWSER
        │
        ▼
   Browser displays:
-    progress • call outcomes • timings • memory • node/Slurm ID • output
+    progress • call outcomes • timings • memory • node/SLURM ID • output
 ```
 
 The build phase is skipped for resources that have no build recipe; their
@@ -430,7 +430,7 @@ optional when a recipe obtains its own source.
 Stripped of preparation and monitoring, one solver-problem pair follows this chain:
 
 ```text
-Slurm starts batch.sh
+SLURM starts batch.sh
     │
     └── taskset -c CPU_MASK bash call.sh TASK_ID BATCH_ID
             │
@@ -469,7 +469,7 @@ commands, but Slurmy does not insert an `srun` step.
 | Remote allocation planning and submission loop | `implementation/templates/remote_submit.sh` |
 | Actual solver-batch `sbatch` invocation | `implementation/submit_coordinator.py` |
 | Compute-node batch execution | `implementation/templates/batch.sh` |
-| Per-call execution and result publication | `implementation/templates/call.sh` |
+| Per-solver-problem pair execution and result publication | `implementation/templates/call.sh` |
 | Timing wrapper | `implementation/templates/timed_call.sh` |
 | SSH monitoring and result parsing | `web-app/slurmy_web/monitor.py` |
 

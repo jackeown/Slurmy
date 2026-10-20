@@ -52,7 +52,7 @@ shared `/share/TPTP/TPTP-v9.2.1/Problems/` tree. If custom axioms
 are selected, they replace the default shared TPTP library for that job.
 
 The three core inputs are `jobpairs.csv`, `building.txt`, and
-`resource_limiter_template.txt`. Each CSV row is one explicit call; Slurmy
+`resource_limiter_template.txt`. Each CSV row is one explicit solver-problem pair; Slurmy
 does not silently expand it into other calls. See the
 [input format and runner reference](../implementation/README.md) for details.
 
@@ -76,13 +76,13 @@ include $(REPO_ROOT)/implementation/templates/workflow.mk
 ```
 
 `REPO_ROOT` is the path from the workflow folder to this repository.
-`BATCH_SIZE` is the maximum number of calls in one Slurm task; those calls run
+`BATCH_SIZE` is the maximum number of solver-problem pairs in one SLURM task; those solver-problem pairs run
 **one at a time** within that task, while different tasks may run on different
 nodes. `SLURMY_MAX_OUTSTANDING` caps the pending/running batches from one job;
 the default is 32, and any positive value is allowed. Slurmy also coordinates
 concurrent submissions under the same cluster Unix user and shares available
-slots fairly; a Slurm-reported or observed submit limit takes precedence.
-The coordinator counts all of your queued and running Slurm allocations,
+slots fairly; a SLURM-reported or observed submit limit takes precedence.
+The coordinator counts all of your queued and running SLURM allocations,
 including non-Slurmy jobs, before each `sbatch`. Active Slurmy submitters
 divide the remaining capacity fairly: a small job's unused share goes to
 other waiting jobs. A submit-limit rejection records a temporary observed
@@ -103,8 +103,8 @@ submission-file generation. All-pairs workflows add a rule to create
 | `make build` | Build and download declared resources without submitting the proving job. |
 | `make monitor` | Start or reuse the web app and open this workflow. |
 | `make sync` | Follow and incrementally download the latest job's results. |
-| `make stop SLURMY_ID=JOB_ID` | Stop the whole Slurmy job and cancel its outstanding Slurm allocations. |
-| `make resume SLURMY_ID=JOB_ID` | Resume only unfinished calls in a stopped job. |
+| `make stop SLURMY_ID=JOB_ID` | Stop the whole Slurmy job and cancel its outstanding SLURM allocations. |
+| `make resume SLURMY_ID=JOB_ID` | Resume only unfinished solver-problem pairs in a stopped job. |
 | `make clean` | Remove generated submission files, leaving definitions and downloaded builds intact. |
 
 Set `SLURMY_HOST` (default `datalab`) and `SLURMY_PARTITION` (default
@@ -124,7 +124,7 @@ specific job rather than the latest one.
 </blockquote>
 </details>
 
-The optional **Slurm reservation** beside the partition field accepts a code
+The optional **SLURM reservation** beside the partition field accepts a code
 such as `E192-04`. It is passed to both cluster build tasks and solver tasks,
 and retained when a stopped job resumes. CLI workflows can set
 `SLURMY_RESERVATION := E192-04` in their Makefile; leave it empty for normal scheduling.

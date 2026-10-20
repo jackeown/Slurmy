@@ -1,7 +1,7 @@
 # 🧪 Example workflows
 
 Each workflow uses the [three-file format](../../implementation/README.md)
-and the [shared Makefile targets](../README.md). Builds happen on Slurm
+and the [shared Makefile targets](../README.md). Builds happen on SLURM
 compute nodes, not your laptop.
 
 | Folder | Workflow |
@@ -33,14 +33,14 @@ make prepare-submit           # Refresh scripts, build dependencies, then submit
 make submit                   # Dispatch the already-prepared scripts without refreshing them.
 make monitor                  # Start/reuse the local web app and open this workflow.
 make sync                     # Continuously download the latest job's results.
-make stop SLURMY_ID=JOB_ID     # Stop the whole job and cancel its Slurm allocations.
+make stop SLURMY_ID=JOB_ID     # Stop the whole job and cancel its SLURM allocations.
 make resume SLURMY_ID=JOB_ID   # Continue unfinished calls in that stopped job.
 ```
 
 Use `SLURMY_HOST=your-alias SLURMY_PARTITION=your-partition make prepare-submit`
 to override the example defaults (`datalab`, `CPU-amd`).
 To change batch size for one run, use `make clean`, then
-`make BATCH_SIZE=10` (or edit the Makefile). Calls within a batch run sequentially.
+`make BATCH_SIZE=10` (or edit the Makefile). Solver-problem pairs within a batch run sequentially.
 Command-line Make variables alone do not invalidate existing submission scripts;
 editing the Makefile does. After changing inputs or recipes, run `make` to
 refresh the scripts automatically.

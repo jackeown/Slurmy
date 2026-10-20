@@ -74,7 +74,7 @@ def main(argv=None):
     parser.add_argument('--serve', action='store_true', help='run in the foreground (the default)')
     parser.add_argument('--background', action='store_true', help='start/reuse the server and return to the shell')
     parser.add_argument('--no-browser', action='store_true', help='do not open a browser')
-    parser.add_argument('--stop', action='store_true', help='stop the local server, leaving Slurm jobs alone')
+    parser.add_argument('--stop', action='store_true', help='stop the local server, leaving SLURM jobs alone')
     args = parser.parse_args(argv)
     if not 1024 <= args.port <= 65535:
         parser.error('port must be between 1024 and 65535')
@@ -105,7 +105,7 @@ def main(argv=None):
             server.close()
             server.task_dispatcher.shutdown()
             # Close persistent browser connections as well as the listening socket.
-            # Only this owned server process is stopped; Slurm jobs are untouched.
+            # Only this owned server process is stopped; SLURM jobs are untouched.
             os.kill(os.getpid(), signal.SIGTERM)
         app.config['SHUTDOWN'] = shutdown
         target = target_url()
@@ -124,7 +124,7 @@ def main(argv=None):
             print('Slurmy web app is not running.')
             return 0
         stop_server(url)
-        print('Stopped the local web app. Submitted Slurm jobs are unaffected.')
+        print('Stopped the local web app. Submitted SLURM jobs are unaffected.')
         return 0
     if existing and args.background and existing.get('web_version') != web_version():
         stop_server(url)
