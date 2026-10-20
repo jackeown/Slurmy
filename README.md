@@ -18,11 +18,12 @@ your computer.
 The user does not need to use or understand SLURM commands or scripts.
 
 **Slurmy terminology:**
-A **workflow** defines the solvers, problems, resource limits, and SLURM cluster 
-parameters.
+The cluster management service is **SLURM** (all uppercase because it's an acronym).
+A **workflow** defines the solvers, problems, resource limits, and SLURM parameters.
 Each time a workflow is dispatched, a (new) **job** is created.
-The individual **solver–problem pair**s in a job are grouped into **batch**s.
+The individual **solver–problem pair**s in a job are divided into **batch**s.
 Each batch is executed as one SLURM **task**.
+The solver–problem pairs in a batch are executed sequentially in the task.
 The resource usage of each solver–problem pair is monitored individually.
 The results of a job can be downloaded in a `.tgz` file, with a summary in a`.csv`
 file.
