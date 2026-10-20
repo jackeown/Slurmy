@@ -136,3 +136,27 @@ directory to form an editable recursive `/**/*.p` glob. For example,
 `tptp://TPTP-v9.2.1/Problems/AGT/*.p` resolves to
 `/share/TPTP/TPTP-v9.2.1/Problems/AGT/*.p`. A shared problem uses its version's
 axiom library unless custom axioms or `SLURMY_TPTP_ROOT` override it.
+
+## Portable workflow downloads
+
+Use **Download** beside a workflow's Delete button to save a `.slurmy.tgz`
+bundle. The bundle contains the current expanded solver-problem pair selection,
+solver runtime files, declared build source directories and recipes, the resource
+limiter, and selected problem files. Shared TPTP problems and the axiom files
+referenced by their includes are copied into the bundle as local inputs.
+The bundle does not include submitted jobs or downloaded job results.
+
+Use **Upload workflow** beside **New workflow**, choose the bundle, and give
+it a new name. Inputs are restored inside the new workflow's `assets/` directory
+and paths are rewritten for this computer. Existing workflow names are never
+overwritten. Importing does not build, submit, or execute any bundled command.
+Normal all-pairs workflows retain editable solver configurations; explicit
+solver-problem pair tables remain explicit. The problem selection is a snapshot,
+so expanding a source glob later requires editing the imported workflow.
+
+SSH host, partition, reservation and resource limits are retained. You can edit
+them before dispatching on a different cluster. Existing binaries still require
+a compatible compute-node architecture; bundled source and recipes allow them
+to be rebuilt there. Bundles support uploads up to 10 GiB and expanded contents
+up to 30 GiB. Resources referenced by commands must be within the declared
+runtime/source directories, just as for ordinary submissions.

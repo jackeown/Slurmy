@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import tarfile
 from datetime import datetime
 
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, session, send_file, url_for
@@ -292,6 +293,8 @@ def create_app():
 
     @app.before_request
     def local_only():
+        if request.path == '/api/workflows/import':
+            request.max_content_length = 10 * 1024**3
         if request.remote_addr not in {'127.0.0.1', '::1', None}:
             abort(403)
         if request.headers.get('Sec-Fetch-Site') == 'cross-site' and (
@@ -841,6 +844,31 @@ def create_app():
         with guard:
             destination = workflows.duplicate(source, (request.get_json() or {}).get('name'))
         return jsonify(directory=str(destination)), 201
+
+    @app.post('/api/workflows/export')
+    def export_workflow():
+        from .portable import export_bundle
+        path = directory()
+        with guard:
+            if any(op['scope'] == str(path) and op['state'] == 'running' for op in operations.values()):
+                abort(409, 'Wait for the active workflow operation to finish before downloading it.')
+        bundle = export_bundle(path, host())
+        response = send_file(bundle, mimetype='application/gzip', as_attachment=True,
+                             download_name=path.name + '.slurmy.tgz')
+        response.call_on_close(bundle.close)
+        return response
+
+    @app.post('/api/workflows/import')
+    def import_workflow():
+        from .portable import import_bundle
+        upload = request.files.get('workflow')
+        if upload is None:
+            raise ValueError('Choose a portable workflow .tgz file.')
+        try:
+            destination, count = import_bundle(upload.stream, request.form.get('name', ''))
+        except (tarfile.TarError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError('Invalid portable workflow archive.') from exc
+        return jsonify(directory=str(destination), count=count), 201
 
     @app.post('/api/workflows/delete')
     def delete_workflow():

@@ -95,7 +95,7 @@ python web-app/main.py        # Opens the local app; leaves the app running in t
 python web-app/main.py --stop # Stops the background app
 ```
 
-The app runs on in a web browser at `127.0.0.1:8765`.
+The app runs in a web browser at `127.0.0.1:7569`.
 Closing the browser tab does not stop Slurmy, and stopping the app does not stop SLURM
 cluster jobs.
 Slurmy is a single-user tool with access to your local files and trusted workflow commands;

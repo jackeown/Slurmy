@@ -67,7 +67,7 @@ def health(url):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', default=os.environ.get('SLURMY_HOST', 'datalab'), help='SSH alias, not a web bind address')
-    parser.add_argument('--port', type=int, default=int(os.environ.get('SLURMY_WEB_PORT', '8765')))
+    parser.add_argument('--port', type=int, default=int(os.environ.get('SLURMY_WEB_PORT', '7569')))
     parser.add_argument('--directory', type=Path, help='open this local workflow')
     parser.add_argument('--job', help='open a particular submitted Slurmy job')
     parser.add_argument('--new', action='store_true', help='open the workflow builder')

@@ -391,3 +391,28 @@ async function poll(){
  const interval=(page==='job'||page==='problem')&&autoRefreshTotal>10000?30000:10000;
  setTimeout(poll,interval);
 }if(['jobs','job','workflow','problem'].includes(page))poll();
+
+// Portable definitions include solver/runtime files, build sources and selected problems.
+document.querySelectorAll('.download-workflow-card').forEach(control=>control.addEventListener('click',async()=>{
+ const label=control.textContent;control.disabled=true;control.textContent='Packaging…';
+ try{
+  const response=await fetch('/api/workflows/export?'+params({directory:control.dataset.directory}),{method:'POST',headers:{'X-CSRF-Token':csrf}});
+  if(!response.ok){const error=await response.json();throw new Error(error.error||'Could not package workflow.');}
+  const blob=await response.blob(),url=URL.createObjectURL(blob),anchor=document.createElement('a');
+  anchor.href=url;anchor.download=control.dataset.name+'.slurmy.tgz';document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+ }catch(error){notice(error.message);}finally{control.disabled=false;control.textContent=label;}
+}));
+$('#upload-workflow')?.addEventListener('click',()=>$('#workflow-upload-file').click());
+$('#workflow-upload-file')?.addEventListener('change',async event=>{
+ const file=event.target.files[0];if(!file)return;
+ const proposed=file.name.replace(/\.slurmy\.tgz$|\.tar\.gz$|\.tgz$/i,'').toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+/,'')||'imported-workflow';
+ const name=prompt('Name the imported workflow (lowercase letters, numbers and hyphens):',proposed+'-imported');
+ if(name===null){event.target.value='';return;}
+ const control=$('#upload-workflow');control.disabled=true;control.textContent='Importing…';
+ try{
+  const data=new FormData();data.append('workflow',file);data.append('name',name.trim());
+  const response=await fetch('/api/workflows/import?'+params({}),{method:'POST',headers:{'X-CSRF-Token':csrf},body:data});
+  const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not import workflow.');
+  location.href='/workflow?'+params({directory:result.directory});
+ }catch(error){notice(error.message);}finally{control.disabled=false;control.textContent='↑ Upload workflow';event.target.value='';}
+});
