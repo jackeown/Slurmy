@@ -8,8 +8,8 @@
 <div class="stats" aria-label="Cluster summary"><article><span>Nodes free</span><strong id="cluster-free">—</strong></article><article><span>Physical cores allocated</span><strong id="cluster-utilization">—</strong></article><article><span>Running tasks</span><strong id="cluster-running">—</strong></article><article><span>Pending tasks</span><strong id="cluster-pending">—</strong></article></div>
 <p class="muted cluster-explainer">This percentage is the share of physical cores allocated by SLURM, not measured processor activity. “Free” means nodes in SLURM's idle state; mixed nodes can still have available cores.</p>
 <section class="panel" aria-labelledby="cluster-core-chart-title">
-<div class="section-heading"><h2 id="cluster-core-chart-title">Allocated cores by user · whole cluster</h2></div>
-<p class="muted">Physical cores currently allocated across all partitions, regardless of the partition selected above. Percentages show each user's share of allocated cores.</p>
+<div class="section-heading"><h2 id="cluster-core-chart-title">Allocated cores by user · whole cluster</h2><label class="cluster-core-mode">Percentages relative to<select id="cluster-core-mode"><option value="allocated">Allocated cores</option><option value="total">Total cluster cores</option></select></label></div>
+<p class="muted">Physical cores across all partitions, regardless of the partition selected above. <span id="cluster-core-chart-explanation">Percentages show each user's share of allocated physical cores across the cluster.</span></p>
 <p id="cluster-core-chart-status" class="muted" role="status">Loading whole-cluster allocations…</p>
 <div class="outcome-layout"><div id="cluster-core-pie" class="outcome-pie is-empty" role="img" aria-label="Waiting for whole-cluster core allocations"><span class="spinner" aria-hidden="true"></span></div><div id="cluster-core-legend" aria-label="Allocated cores per user"></div></div>
 </section>

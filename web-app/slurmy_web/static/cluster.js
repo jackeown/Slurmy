@@ -1,4 +1,27 @@
 'use strict';
+
+// Keep chart accounting independent of the DOM so both views use the same data.
+function clusterCoreUsage(data, mode) {
+  const users = new Map();
+  let unknown = 0;
+  for (const job of data.jobs) {
+    if (!/^(RUNNING|COMPLETING|SUSPENDED|CONFIGURING)/i.test(job.state)) continue;
+    if (!Number.isFinite(job.reserved_cores)) { unknown++; continue; }
+    if (job.reserved_cores > 0) users.set(job.user, (users.get(job.user) || 0) + job.reserved_cores);
+  }
+  const entries = [...users].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([name, cores]) => ({name, cores}));
+  const known = entries.reduce((sum, item) => sum + item.cores, 0);
+  const allocated = Math.max(known, data.summary.allocated_cores || 0);
+  const capacity = data.summary.total_cores;
+  if (mode === 'total' && (!Number.isFinite(capacity) || capacity <= 0 || allocated > capacity)) {
+    return {entries: [], denominator: 0, allocated, capacity, unknown, users: users.size,
+      error: 'Total cluster capacity is unavailable or inconsistent with allocations. Try Refresh.'};
+  }
+  if (allocated > known) entries.push({name: 'Allocated · user unavailable', cores: allocated - known, color: '#929eaf'});
+  if (mode === 'total' && capacity > allocated) entries.push({name: 'Unallocated cores', cores: capacity - allocated, color: '#d3dcd4'});
+  return {entries, denominator: mode === 'total' ? capacity : allocated, allocated, capacity, unknown, users: users.size};
+}
 (() => {
   const find = selector => document.querySelector(selector);
   const host = document.body.dataset.host;
@@ -7,6 +30,8 @@
   const jobChoice = find('#cluster-job-choice');
   if (!partitionSelect) return;
   let status = null;
+  let coreUsageData = null;
+  const coreUsageMode = find('#cluster-core-mode');
   let busy = false;
   let queued = false;
   const expandedNodes = new Set();
@@ -54,6 +79,14 @@
   }
   updateSortLabels();
   const query = new URLSearchParams(location.search);
+  coreUsageMode.value = query.get('cores') === 'total' ? 'total' : 'allocated';
+  coreUsageMode.addEventListener('change', () => {
+    const url = new URL(location.href);
+    if (coreUsageMode.value === 'total') url.searchParams.set('cores', 'total');
+    else url.searchParams.delete('cores');
+    history.replaceState(null, '', url);
+    if (coreUsageData) renderCoreUsage(coreUsageData);
+  });
   partitionSelect.value = query.get('partition') || 'CPU-amd';
   if (!partitionSelect.value) partitionSelect.add(new Option(query.get('partition'), query.get('partition'), true, true));
   nodeScope.value = ['all', 'mine', 'job'].includes(query.get('nodes')) ? query.get('nodes') : 'mine';
@@ -111,19 +144,18 @@
   function renderCoreUsage(data) {
     const chart=find('#cluster-core-pie'), legend=find('#cluster-core-legend');
     chart.replaceChildren();legend.replaceChildren();
-    const users=new Map();let unknown=0;
-    for(const job of data.jobs){
-      if(!/^(RUNNING|COMPLETING|SUSPENDED|CONFIGURING)/i.test(job.state))continue;
-      if(!Number.isFinite(job.reserved_cores)){unknown++;continue;}
-      if(job.reserved_cores>0)users.set(job.user,(users.get(job.user)||0)+job.reserved_cores);
-    }
-    const entries=[...users].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));
-    const total=entries.reduce((sum,item)=>sum+item[1],0), descriptions=[], segments=[];
-    chart.classList.toggle('is-empty',total===0);let offset=0;
+    const totalView = coreUsageMode.value === 'total';
+    const usage = clusterCoreUsage(data, coreUsageMode.value);
+    const {entries, denominator, allocated, capacity, unknown} = usage;
+    const descriptions=[], segments=[];
+    find('#cluster-core-chart-explanation').textContent = totalView
+      ? 'Percentages show each user’s share of all physical cores across the cluster. Unallocated cores may include offline or otherwise unavailable nodes.'
+      : 'Percentages show each user’s share of allocated physical cores across the cluster.';
+    chart.classList.toggle('is-empty',denominator===0);let offset=0;
     const palette=['#278866','#4479b5','#9367ac','#ca842c','#219a98','#bb555b','#628b51','#a66b8b'];
-    entries.forEach(([name,cores],index)=>{
-      const color=index<palette.length?palette[index]:`hsl(${index*137.508%360} 48% 48%)`;
-      const percent=100*cores/total,end=offset+percent;
+    entries.forEach(({name,cores,color:fixedColor},index)=>{
+      const color=fixedColor || (index<palette.length?palette[index]:`hsl(${index*137.508%360} 48% 48%)`);
+      const percent=100*cores/denominator,end=offset+percent;
       segments.push(`${color} ${offset}% ${end}%`);offset=end;
       const item=document.createElement('div');item.className='outcome-row';
       const label=document.createElement('span');label.className='outcome-name';
@@ -134,12 +166,12 @@
       item.append(label,count,share);legend.append(item);
       descriptions.push(`${name}: ${cores.toLocaleString()} cores (${percent.toFixed(1)}%)`);
     });
-    chart.style.background=total?`conic-gradient(${segments.join(',')})`:'';
-    const description=total?descriptions.join('; '):unknown?'Core allocation counts unavailable.':'No cores currently allocated.';
+    chart.style.background=denominator?`conic-gradient(${segments.join(',')})`:'';
+    const description=usage.error || (denominator?descriptions.join('; '):unknown?'Core allocation counts unavailable.':'No cores currently allocated.');
     chart.setAttribute('aria-label',description);chart.title=description;
-    if(!total)chart.textContent=unknown?'Unavailable':'No allocated cores';
-    find('#cluster-core-chart-status').textContent=`${total.toLocaleString()} ${unknown?'known ':''}allocated cores · ${entries.length} users · all partitions · refreshed ${new Date(data.updated*1000).toLocaleTimeString()}`+
-      (unknown?` · Allocation counts unavailable for ${unknown} active tasks; these are excluded from the chart.`:'');
+    if(!denominator)chart.textContent=usage.error || (unknown?'Unavailable':'No allocated cores');
+    find('#cluster-core-chart-status').textContent=`${allocated.toLocaleString()} allocated${Number.isFinite(capacity)?` / ${capacity.toLocaleString()} total`:''} cores · ${usage.users} users · all partitions · refreshed ${new Date(data.updated*1000).toLocaleTimeString()}`+
+      (unknown?` · User allocation counts unavailable for ${unknown} active tasks.`:'');
   }
   async function refreshCoreUsage(selected, selectedRequest, fresh){
     try{
@@ -149,6 +181,7 @@
         const response=await fetch(`/api/cluster?${new URLSearchParams({host,partition:'all',fresh:fresh?'1':'0'})}`);
         data=await response.json();if(!response.ok)throw new Error(data.error||'Could not load allocations.');
       }
+      coreUsageData = data;
       renderCoreUsage(data);
     }catch(error){
       find('#cluster-core-chart-status').textContent=`Whole-cluster allocations unavailable: ${error.message}. Any previous chart remains visible.`;

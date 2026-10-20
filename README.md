@@ -180,10 +180,16 @@ An unfinished job must be stopped before deletion.
 When deleting a job whose results have been downloaded to your computer, you can
 keep the local data or remove it too.
 
-**Cluster status** shows SLURM nodes, reserved physical cores, users with active 
+**Cluster status** shows SLURM nodes, allocated physical cores, users with active 
 jobs, and running or pending tasks across users.
 It defaults to the `CPU-amd` cluster; choose another cluster or all clusters from 
 the page.
+The whole-cluster cores-by-user chart has a **Percentages relative to** selector:
+**Allocated cores** compares users' shares of current allocations; **Total cluster
+cores** compares them against all physical cores and includes an **Unallocated
+cores** slice. This chart always covers all partitions. Unallocated cores can
+include offline nodes, so the slice is not a guarantee of schedulable capacity.
+The selected view is retained in the page URL.
 Select a node to see the tasks currently running on it.
 A running task's row shows its node and SLURM ID.
 For new Slurmy submissions, it also shows solver-problem pair WHAT?? and batch counts across users.
