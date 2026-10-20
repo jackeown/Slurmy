@@ -182,8 +182,9 @@ keep the local data or remove it too.
 
 **Cluster status** shows SLURM nodes, allocated physical cores, users with active
 jobs, and running or pending tasks across users.
-It defaults to the `CPU-amd` cluster; choose another cluster or all clusters from 
-the page.
+It defaults to **All partitions**, matching the whole-cluster chart. Select a
+partition to narrow the tables. If that hides all of your running tasks while
+the chart still shows allocations, a notice offers **Show all partitions**.
 The whole-cluster cores-by-user chart has a **Percentages relative to** selector:
 **Allocated cores** compares users' shares of current allocations; **Total cluster
 cores** compares them against all physical cores and includes an **Unallocated

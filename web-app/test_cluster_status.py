@@ -1,6 +1,7 @@
 """Cluster status must show named configurations and physical reservations."""
 import json
 import unittest
+from unittest.mock import Mock, patch
 
 from slurmy_web.cluster import parse_status
 
@@ -44,6 +45,23 @@ METADATA
 
 
 class ClusterStatusTests(unittest.TestCase):
+    def test_cluster_api_defaults_to_all_partitions_and_honors_explicit_filter(self):
+        from slurmy_web import workflows
+        from slurmy_web.app import create_app
+        with patch.object(workflows, 'migrate_user_runs'):
+            app = create_app()
+        collector = Mock(side_effect=lambda host, partition: parse_status(host, partition, snapshot()))
+        app.config['CLUSTER_COLLECTOR'] = collector
+        client = app.test_client()
+        response = client.get('/api/cluster?host=test-host')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['partition'], 'all')
+        collector.assert_called_with('test-host', 'all')
+        response = client.get('/api/cluster?host=test-host&partition=CPU-amd')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['partition'], 'CPU-amd')
+        collector.assert_called_with('test-host', 'CPU-amd')
+
     def test_current_configuration_name_comes_from_manifest_solver(self):
         status = parse_status('test-host', 'CPU-amd', snapshot())
         call = status['jobs'][0]['active_call']

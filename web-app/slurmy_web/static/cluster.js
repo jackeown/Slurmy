@@ -92,7 +92,7 @@ function clusterTasksForUser(data) {
     history.replaceState(null, '', url);
     if (coreUsageData) renderCoreUsage(coreUsageData);
   });
-  partitionSelect.value = query.get('partition') || 'CPU-amd';
+  partitionSelect.value = query.get('partition') || 'all';
   if (!partitionSelect.value) partitionSelect.add(new Option(query.get('partition'), query.get('partition'), true, true));
   nodeScope.value = ['all', 'mine', 'job'].includes(query.get('nodes')) ? query.get('nodes') : 'mine';
   const requestedJob = query.get('job') || '';
@@ -196,6 +196,13 @@ function clusterTasksForUser(data) {
   function render() {
     if (!status) return;
     const totals = status.summary;
+    const mineHere = clusterTasksForUser(status);
+    const mineEverywhere = coreUsageData ? clusterTasksForUser(coreUsageData) : [];
+    const scopeNotice = find('#cluster-scope-notice');
+    scopeNotice.hidden = partitionSelect.value === 'all' || mineHere.length > 0 || mineEverywhere.length === 0;
+    if (!scopeNotice.hidden) {
+      find('#cluster-scope-message').textContent = `The whole-cluster chart includes ${mineEverywhere.length} running tasks owned by ${status.user}, but none are in ${partitionSelect.value}. The tables below show only the selected partition.`;
+    }
     find('#cluster-node-user-scope').textContent = `“Running my tasks” includes every running SLURM task owned by ${status.user} in the selected partition, including tasks submitted outside Slurmy.`;
     find('#cluster-free').textContent = `${totals.free_nodes} / ${totals.nodes}`;
     find('#cluster-utilization').textContent = `${totals.utilization}%`;
@@ -332,6 +339,10 @@ function clusterTasksForUser(data) {
     refresh(true);
   });
   find('#cluster-refresh').addEventListener('click', () => refresh(true));
+  find('#cluster-show-all-partitions').addEventListener('click', () => {
+    partitionSelect.value = 'all';
+    partitionSelect.dispatchEvent(new Event('change'));
+  });
   nodeScope.addEventListener('change', () => { updateJobChoices(); syncNodeScopeUrl(); render(); });
   jobChoice.addEventListener('change', () => { syncNodeScopeUrl(); render(); });
   for (const selector of ['#cluster-node-filter', '#cluster-user-filter', '#cluster-job-filter']) {
