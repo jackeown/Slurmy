@@ -182,14 +182,13 @@ keep the local data or remove it too.
 
 **Cluster status** shows SLURM nodes, allocated physical cores, users with active
 jobs, and running or pending tasks across users.
-It defaults to **All partitions**, matching the whole-cluster chart. Select a
-partition to narrow the tables. If that hides all of your running tasks while
-the chart still shows allocations, a notice offers **Show all partitions**.
-The whole-cluster cores-by-user chart has a **Percentages relative to** selector:
-**Allocated cores** compares users' shares of current allocations; **Total cluster
-cores** compares them against all physical cores and includes an **Unallocated
-cores** slice. This chart always covers all partitions. Unallocated cores can
-include offline nodes, so the slice is not a guarantee of schedulable capacity.
+It defaults to **CPU-amd**. The pie chart, summary, nodes, users, and tasks all
+follow the selected partition; **All partitions** includes the whole cluster.
+The cores-by-user chart has a **Percentages relative to** selector:
+**Allocated cores** compares users' shares of current allocations; **Total cores**
+compares them against all physical cores in the selected partition and includes
+an **Unallocated cores** slice. Unallocated cores can include offline nodes,
+so the slice is not a guarantee of schedulable capacity.
 The selected view is retained in the page URL.
 Select a node to see the tasks currently running on it.
 A running task's row shows its node and SLURM ID.

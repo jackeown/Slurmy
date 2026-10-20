@@ -436,6 +436,3 @@ html[data-theme="dark"] .sort-button:hover, html[data-theme="dark"] .sort-button
   overflow-wrap: anywhere;
   pointer-events: none;
 }
-
-.cluster-scope-notice { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; }
-.cluster-scope-notice > span { flex: 1 1 260px; }

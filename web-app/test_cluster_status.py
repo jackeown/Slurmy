@@ -45,7 +45,7 @@ METADATA
 
 
 class ClusterStatusTests(unittest.TestCase):
-    def test_cluster_api_defaults_to_all_partitions_and_honors_explicit_filter(self):
+    def test_cluster_api_defaults_to_cpu_amd_and_honors_explicit_filter(self):
         from slurmy_web import workflows
         from slurmy_web.app import create_app
         with patch.object(workflows, 'migrate_user_runs'):
@@ -55,12 +55,12 @@ class ClusterStatusTests(unittest.TestCase):
         client = app.test_client()
         response = client.get('/api/cluster?host=test-host')
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json['partition'], 'all')
-        collector.assert_called_with('test-host', 'all')
-        response = client.get('/api/cluster?host=test-host&partition=CPU-amd')
-        self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json['partition'], 'CPU-amd')
         collector.assert_called_with('test-host', 'CPU-amd')
+        response = client.get('/api/cluster?host=test-host&partition=all')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['partition'], 'all')
+        collector.assert_called_with('test-host', 'all')
 
     def test_current_configuration_name_comes_from_manifest_solver(self):
         status = parse_status('test-host', 'CPU-amd', snapshot())

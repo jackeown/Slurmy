@@ -16,7 +16,7 @@ function clusterCoreUsage(data, mode) {
   const capacity = data.summary.total_cores;
   if (mode === 'total' && (!Number.isFinite(capacity) || capacity <= 0 || allocated > capacity)) {
     return {entries: [], denominator: 0, allocated, capacity, unknown, users: users.size,
-      error: 'Total cluster capacity is unavailable or inconsistent with allocations. Try Refresh.'};
+      error: 'Total core capacity is unavailable or inconsistent with allocations. Try Refresh.'};
   }
   if (allocated > known) entries.push({name: 'Allocated · user unavailable', cores: allocated - known, color: '#929eaf'});
   if (mode === 'total' && capacity > allocated) entries.push({name: 'Unallocated cores', cores: capacity - allocated, color: '#d3dcd4'});
@@ -92,7 +92,7 @@ function clusterTasksForUser(data) {
     history.replaceState(null, '', url);
     if (coreUsageData) renderCoreUsage(coreUsageData);
   });
-  partitionSelect.value = query.get('partition') || 'all';
+  partitionSelect.value = query.get('partition') || 'CPU-amd';
   if (!partitionSelect.value) partitionSelect.add(new Option(query.get('partition'), query.get('partition'), true, true));
   nodeScope.value = ['all', 'mine', 'job'].includes(query.get('nodes')) ? query.get('nodes') : 'mine';
   const requestedJob = query.get('job') || '';
@@ -153,9 +153,11 @@ function clusterTasksForUser(data) {
     const usage = clusterCoreUsage(data, coreUsageMode.value);
     const {entries, denominator, allocated, capacity, unknown} = usage;
     const descriptions=[], segments=[];
+    const scope = data.partition === 'all' ? 'All partitions' : data.partition;
+    find('#cluster-core-chart-title').textContent = `Allocated cores by user · ${scope}`;
     find('#cluster-core-chart-explanation').textContent = totalView
-      ? 'Percentages show each user’s share of all physical cores across the cluster. Unallocated cores may include offline or otherwise unavailable nodes.'
-      : 'Percentages show each user’s share of allocated physical cores across the cluster.';
+      ? `Percentages show each user’s share of all physical cores in ${scope}. Unallocated cores may include offline or otherwise unavailable nodes.`
+      : `Percentages show each user’s share of allocated physical cores in ${scope}.`;
     chart.classList.toggle('is-empty',denominator===0);let offset=0;
     const palette=['#278866','#4479b5','#9367ac','#ca842c','#219a98','#bb555b','#628b51','#a66b8b'];
     entries.forEach(({name,cores,color:fixedColor},index)=>{
@@ -176,33 +178,27 @@ function clusterTasksForUser(data) {
     chart.setAttribute('aria-label',description);
     window.SlurmyPie.setSegments(chart,entries.map((entry,index)=>({fraction:entry.cores/denominator,label:descriptions[index]})));
     if(!denominator)chart.textContent=usage.error || (unknown?'Unavailable':'No allocated cores');
-    find('#cluster-core-chart-status').textContent=`${allocated.toLocaleString()} allocated${Number.isFinite(capacity)?` / ${capacity.toLocaleString()} total`:''} cores · ${usage.users} users · all partitions · refreshed ${new Date(data.updated*1000).toLocaleTimeString()}`+
+    find('#cluster-core-chart-status').textContent=`${allocated.toLocaleString()} allocated${Number.isFinite(capacity)?` / ${capacity.toLocaleString()} total`:''} cores · ${usage.users} users · ${scope} · refreshed ${new Date(data.updated*1000).toLocaleTimeString()}`+
       (unknown?` · User allocation counts unavailable for ${unknown} active tasks.`:'');
   }
-  async function refreshCoreUsage(selected, selectedRequest, fresh){
-    try{
-      let data;
-      if(selected==='all')data=await selectedRequest;
-      else{
-        const response=await fetch(`/api/cluster?${new URLSearchParams({host,partition:'all',fresh:fresh?'1':'0'})}`);
-        data=await response.json();if(!response.ok)throw new Error(data.error||'Could not load allocations.');
-      }
-      coreUsageData = data;
-      renderCoreUsage(data);
-    }catch(error){
-      find('#cluster-core-chart-status').textContent=`Whole-cluster allocations unavailable: ${error.message}. Any previous chart remains visible.`;
-    }
+  function resetCoreUsage() {
+    coreUsageData = null;
+    const chart = find('#cluster-core-pie');
+    chart.replaceChildren();
+    chart.textContent = 'Loading allocations…';
+    chart.style.background = '';
+    chart.classList.add('is-empty');
+    chart.setAttribute('aria-label', 'Waiting for selected partition allocations');
+    window.SlurmyPie.setSegments(chart, []);
+    find('#cluster-core-legend').replaceChildren();
+    const scope = partitionSelect.value === 'all' ? 'All partitions' : partitionSelect.value;
+    find('#cluster-core-chart-title').textContent = `Allocated cores by user · ${scope}`;
+    find('#cluster-core-chart-explanation').textContent = 'Chart percentages follow the selected partition.';
+    find('#cluster-core-chart-status').textContent = `Loading allocations for ${scope}…`;
   }
   function render() {
     if (!status) return;
     const totals = status.summary;
-    const mineHere = clusterTasksForUser(status);
-    const mineEverywhere = coreUsageData ? clusterTasksForUser(coreUsageData) : [];
-    const scopeNotice = find('#cluster-scope-notice');
-    scopeNotice.hidden = partitionSelect.value === 'all' || mineHere.length > 0 || mineEverywhere.length === 0;
-    if (!scopeNotice.hidden) {
-      find('#cluster-scope-message').textContent = `The whole-cluster chart includes ${mineEverywhere.length} running tasks owned by ${status.user}, but none are in ${partitionSelect.value}. The tables below show only the selected partition.`;
-    }
     find('#cluster-node-user-scope').textContent = `“Running my tasks” includes every running SLURM task owned by ${status.user} in the selected partition, including tasks submitted outside Slurmy.`;
     find('#cluster-free').textContent = `${totals.free_nodes} / ${totals.nodes}`;
     find('#cluster-utilization').textContent = `${totals.utilization}%`;
@@ -301,13 +297,15 @@ function clusterTasksForUser(data) {
     button.disabled = true;
     const message = find('#cluster-connection');
     message.textContent = status ? 'Refreshing cluster status… Previously loaded data remains visible.' : `Connecting to ${host}…`;
+    const selected = partitionSelect.value;
     try {
-      const selected = partitionSelect.value;
       const url = `/api/cluster?${new URLSearchParams({host, partition: selected, fresh: fresh ? '1' : '0'})}`;
-      const selectedRequest=fetch(url).then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);return data;});
-      const chartRequest=refreshCoreUsage(selected,selectedRequest,fresh);
-      let data;try{data=await selectedRequest;}finally{await chartRequest;}
+      const response = await fetch(url);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
       if (partitionSelect.value !== selected) { queued = true; return; }
+      coreUsageData = data;
+      renderCoreUsage(data);
       status = data;
       const prior = selected;
       partitionSelect.replaceChildren(new Option('All partitions', 'all'), ...data.partitions.map(name => new Option(name, name)));
@@ -317,6 +315,8 @@ function clusterTasksForUser(data) {
       render();
       message.textContent = `Connected to ${host} · ${selected} · refreshed ${new Date(data.updated * 1000).toLocaleTimeString()} · refreshes every 30 seconds`;
     } catch (error) {
+      if (partitionSelect.value !== selected) { queued = true; return; }
+      find('#cluster-core-chart-status').textContent = `Allocations for ${selected} unavailable: ${error.message}.`;
       message.textContent = `Cluster data unavailable: ${error.message}. ${status ? 'Previously loaded data remains visible.' : 'Check SSH access, VPN, and partition name.'}`;
       if (!status) {
         for (const [selector, count] of [['#cluster-nodes', 7], ['#cluster-users', 5], ['#cluster-jobs', 8]]) {
@@ -336,18 +336,16 @@ function clusterTasksForUser(data) {
     url.searchParams.set('partition', partitionSelect.value);
     history.replaceState(null, '', url);
     status = null;
+    resetCoreUsage();
     refresh(true);
   });
   find('#cluster-refresh').addEventListener('click', () => refresh(true));
-  find('#cluster-show-all-partitions').addEventListener('click', () => {
-    partitionSelect.value = 'all';
-    partitionSelect.dispatchEvent(new Event('change'));
-  });
   nodeScope.addEventListener('change', () => { updateJobChoices(); syncNodeScopeUrl(); render(); });
   jobChoice.addEventListener('change', () => { syncNodeScopeUrl(); render(); });
   for (const selector of ['#cluster-node-filter', '#cluster-user-filter', '#cluster-job-filter']) {
     find(selector).addEventListener('input', render);
   }
+  resetCoreUsage();
   refresh();
   setInterval(() => refresh(true), 30000);
 })();

@@ -395,7 +395,7 @@ def create_app():
 
     @app.get('/api/cluster')
     def cluster_status():
-        partition = request.args.get('partition', 'all')
+        partition = request.args.get('partition', 'CPU-amd')
         key = (host(), partition)
         with guard:
             cached = cluster_cache.get(key)
@@ -410,7 +410,7 @@ def create_app():
 
     @app.get('/api/cluster/node')
     def cluster_node_jobs():
-        partition = request.args.get('partition', 'all')
+        partition = request.args.get('partition', 'CPU-amd')
         node = request.args.get('node', '')
         value = app.config.get('CLUSTER_NODE_COLLECTOR', fetch_status)(
             host(), partition, node=node)
