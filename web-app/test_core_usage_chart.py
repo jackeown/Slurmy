@@ -12,6 +12,15 @@ const context = {document: {body: {dataset: {}}, querySelector: () => null}};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 const chart = context.clusterCoreUsage;
+// User scope must include ordinary sbatch/srun tasks as well as Slurmy arrays.
+const owned = context.clusterTasksForUser({user: 'alice', jobs: [
+  {id: '101_0', user: 'alice', state: 'RUNNING', slurmy: true},
+  {id: '102', user: 'alice', state: 'RUNNING', slurmy: false},
+  {id: '103', user: 'bob', state: 'RUNNING', slurmy: false},
+  {id: '104', user: 'alice', state: 'PENDING', slurmy: false}
+]});
+assert.equal(owned.map(job => job.id).join(','), '101_0,102');
+
 const data = {summary: {allocated_cores: 48, total_cores: 96}, jobs: [
   {user: 'alice', state: 'RUNNING', reserved_cores: 32},
   {user: 'bob', state: 'RUNNING', reserved_cores: 16},

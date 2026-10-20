@@ -35,6 +35,7 @@ function renderOutcomes(outcomes){
  const chart=$('#outcome-chart'),breakdown=$('#outcome-breakdown');if(!chart||!breakdown)return;
  const items=(outcomes||[]).filter(item=>Number.isFinite(item.count)&&item.count>0);
  const total=items.reduce((sum,item)=>sum+item.count,0);
+ window.SlurmyPie.setSegments(chart,[]);
  chart.replaceChildren();breakdown.replaceChildren();chart.classList.toggle('is-empty',total===0);
  if(!total){chart.style.background='';chart.setAttribute('aria-label','No solver-problem pair outcomes yet');breakdown.append(el('p','No solver-problem pair outcomes yet.','muted'));window.outcomeCubeData=[];window.renderOutcomeCube?.([]);return;}
  let start=0,other=0;const segments=[];const labels=[];
@@ -49,7 +50,7 @@ function renderOutcomes(outcomes){
  }
  chart.style.background=`conic-gradient(${segments.join(',')})`;
  chart.setAttribute('aria-label',`Solver-problem pair outcomes for ${total} solver-problem pairs. ${labels.join('; ')}`);
- chart.title=labels.join('\n');
+ window.SlurmyPie.setSegments(chart,items.map((item,index)=>({fraction:item.count/total,label:labels[index]})));
  window.outcomeCubeData=items;window.renderOutcomeCube?.(items);
  updateOutcomeFilter();
 }

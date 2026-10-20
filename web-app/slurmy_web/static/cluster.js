@@ -22,6 +22,11 @@ function clusterCoreUsage(data, mode) {
   if (mode === 'total' && capacity > allocated) entries.push({name: 'Unallocated cores', cores: capacity - allocated, color: '#d3dcd4'});
   return {entries, denominator: mode === 'total' ? capacity : allocated, allocated, capacity, unknown, users: users.size};
 }
+// Ownership is the SSH account, independent of how a task was submitted.
+function clusterTasksForUser(data) {
+  return data.jobs.filter(job => job.user === data.user && job.state.toUpperCase().startsWith('RUNNING'));
+}
+
 (() => {
   const find = selector => document.querySelector(selector);
   const host = document.body.dataset.host;
@@ -103,7 +108,7 @@ function clusterCoreUsage(data, mode) {
   }
   function updateJobChoices() {
     const previous = jobChoice.value;
-    const mine = status.jobs.filter(job => job.user === status.user && job.state.toUpperCase().startsWith('RUNNING'));
+    const mine = clusterTasksForUser(status);
     const names = [...new Set(mine.map(job => job.slurmy_id || job.id))].sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
     jobChoice.replaceChildren(...names.map(name => new Option(name, name)));
     if (names.includes(previous)) jobChoice.value = previous;
@@ -168,7 +173,8 @@ function clusterCoreUsage(data, mode) {
     });
     chart.style.background=denominator?`conic-gradient(${segments.join(',')})`:'';
     const description=usage.error || (denominator?descriptions.join('; '):unknown?'Core allocation counts unavailable.':'No cores currently allocated.');
-    chart.setAttribute('aria-label',description);chart.title=description;
+    chart.setAttribute('aria-label',description);
+    window.SlurmyPie.setSegments(chart,entries.map((entry,index)=>({fraction:entry.cores/denominator,label:descriptions[index]})));
     if(!denominator)chart.textContent=usage.error || (unknown?'Unavailable':'No allocated cores');
     find('#cluster-core-chart-status').textContent=`${allocated.toLocaleString()} allocated${Number.isFinite(capacity)?` / ${capacity.toLocaleString()} total`:''} cores · ${usage.users} users · all partitions · refreshed ${new Date(data.updated*1000).toLocaleTimeString()}`+
       (unknown?` · User allocation counts unavailable for ${unknown} active tasks.`:'');
@@ -190,6 +196,7 @@ function clusterCoreUsage(data, mode) {
   function render() {
     if (!status) return;
     const totals = status.summary;
+    find('#cluster-node-user-scope').textContent = `“Running my tasks” includes every running SLURM task owned by ${status.user} in the selected partition, including tasks submitted outside Slurmy.`;
     find('#cluster-free').textContent = `${totals.free_nodes} / ${totals.nodes}`;
     find('#cluster-utilization').textContent = `${totals.utilization}%`;
     find('#cluster-utilization').title = `${totals.allocated_cores.toLocaleString()} of ${totals.total_cores.toLocaleString()} physical cores allocated`;
@@ -202,8 +209,8 @@ function clusterCoreUsage(data, mode) {
     nodes.replaceChildren();
     const nodeFilter = find('#cluster-node-filter').value.trim().toLowerCase();
     const running = status.jobs.filter(job => job.state.toUpperCase().startsWith('RUNNING'));
-    const relevant = nodeScope.value === 'all' ? null : running.filter(job => job.user === status.user &&
-      (nodeScope.value === 'mine' || (job.slurmy_id || job.id) === jobChoice.value));
+    const relevant = nodeScope.value === 'all' ? null : clusterTasksForUser(status).filter(job =>
+      nodeScope.value === 'mine' || (job.slurmy_id || job.id) === jobChoice.value);
     const visible = status.nodes.filter(item => match([item.name, item.state], nodeFilter) &&
       (relevant === null || relevant.some(job => job.hostnames.includes(item.name))));
     find('#cluster-node-count').textContent = `· ${visible.length} / ${status.nodes.length} shown`;
