@@ -17,14 +17,26 @@
 }
 
 .workflow-group .experiment-card {
+  display: flex;
+  flex-direction: column;
   padding: 22px;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--white);
 }
 
-.workflow-card-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 22px; }
-.workflow-card-actions .card-link { margin-top: 0; }
+.workflow-group .experiment-card > .tag { align-self: flex-start; }
+
+.workflow-card-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  margin-top: auto;
+  padding-top: 18px;
+}
+.workflow-card-footer > small { flex: 1 1 135px; margin: 0; line-height: 1.5; }
+.workflow-card-actions { display: flex; align-items: center; flex: 0 0 auto; gap: 8px; margin-left: auto; }
 .workflow-card-actions button { padding: 7px 11px; }
 .submission-phase { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.35; }
 

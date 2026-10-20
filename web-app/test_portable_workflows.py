@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -63,6 +64,60 @@ class PortableWorkflowTests(unittest.TestCase):
         with patch.object(portable.subprocess,'run') as run:
             run.side_effect=lambda *args,stdout,**kwargs:self.empty_remote(stdout)
             second=portable.export_bundle(imported,'test-host');second.close()
+
+    def test_solver_limiter_legacy_in_place_and_prebuilt_resources_survive_relocation(self):
+        # Exercise every BuildSpec shape together, with a separately built limiter.
+        (self.workflow/'build.sh').write_text('install -m 755 solver "$SLURMY_BUILD_OUTPUT/solver"\n')
+        (self.source/'solver').write_text('#!/bin/sh\nprintf "%% SZS status Theorem\\n"\n')
+        limiter_root = self.root/'limiter runtime'; limiter_root.mkdir()
+        limiter_source = self.root/'limiter source'; limiter_source.mkdir()
+        (limiter_source/'limiter').write_text('#!/bin/sh\n"$@"\n')
+        limiter_recipe = self.workflow/'build-limiter.sh'
+        limiter_recipe.write_text('install -m 755 limiter "$SLURMY_BUILD_OUTPUT/limiter"\n')
+        resources = json.loads((self.workflow/'building.txt').read_text())
+        resources.append(dict(root=str(limiter_root),source=str(limiter_source),recipe=str(limiter_recipe),artifact='limiter'))
+        for name, artifact in [('legacy resource', ''), ('in-place resource', 'built')]:
+            root = self.root/name;root.mkdir()
+            (root/'input').write_text(name)
+            recipe = self.workflow/(name.replace(' ','-')+'.sh')
+            recipe.write_text('cp input built\n')
+            resources.append(dict(root=str(root), source=str(root), recipe=str(recipe), artifact=artifact, legacy=not artifact))
+        prebuilt = self.root/'prebuilt';prebuilt.mkdir();(prebuilt/'data').write_text('prebuilt data')
+        resources.append(dict(root=str(prebuilt), source='', recipe='', artifact=''))
+        (self.workflow/'building.txt').write_text(json.dumps(resources))
+        (self.workflow/'resource_limiter_template.txt').write_text("'"+str(limiter_root/'limiter')+"' {{solver_command}}")
+        axiom = self.root/'SET_001+0.ax';axiom.write_text('fof(ax,axiom,p).')
+        (self.workflow/'axiom-globs.txt').write_text(str(axiom)+'\n')
+        with self.bundle() as bundle:
+            for path in {self.runtime,self.source,limiter_root,limiter_source,prebuilt,
+                         self.root/'legacy resource',self.root/'in-place resource',self.workflow}:
+                shutil.rmtree(path)
+            self.problem.unlink();axiom.unlink()
+            imported, count = portable.import_bundle(bundle, 'all-resource-modes')
+        self.assertEqual(count,1)
+        builds = read_builds(imported/'building.txt')
+        self.assertEqual(len(builds),5)
+        generate(imported/'jobpairs.csv',imported/'building.txt',imported/'resource_limiter_template.txt',
+                 imported/'axiom-globs.txt')
+        # Run the archived recipes in fresh build contexts just like the driver;
+        # live verification also exercises the cluster driver itself.
+        for index, build in enumerate(builds):
+            if not build.recipe:
+                self.assertEqual((build.root/'data').read_text(),'prebuilt data')
+                continue
+            work = self.root/f'work-{index}';output=self.root/f'output-{index}'
+            shutil.copytree(build.source,work);output.mkdir()
+            recipe = build.recipe if build.artifact else imported/f'submit.sh.files/builds/recipe_{index}.sh'
+            subprocess.run(['bash',str(recipe)],cwd=work,check=True,
+                           env={**os.environ,'SLURMY_BUILD_WORK':str(work),'SLURMY_BUILD_OUTPUT':str(output)})
+            artifact_dir = work if build.source==build.root and build.artifact else output
+            self.assertTrue((artifact_dir/(build.artifact or 'built')).is_file())
+        self.assertIn(str(builds[1].root/'limiter'),(imported/'resource_limiter_template.txt').read_text())
+        sources, _ = portable.read_axioms(imported/'axiom-globs.txt')
+        self.assertEqual([path.name for path in sources],['SET_001+0.ax'])
+        self.assertEqual(sources[0].read_text(),'fof(ax,axiom,p).')
+        with portable.export_bundle(imported,'test-host') as second:
+            self.assertGreater(len(second.read()),0)
 
     def test_import_retains_problem_major_batching_policy(self):
         makefile = self.workflow/'Makefile'

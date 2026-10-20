@@ -186,3 +186,17 @@ a compatible compute-node architecture; bundled source and recipes allow them
 to be rebuilt there. Bundles support uploads up to 10 GiB and expanded contents
 up to 30 GiB. Resources referenced by commands must be within the declared
 runtime/source directories, just as for ordinary submissions.
+
+Portable bundles retain all declared resource builds: separate solver and limiter
+builds, source/artifact builds, in-place builds, legacy recipes, inline build
+commands (saved as scripts), and resources that need no build. The original
+editor's build-source controls may be normalized to an equivalent script-based
+configuration after import.
+
+Portability covers declared files and build instructions, not the cluster's
+software environment. Compilers, system libraries, modules, licenses, credentials,
+and network downloads used by recipes must still be available on the destination.
+Absolute paths embedded inside arbitrary recipe bodies are not rewritten; use
+`SLURMY_BUILD_WORK`, `SLURMY_BUILD_OUTPUT`, and files within the declared source
+context. Git metadata and generated submission helpers are omitted. Custom
+Makefile targets are not exported; imports use Slurmy's standard workflow rules.
