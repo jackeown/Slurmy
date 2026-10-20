@@ -178,7 +178,6 @@ An unfinished job must be stopped before deletion.
 
 When deleting a job whose results have been downloaded to your computer, you can
 keep the local data or remove it too.
-An incomplete last download can be synced first. WHAT???
 
 **Cluster status** shows SLURM nodes, reserved physical cores, users with active 
 jobs, and running or pending tasks across users.
