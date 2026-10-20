@@ -15,20 +15,20 @@ REMOTE_STATUS_SCRIPT = r'''set -euo pipefail
 partition=$1
 node=${2:-}
 printf 'PARTITIONS\n'
-if [[ -z "$node" ]]; then sinfo -h -o '%P' | sed 's/\*$//' | sort -u; fi
+if [[ -z "$node" ]]; then sinfo -a -h -o '%P' | sed 's/\*$//' | sort -u; fi
 printf 'NODES\n'
 if [[ -z "$node" ]]; then
     if [[ "$partition" == all ]]; then
-        sinfo -h -N -o '%N|%T|%c|%C|%m|%Z'
+        sinfo -a -h -N -o '%N|%T|%c|%C|%m|%Z'
     else
         sinfo -h -N -p "$partition" -o '%N|%T|%c|%C|%m|%Z'
     fi
 fi
 printf 'TOPOLOGY\n'
 # Node details are also needed when only the jobs on one node are requested.
-sinfo -h -N -o '%N|%Z' | sort -u
+sinfo -a -h -N -o '%N|%Z' | sort -u
 printf 'ALLOCATIONS\n'
-allocations=$(scontrol show job -d) || exit 1
+allocations=$(scontrol -a show job -d) || exit 1
 printf '%s\n' "$allocations"
 printf 'JOBS\n'
 format='%i|%u|%j|%T|%D|%C|%M|%l|%N|%R|%Z|%k'

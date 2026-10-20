@@ -108,6 +108,52 @@
     }
     return result;
   }
+  function renderCoreUsage(data) {
+    const chart=find('#cluster-core-pie'), legend=find('#cluster-core-legend');
+    chart.replaceChildren();legend.replaceChildren();
+    const users=new Map();let unknown=0;
+    for(const job of data.jobs){
+      if(!/^(RUNNING|COMPLETING|SUSPENDED|CONFIGURING)/i.test(job.state))continue;
+      if(!Number.isFinite(job.reserved_cores)){unknown++;continue;}
+      if(job.reserved_cores>0)users.set(job.user,(users.get(job.user)||0)+job.reserved_cores);
+    }
+    const entries=[...users].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));
+    const total=entries.reduce((sum,item)=>sum+item[1],0), descriptions=[], segments=[];
+    chart.classList.toggle('is-empty',total===0);let offset=0;
+    const palette=['#278866','#4479b5','#9367ac','#ca842c','#219a98','#bb555b','#628b51','#a66b8b'];
+    entries.forEach(([name,cores],index)=>{
+      const color=index<palette.length?palette[index]:`hsl(${index*137.508%360} 48% 48%)`;
+      const percent=100*cores/total,end=offset+percent;
+      segments.push(`${color} ${offset}% ${end}%`);offset=end;
+      const item=document.createElement('div');item.className='outcome-row';
+      const label=document.createElement('span');label.className='outcome-name';
+      const swatch=document.createElement('span');swatch.className='outcome-swatch';swatch.style.backgroundColor=color;swatch.setAttribute('aria-hidden','true');
+      label.append(swatch,document.createTextNode(name));
+      const count=document.createElement('span');count.textContent=`${cores.toLocaleString()} ${cores===1?'core':'cores'}`;count.className='outcome-count';
+      const share=document.createElement('strong');share.textContent=`${percent.toFixed(1)}%`;share.className='outcome-percent';
+      item.append(label,count,share);legend.append(item);
+      descriptions.push(`${name}: ${cores.toLocaleString()} cores (${percent.toFixed(1)}%)`);
+    });
+    chart.style.background=total?`conic-gradient(${segments.join(',')})`:'';
+    const description=total?descriptions.join('; '):unknown?'Core allocation counts unavailable.':'No cores currently allocated.';
+    chart.setAttribute('aria-label',description);chart.title=description;
+    if(!total)chart.textContent=unknown?'Unavailable':'No allocated cores';
+    find('#cluster-core-chart-status').textContent=`${total.toLocaleString()} ${unknown?'known ':''}allocated cores · ${entries.length} users · all partitions · refreshed ${new Date(data.updated*1000).toLocaleTimeString()}`+
+      (unknown?` · Allocation counts unavailable for ${unknown} active tasks; these are excluded from the chart.`:'');
+  }
+  async function refreshCoreUsage(selected, selectedRequest, fresh){
+    try{
+      let data;
+      if(selected==='all')data=await selectedRequest;
+      else{
+        const response=await fetch(`/api/cluster?${new URLSearchParams({host,partition:'all',fresh:fresh?'1':'0'})}`);
+        data=await response.json();if(!response.ok)throw new Error(data.error||'Could not load allocations.');
+      }
+      renderCoreUsage(data);
+    }catch(error){
+      find('#cluster-core-chart-status').textContent=`Whole-cluster allocations unavailable: ${error.message}. Any previous chart remains visible.`;
+    }
+  }
   function render() {
     if (!status) return;
     const totals = status.summary;
@@ -211,9 +257,9 @@
     try {
       const selected = partitionSelect.value;
       const url = `/api/cluster?${new URLSearchParams({host, partition: selected, fresh: fresh ? '1' : '0'})}`;
-      const response = await fetch(url);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+      const selectedRequest=fetch(url).then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);return data;});
+      const chartRequest=refreshCoreUsage(selected,selectedRequest,fresh);
+      let data;try{data=await selectedRequest;}finally{await chartRequest;}
       if (partitionSelect.value !== selected) { queued = true; return; }
       status = data;
       const prior = selected;
