@@ -180,7 +180,7 @@ An unfinished job must be stopped before deletion.
 When deleting a job whose results have been downloaded to your computer, you can
 keep the local data or remove it too.
 
-**Cluster status** shows SLURM nodes, allocated physical cores, users with active 
+**Cluster status** shows SLURM nodes, allocated physical cores, users with active
 jobs, and running or pending tasks across users.
 It defaults to the `CPU-amd` cluster; choose another cluster or all clusters from 
 the page.
