@@ -111,8 +111,10 @@ For example, two configurations with 1,429 problems each produce 2,858
 solver-problem pairs. With a batch size of 500, the current packing rule produces
 six batches: 500, 500, 429 for the first configuration and 500, 500, 429 for
 the second. Solver-major order keeps each configuration in its own batches.
-Problem-major and random order fill batches in their selected order and can
-mix configurations. All pairs in a batch still run sequentially. Direct users
+Problem-major and random order pack compatible allocation requests together
+and can mix configurations with identical core and isolation settings. Different
+core/socket/node requests use separate batches. All pairs in a batch still run
+sequentially, including dedicated socket and node requests. Direct users
 of `implementation/slurmy.py` can declare the input ordering with `--pair-order`;
 workflow Makefiles pass `PAIR_ORDER` automatically.
 
@@ -200,3 +202,19 @@ Absolute paths embedded inside arbitrary recipe bodies are not rewritten; use
 `SLURMY_BUILD_WORK`, `SLURMY_BUILD_OUTPUT`, and files within the declared source
 context. Git metadata and generated submission helpers are omitted. Custom
 Makefile targets are not exported; imports use Slurmy's standard workflow rules.
+
+## Preview, save, prepare, and dispatch
+
+**Preview files (optional)** validates current inputs and shows generated files in
+memory without saving a workflow. **Save workflow** independently validates the
+current inputs and writes the reusable definition; previewing first is unnecessary.
+Neither action builds solvers or dispatches a proving job.
+
+On the saved workflow, **Prepare only** refreshes submission scripts and batch
+plans. **Prepare & dispatch job** includes that preparation, builds the declared
+resources, downloads their outputs, and submits a new SLURM job. **Dispatch
+prepared job** uses the existing plans while still building and submitting.
+
+Dedicated socket/node settings keep other tasks out of the allocated socket or
+node. They do not increase the solver's requested core limit. Cluster status
+reports solver cores separately from all physical cores allocated by SLURM.

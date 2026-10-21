@@ -106,7 +106,7 @@ YOUR COMPUTER
   │   • Assign task IDs and batch IDs                                        │
   │   • Render commands and relocate packaged paths                          │
   │   • Group calls into sequential batches                                  │
-  │   • Use the strongest socket/node exclusivity in each batch                          │
+  │   • Group matching core/socket/node allocation requests                  │
   │                                                                          │
   │ Generated locally:                                                      │
   │                                                                          │

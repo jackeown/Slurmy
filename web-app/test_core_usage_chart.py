@@ -12,6 +12,13 @@ const context = {document: {body: {dataset: {}}, querySelector: () => null}};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 const chart = context.clusterCoreUsage;
+assert.equal(context.clusterAllocationDescription({solver_cores:12, reserved_cores:32, solver_isolation:'socket'}),
+  'solver limited to 12 physical cores · 32 physical cores allocated · whole CPU sockets dedicated');
+assert.equal(context.clusterAllocationDescription({solver_cores:12, reserved_cores:64, solver_isolation:'node'}),
+  'solver limited to 12 physical cores · 64 physical cores allocated · whole node dedicated');
+assert.match(context.clusterAllocationDescription({solver_cores:8, reserved_cores:8, solver_isolation:'shared'}),
+  /solver limited to 8 physical cores.*8 physical cores allocated.*share/);
+
 // User scope must include ordinary sbatch/srun tasks as well as Slurmy arrays.
 const owned = context.clusterTasksForUser({user: 'alice', jobs: [
   {id: '101_0', user: 'alice', state: 'RUNNING', slurmy: true},

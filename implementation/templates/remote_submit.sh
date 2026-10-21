@@ -239,8 +239,11 @@ for batch in batches/batch_*.sh; do
     # Append output so the log retains diagnostics from each placement attempt.
     # Queue-visible metadata lets other Slurmy users see counts without access
     # to this job's private directory. It contains no local paths or commands.
+    ISOLATION=shared
+    if (( EXCLUSIVE_CPU )); then ISOLATION=socket; fi
+    if (( EXCLUSIVE_NODE )); then ISOLATION=node; fi
     OPTIONS=(--parsable --partition="$PARTITION" --job-name="$JOB_PREFIX"
-        --comment="slurmy:v1:calls=$TOTAL_CALLS:batches=$next_batch:batch=$BATCH_ID"
+        --comment="slurmy:v1:calls=$TOTAL_CALLS:batches=$next_batch:cores=$MAX_CORES:isolation=$ISOLATION:batch=$BATCH_ID"
         --requeue --open-mode=append
         --nodes=1 --ntasks="$PARALLEL" --cpus-per-task="$((SLOT_CORES * MAX_THREADS_PER_CORE))"
         --threads-per-core="$MAX_THREADS_PER_CORE" --distribution=block:block

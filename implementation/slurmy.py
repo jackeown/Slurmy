@@ -279,23 +279,29 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             values[name] = '"${' + name.upper() + '}"'
         task["limiter_command"] = render(limiter, values)
     batches: list[list[dict]] = []
-    # Pairs execute sequentially, so exclusivity does not split batches.
-    # Each allocation satisfies the strongest requirement in its batch.
-    # Solver-major order starts a fresh batch at each configuration boundary.
+    # Keep each allocation's core count and sharing policy homogeneous. Pairs
+    # still run sequentially; compatible requests fill batches even when input
+    # order interleaves configurations, rather than making one batch per pair.
     configuration_fields = ('solver', 'solver_root', 'command', 'wc_limit', 'cpu_limit',
                             'mem_limit', 'cores', 'threads_per_core', 'cpus',
                             'exclusive_cpu', 'exclusive_node')
-
-    def configuration(task):
-        return tuple(task[key] for key in configuration_fields)
+    allocation_fields = ('cores', 'threads_per_core', 'cpus', 'exclusive_cpu', 'exclusive_node')
+    open_batches = {}
+    previous_configuration = None
+    configuration_group = 0
     for task in tasks:
-        new_configuration = (bool(batches) and pair_order == 'solver-major'
-                             and configuration(task) != configuration(batches[-1][-1]))
-        if not batches or len(batches[-1]) >= batch_size or new_configuration:
-            batches.append([task])
-        else:
-            batches[-1].append(task)
-        task["batch_id"] = len(batches) - 1
+        configuration = tuple(task[key] for key in configuration_fields)
+        if pair_order == 'solver-major' and configuration != previous_configuration:
+            configuration_group += 1
+        previous_configuration = configuration
+        key = (configuration_group, *(task[field] for field in allocation_fields))
+        batch_id = open_batches.get(key)
+        if batch_id is None or len(batches[batch_id]) >= batch_size:
+            batch_id = len(batches)
+            batches.append([])
+            open_batches[key] = batch_id
+        batches[batch_id].append(task)
+        task['batch_id'] = batch_id
     output = jobpairs.parent / "submit.sh"
     assets = jobpairs.parent / "submit.sh.files"
     if output.exists() or assets.exists():
@@ -308,7 +314,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         metadata = {"slurmy_version": VERSION, "workflow_directory": str(jobpairs.parent), "task_count": len(tasks), "batch_count": len(batches),
                     "batch_size": batch_size, "pair_order": pair_order, "result_columns": RESULT_COLUMNS,
                     "planned_batch_tasks": [[t["task_id"] for t in batch] for batch in batches],
-                    "batch_policy": "one solver-problem pair at a time per batch; solver-major batches do not span configurations; allocation satisfies all pairs including node/socket exclusivity",
+                    "batch_policy": "one solver-problem pair at a time per batch; batches have matching core and sharing requests; solver-major batches do not span configurations",
                     "buffers": {"per_call_seconds": 30, "per_call_memory_mib": 128, "batch_seconds": 60}}
         (assets / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
         (assets / "manifest.jsonl").write_text("".join(json.dumps(t) + "\n" for t in tasks))

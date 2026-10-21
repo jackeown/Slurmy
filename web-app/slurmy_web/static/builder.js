@@ -270,7 +270,7 @@ if(document.body.dataset.page==='new'){
  $('#builder-back').addEventListener('click',()=>{step--;renderStep();});
  $('#builder-next').addEventListener('click',()=>navigate(step+1));
  $('#builder-save').addEventListener('click',async()=>{const save=$('#builder-save');save.disabled=true;const finish=beginWork('Saving the complete workflow and solver-problem pair list…');try{await validSection();const current=payload();const endpoint=editing?'/api/workflows/update?stream=1&'+params({directory:context.dataset.directory}):'/api/workflows?stream=1';const data=await streamBuilder(endpoint,current,finish.update);location.href='/workflow?'+new URLSearchParams({host:current.host,directory:data.directory});}catch(error){if(error.cancelled)notice(error.message);else showError(error);save.disabled=false;}finally{finish();}});
- form.addEventListener('input',()=>{if(reviewed){reviewed=null;text('#review-summary','Settings changed; generate the preview again to inspect the updated files.');$('#review-files').replaceChildren();updateStepStates();}});
+ form.addEventListener('input',()=>{if(reviewed){reviewed=null;text('#review-summary','Settings changed; preview files again to inspect the updates, or save directly.');$('#review-files').replaceChildren();updateStepStates();}});
  form.addEventListener('input',updateStepStates);form.addEventListener('change',updateStepStates);
  form.addEventListener('submit',e=>e.preventDefault());renderStep();updateStepStates();
 }

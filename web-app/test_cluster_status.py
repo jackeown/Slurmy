@@ -8,7 +8,7 @@ from slurmy_web.cluster import parse_status
 
 def snapshot():
     call = json.dumps({'task_id': 0, 'solver': 'Vampire configured strategy',
-                       'solver_name': 'legacy name', 'problem': '/Problems/SET/SET002+3.p'})
+                       'solver_name': 'legacy name', 'cores': 8, 'problem': '/Problems/SET/SET002+3.p'})
     return f'''PARTITIONS
 CPU-amd
 NODES
@@ -67,6 +67,19 @@ class ClusterStatusTests(unittest.TestCase):
         call = status['jobs'][0]['active_call']
         self.assertEqual(call['solver'], 'Vampire configured strategy')
         self.assertEqual(call['problem'], '/Problems/SET/SET002+3.p')
+
+    def test_solver_core_request_is_distinct_from_exclusive_allocation(self):
+        output = snapshot().replace('calls=4:batches=1:batch=0', 'calls=4:batches=1:cores=12:isolation=socket:batch=0')
+        status = parse_status('test-host', 'CPU-amd', output)
+        job = status['jobs'][0]
+        self.assertEqual(job['solver_cores'],12)
+        self.assertEqual(job['solver_isolation'],'socket')
+        self.assertEqual(job['reserved_cores'],32)
+        self.assertEqual(job['batch_index'],0)
+        # Old jobs without queue-visible core requests can still use their manifest.
+        old = parse_status('test-host', 'CPU-amd', snapshot())['jobs'][0]
+        self.assertEqual(old['solver_cores'],8)
+        self.assertEqual(old['reserved_cores'],32)
 
     def test_node_and_summary_counts_are_physical_cores(self):
         status = parse_status('test-host', 'all', snapshot())

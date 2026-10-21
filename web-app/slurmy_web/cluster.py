@@ -104,7 +104,10 @@ def parse_status(host, partition, output):
             if int(task_id) != call.get('task_id'):
                 continue
             active_calls[slurm_id] = dict(id=int(task_id), solver=str(call.get('solver') or call.get('solver_name') or call.get('system') or 'Solver'),
-                                          problem=str(call.get('problem') or 'Problem'))
+                                          problem=str(call.get('problem') or 'Problem'),
+                                          cores=int(call['cores']) if str(call.get('cores', '')).isdigit() else None,
+                                          isolation=('node' if call.get('exclusive_node') else 'socket' if call.get('exclusive_cpu') else 'shared')
+                                          if 'exclusive_node' in call or 'exclusive_cpu' in call else None)
         except (ValueError, TypeError, json.JSONDecodeError):
             continue
     hostlists = dict(line.split('|', 1) for line in sections['HOSTS'] if '|' in line)
@@ -188,11 +191,17 @@ def parse_status(host, partition, output):
                      elapsed=elapsed, limit=limit, nodelist=nodelist,
                      hostnames=allocated_nodes,
                      reason=reason, slurmy=slurmy, slurmy_id=parts[-1] if slurmy else None,
-                     active_call=active_calls.get(job_id) if slurmy else None)
-        public = re.fullmatch(r'slurmy:v1:calls=(\d+):batches=(\d+):batch=(\d+)', comment)
+                     active_call=active_calls.get(job_id) if slurmy else None,
+                     solver_cores=active_calls.get(job_id, {}).get('cores') if slurmy else None,
+                     solver_isolation=active_calls.get(job_id, {}).get('isolation') if slurmy else None)
+        public = re.fullmatch(r'slurmy:v1:calls=(?P<calls>\d+):batches=(?P<batches>\d+)(?::cores=(?P<cores>\d+))?(?::isolation=(?P<isolation>shared|socket|node))?:batch=(?P<batch>\d+)', comment)
         if public and slurmy:
-            entry.update(jobpairs=int(public.group(1)), batches=int(public.group(2)),
-                         batch_index=int(public.group(3)), metadata_source='SLURM comment')
+            entry.update(jobpairs=int(public.group('calls')), batches=int(public.group('batches')),
+                         batch_index=int(public.group('batch')), metadata_source='SLURM comment')
+            if public.group('cores'):
+                entry['solver_cores'] = int(public.group('cores'))
+            if public.group('isolation'):
+                entry['solver_isolation'] = public.group('isolation')
         if slurmy and directory in metadata:
             entry.update(metadata[directory])
             entry['metadata_source'] = 'private job files'

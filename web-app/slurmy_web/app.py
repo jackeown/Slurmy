@@ -978,12 +978,13 @@ def create_app():
                     code = subprocess.run(argv, cwd=cwd, env=environment, stdout=stream, stderr=subprocess.STDOUT).returncode
                 operations[key].update(state='done' if code == 0 else 'failed', code=code)
                 match = re.search(r'^Slurmy job ID: ([A-Za-z0-9._-]+)$', log.read_text(encoding='utf-8', errors='replace'), re.MULTILINE)
-                if match:
+                if match and show_dispatching:
                     announce_operation_job(operations[key], match.group(1), cwd, environment)
                 else:
                     clear_dispatching(operations[key])
             except Exception as exc:
-                log.write_text(str(exc))
+                with log.open('a') as stream:
+                    stream.write(f'\nOperation error: {exc}\n')
                 operations[key].update(state='failed', code=-1)
                 clear_dispatching(operations[key])
             with guard:
@@ -1035,7 +1036,7 @@ def create_app():
             argv = [sys.executable, str(REPO/'implementation/slurmy-cancel.py'), slurm_id, '--host', host()]
         else:
             raise ValueError('Unknown job action.')
-        return operation(argv, REPO, os.environ.copy(), data['action'], host() + ':' + job_id)
+        return operation(argv, REPO, {**os.environ, 'SLURMY_HOST': host()}, data['action'], host() + ':' + job_id)
 
     @app.post('/api/jobs/<job_id>/delete')
     def delete_job(job_id):
@@ -1128,13 +1129,15 @@ rm -r -- "$job"
         # has already accepted the job. Register that ID during polling rather
         # than waiting for the whole operation to finish.
         match = re.search(r'^Slurmy job ID: ([A-Za-z0-9._-]+)$', content, re.MULTILINE)
-        if match:
+        if match and operations[key].get('provisional_job_id'):
             operation = operations[key]
             if operation.get('job_id') != match.group(1):
                 announce_operation_job(operation, match.group(1), Path(operation['operation_cwd']),
                                        {'SLURMY_HOST': operation['operation_host']})
         op = operations[key]
-        phase = ({'sync': 'Download results', 'sync_verbose': 'Download complete/verbose results'}.get(op['label'])
+        phase = ({'sync': 'Download results', 'sync_verbose': 'Download complete/verbose results',
+                  'stop': 'Stop job', 'resume': 'Resume unfinished solver-problem pairs',
+                  'cancel': 'Cancel SLURM task'}.get(op['label'])
                  or submission_phase(content))
         return jsonify(**op, log=content, phase=phase)
 

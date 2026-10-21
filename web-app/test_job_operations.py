@@ -73,6 +73,30 @@ class JobOperationTests(unittest.TestCase):
         self.assertEqual(responses[0][1]['id'], responses[1][1]['id'])
         self.assertEqual(web.threading.Thread.call_count, 1)
 
+    def test_successful_resume_is_not_reclassified_as_a_new_submission(self):
+        def resumed(*args, stdout, **kwargs):
+            stdout.write('Keeping previously completed results.\nSlurmy job ID: test-job\nSubmission complete: 2/2 batches accepted\n')
+            return SimpleNamespace(returncode=0)
+        with patch.dict(web.os.environ, {}, clear=True), patch.object(web.subprocess, 'run', side_effect=resumed):
+            response = self.action('resume')
+            self.assertEqual(response.status_code, 202)
+            worker = web.threading.Thread.call_args.kwargs['target']
+            worker()
+        state = self.client.get('/api/operations/'+response.json['id']).json
+        self.assertEqual(state['state'], 'done')
+        self.assertEqual(state['code'], 0)
+        self.assertEqual(state['phase'], 'Resume unfinished solver-problem pairs')
+        self.assertIn('Keeping previously completed results.', state['log'])
+        self.assertNotIn('job_id', state)
+
+    def test_polling_running_resume_does_not_announce_a_new_job(self):
+        response = self.action('resume')
+        (web.STATE/(response.json['id']+'.log')).write_text('Slurmy job ID: test-job\n')
+        state = self.client.get('/api/operations/'+response.json['id']).json
+        self.assertEqual(state['state'], 'running')
+        self.assertNotIn('job_id', state)
+        self.assertIn('Resume', state['phase'])
+
     def test_resume_does_not_block_stop(self):
         self.assertEqual(self.action('resume').status_code, 202)
         self.assertEqual(self.action('stop').status_code, 202)

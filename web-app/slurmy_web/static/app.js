@@ -157,7 +157,7 @@ async function watchOperation(id){
     const op=await api('/api/operations/'+encodeURIComponent(id));if(currentOperationId!==id)return;text('#operation-title',`${op.phase} · ${op.state}`);text('#operation-log',op.log||'Starting…');
     const match=op.log.match(/Slurmy job ID: ([A-Za-z0-9._-]+)/);
     $('#submitted-link')?.remove();
-    if(match){announceJob(match[1],op.requested_name);if($('#jobs-body'))renderJobs();const node=link('View submitted job →','/jobs/'+encodeURIComponent(match[1])+'?'+params({}));node.id='submitted-link';$('#operation').append(node);refresh();}
+    if(match&&['prepare and dispatch SLURM job','dispatch prepared SLURM job'].includes(op.label)){announceJob(match[1],op.requested_name);if($('#jobs-body'))renderJobs();const node=link('View submitted job →','/jobs/'+encodeURIComponent(match[1])+'?'+params({}));node.id='submitted-link';$('#operation').append(node);refresh();}
     if(op.scope===host+':'+document.body.dataset.job){jobAction=op.state==='running'?op.label:null;jobActionControls();}
     if(op.state==='running'){lockWorkflowActions(true);operationTimer=setTimeout(()=>watchOperation(id),1500);}
     else{lockWorkflowActions(false);sessionStorage.removeItem('slurmy-operation');text('#show-operation','View completed operation');await refresh(true);}

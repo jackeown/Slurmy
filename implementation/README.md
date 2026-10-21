@@ -106,9 +106,14 @@ drivers, and metadata. Use the workflow's `make prepare-submit` to handle
 regeneration when inputs change.
 
 Each batch contains up to `--batch-size` solver-problem pairs, run sequentially. Different
-batches can run concurrently across nodes. Whole-node and whole-socket requirements do not split batches: the entire
-batch receives an allocation satisfying all its solver-problem pairs. The batch's SLURM wall-time budget includes all its solver-problem pairs; memory and
-core reservations cover its largest call. Slurmy uses a rolling submission
+batches can run concurrently across nodes. A batch contains matching core counts
+and sharing/isolation requests, so a shared solver never inherits a dedicated
+solver's socket or node allocation. Interleaved compatible requests are packed
+together up to the batch size; dedicated requests do not create one batch per pair.
+The batch's SLURM wall-time budget includes all its solver-problem pairs; memory
+covers its largest pair. Socket/node isolation can allocate more physical cores
+than the solver's affinity limit: a 12-core solver still uses 12 cores when SLURM
+allocates an entire 32-core socket. The status page shows both counts. Slurmy uses a rolling submission
 window (32 pending/running batches per job by default) so large jobs can fit
 cluster submission limits. Set `SLURMY_MAX_OUTSTANDING` in a workflow Makefile
 or pass `--max-outstanding` to `slurmy.py` to change it. Cluster-side submitters

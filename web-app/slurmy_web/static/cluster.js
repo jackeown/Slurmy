@@ -22,6 +22,18 @@ function clusterCoreUsage(data, mode) {
   if (mode === 'total' && capacity > allocated) entries.push({name: 'Unallocated cores', cores: capacity - allocated, color: '#d3dcd4'});
   return {entries, denominator: mode === 'total' ? capacity : allocated, allocated, capacity, unknown, users: users.size};
 }
+function clusterAllocationDescription(job, allocated = job.reserved_cores) {
+  const cores = job.solver_cores || job.active_call?.cores;
+  const isolation = job.solver_isolation || job.active_call?.isolation;
+  const details = [];
+  if (cores) details.push(`solver limited to ${cores} physical cores`);
+  details.push(allocated == null ? 'core allocation unavailable' : `${allocated} physical cores allocated`);
+  if (isolation === 'node') details.push('whole node dedicated');
+  else if (isolation === 'socket') details.push('whole CPU sockets dedicated');
+  else if (isolation === 'shared') details.push('other tasks may share the node and sockets');
+  return details.join(' · ');
+}
+
 // Ownership is the SSH account, independent of how a task was submitted.
 function clusterTasksForUser(data) {
   return data.jobs.filter(job => job.user === data.user && job.state.toUpperCase().startsWith('RUNNING'));
@@ -240,7 +252,7 @@ function clusterTasksForUser(data) {
         title.textContent = `${job.name} · task ${job.id}`;
         if (title.tagName === 'A') title.href = `/jobs/${encodeURIComponent(job.slurmy_id)}?${new URLSearchParams({host})}`;
         const allocated = job.node_cores[node.name];
-        item.append(title, document.createTextNode(` — ${job.user}, ${allocated == null ? 'core allocation unavailable' : `${allocated} physical cores allocated`}`));
+        item.append(title, document.createTextNode(` — ${job.user}, ${clusterAllocationDescription(job, allocated)}`));
         if (job.active_call) {
           const call = document.createElement('div');
           call.className = 'cluster-active-call';
@@ -285,7 +297,7 @@ function clusterTasksForUser(data) {
       const state = cell(job.state);
       state.title = job.reason || '';
       jobs.append(row([job.id, name, job.user, state, job.nodelist || job.reason || job.nodes,
-                        job.reserved_cores, `${job.elapsed} / ${job.limit}`, slurmyCell(job)]));
+                        clusterAllocationDescription(job), `${job.elapsed} / ${job.limit}`, slurmyCell(job)]));
     }
     if (!jobs.children.length) empty(jobs, 8, 'No matching active SLURM tasks.');
   }
