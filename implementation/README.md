@@ -5,6 +5,10 @@ the core runner, the generated-submission templates, remote build tooling, and
 optional command-line utilities. The web app and workflow Makefiles use these
 same components; this is not a separate execution model.
 
+See the [full execution chain](execution-chain/README.md) for a diagram and
+description of how creating a workflow leads to solver-problem pair execution
+on the cluster.
+
 <details>
 <summary><strong>📄 The three input files</strong></summary>
 
