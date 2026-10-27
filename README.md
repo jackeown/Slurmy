@@ -271,3 +271,31 @@ assignment is serialized across submissions. A submission retry retains its
 assigned name. Names are stored alongside stable filename-safe IDs in job
 metadata; names never need to be decoded from filenames. Existing job IDs and
 custom job names remain valid.
+
+The palette menu beside the GitHub link in the sidebar offers 16 preset themes:
+four everyday light palettes, four everyday dark palettes, four atmospheric
+dark themes, and four patterned light themes. Hover an option (or focus it
+with the keyboard) to preview the whole app; click to save it in this browser.
+Leaving the menu or dismissing it restores the saved theme. Neon Haze adds a
+subtle grid, cyan bloom, and violet fog; its movement respects reduced-motion
+preferences. Existing light/dark preferences map to Garden/Evergreen.
+
+Preset themes also vary typography, corner radius, surface transparency, hover
+transitions, shadows, and ambient motion. Cursor spotlights are eased, blurred
+layers above table backgrounds and work on cards, headers, and the sidebar.
+Amethyst uses one seamless, page-wide ambient loop.
+
+**Custom Theme** opens a live editor for palette colors, installed fonts,
+corner radius, glass opacity/blur, patterns, hover effect/smoothing/strength,
+transition duration, background motion, box shadows, and heading text shadows.
+You can choose a local PNG/JPEG/WebP/GIF background (up to 20 MB), its fit, and
+opacity. Large images are resized/compressed locally before preview and saving. Every control previews immediately. **Save Custom Theme** stores the
+settings and image in this browser; **Discard Changes** or Escape restores the
+saved theme. A storage-quota error keeps the editor open so the image can be
+removed. Reduced-motion preferences disable CSS motion effects.
+
+Cursor effects also work over the page background. Custom Theme offers a soft
+spotlight, a directional ribbon that follows movement, and a living mist with
+slowly changing wisps, alongside the other hover styles. Aurora and Amethyst
+use living mist; Neon Haze uses the directional ribbon. All are subtle and
+respect reduced-motion preferences.

@@ -134,10 +134,6 @@ function initCollapsibles(){
 window.initCollapsibles=initCollapsibles;
 initTableSorting();
 initCollapsibles();
-const themeToggle=$('#theme-toggle');
-function setTheme(theme){document.documentElement.dataset.theme=theme;themeToggle?.setAttribute('aria-pressed',String(theme==='dark'));const label=themeToggle?.querySelector('span:last-child');if(label)label.textContent=theme==='dark'?'Light mode':'Dark mode';}
-setTheme(document.documentElement.dataset.theme||'light');
-themeToggle?.addEventListener('click',()=>{const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';localStorage.setItem('slurmy-theme',theme);setTheme(theme);});
 $('#host-form')?.addEventListener('submit',event=>{event.preventDefault();const url=new URL(location.href);url.searchParams.set('host',$('#host').value);location.href=url;});
 
 let operationTimer, currentOperationId=null, operationHidden=false, jobAction=null;
@@ -422,7 +418,7 @@ const submitMenu=$('#submit-menu'),submitMenuToggle=$('#submit-menu-toggle');
 function closeSubmitMenu(){if(!submitMenu)return;submitMenu.hidden=true;submitMenuToggle.setAttribute('aria-expanded','false');}
 submitMenuToggle?.addEventListener('click',()=>{submitMenu.hidden=!submitMenu.hidden;submitMenuToggle.setAttribute('aria-expanded',String(!submitMenu.hidden));});
 document.addEventListener('click',event=>{if(submitMenu&&!event.target.closest('#submit-menu-toggle')&&!event.target.closest('#submit-menu'))closeSubmitMenu();if(syncMenu&&!event.target.closest('#sync-menu-toggle')&&!event.target.closest('#sync-menu'))closeSyncMenu();});
-document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!submitMenu?.hidden){closeSubmitMenu();submitMenuToggle.focus();}});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&submitMenu&&!submitMenu.hidden){closeSubmitMenu();submitMenuToggle.focus();}});
 function workflowAction(action){closeSubmitMenu();startOperation('/api/workflow/action?'+params({directory:document.body.dataset.directory}),{action,name:$('#new-job-name')?.value||''});}
 $('#prepare')?.addEventListener('click',()=>workflowAction('prepare'));
 $('#submit')?.addEventListener('click',()=>workflowAction('prepare-submit'));

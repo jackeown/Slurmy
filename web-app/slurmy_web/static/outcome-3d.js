@@ -35,6 +35,7 @@ lamp.position.set(-3, 8, 5); scene.add(lamp);
 const raycaster = new THREE.Raycaster(), pointer = new THREE.Vector2(), bars = [];
 let statuses = [], solvers = [], counts = [];
 const axisLabels = [];
+let themeDirty = false, themeFrame = null;
 let latestItems = [], preferredStatusOrder = [];
 try { const saved = JSON.parse(localStorage.getItem('slurmy-cube-status-order') || '[]'); if (Array.isArray(saved)) preferredStatusOrder = saved.filter(key => typeof key === 'string'); } catch {}
 const countSort = {key: 'solver', direction: 'asc'};
@@ -171,7 +172,7 @@ function clearChart() {
 function addLabel(text, x, y, z, width = 2.2) {
   const surface = document.createElement('canvas'); surface.width = 512; surface.height = 80;
   const ctx = surface.getContext('2d');
-  ctx.font = '600 32px system-ui';
+  ctx.font = '600 32px ' + (getComputedStyle(document.documentElement).getPropertyValue('--theme-font').trim() || 'system-ui');
   ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || '#20332e';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, 256, 40, 480);
   const texture = new THREE.CanvasTexture(surface);
@@ -280,7 +281,7 @@ update(window.outcomeCubeData || []);
 toggle.addEventListener('click', () => {
   panel.hidden = !panel.hidden; toggle.setAttribute('aria-expanded', String(!panel.hidden));
   toggle.textContent = panel.hidden ? 'Explore all statuses in 3D' : 'Hide 3D comparison';
-  if (!panel.hidden) resize();
+  if (!panel.hidden) { if(themeDirty){themeDirty=false;rebuild();} resize(); }
 });
 canvas.addEventListener('pointermove', event => {
   if (!renderer || event.buttons) { tooltip.hidden = true; return; }
@@ -299,7 +300,14 @@ canvas.addEventListener('pointermove', event => {
 });
 canvas.addEventListener('pointerleave', () => { tooltip.hidden = true; });
 new ResizeObserver(resize).observe(viewport);
-new MutationObserver(() => { rebuild(); resize(); }).observe(document.documentElement,
-  {attributes: true, attributeFilter: ['data-theme']});
+new MutationObserver(() => {
+  themeDirty = true;
+  if(panel.hidden || themeFrame !== null)return;
+  themeFrame = requestAnimationFrame(() => {
+    themeFrame = null;
+    if(!panel.hidden && themeDirty){themeDirty=false;rebuild();resize();}
+  });
+}).observe(document.documentElement,
+  {attributes: true, attributeFilter: ['data-theme', 'data-color-theme', 'data-theme-revision']});
 function animate() { requestAnimationFrame(animate); if (controls && !panel.hidden) controls.update(); }
 animate();

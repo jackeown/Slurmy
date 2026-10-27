@@ -1,1 +1,4 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><title>Slurmy · Error</title><body><h1>Could Not Open This Page</h1><p>{{ message }}</p><a href="/">Back to Slurmy</a></body></html>
+{% extends 'base.html' %}
+{% block title %}Page Unavailable{% endblock %}
+{% block page_heading %}<p class="eyebrow">WORKSPACE</p><h1>Could Not Open This Page</h1>{% endblock %}
+{% block content %}<section class="panel"><p>{{ message }}</p><a class="button secondary" href="{{ url_for('index', host=host) }}">← Back to Slurmy</a></section>{% endblock %}

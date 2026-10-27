@@ -338,7 +338,7 @@ def create_app():
 
     @app.after_request
     def headers(response):
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'same-origin'
         response.headers['Cache-Control'] = 'no-store'
@@ -355,7 +355,11 @@ def create_app():
             code, message = 500, 'Unexpected error. See web-app/.state/server.log.'
         if request.path.startswith('/api/'):
             return jsonify(error=message), code
-        return render_template('error.html', message=message), code
+        selected_host = request.args.get('host') or os.environ.get('SLURMY_HOST', 'datalab')
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', selected_host):
+            selected_host = 'datalab'
+        session.setdefault('csrf', secrets.token_hex(32))
+        return render_template('error.html', message=message, host=selected_host, csrf=session['csrf']), code
 
     def host():
         return workflows.alias(request.args.get('host') or os.environ.get('SLURMY_HOST', 'datalab'))
