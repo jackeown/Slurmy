@@ -599,12 +599,12 @@ def create_app():
             for local in (local_new, verbose_new) if new_id != job_id else (local_old, verbose_old):
                 if not local.is_dir():
                     continue
-                for filename in ('metadata.json', 'sync-metadata.json'):
+                for filename in ('metadata.json', 'diagnostics/metadata.json', 'sync-metadata.json'):
                     path = local / filename
                     if not path.is_file():
                         continue
                     data = json.loads(path.read_text(encoding='utf-8'))
-                    if filename == 'metadata.json':
+                    if path.name == 'metadata.json':
                         history = data.get('previous_job_ids', [])
                         if job_id != new_id and job_id not in history:
                             history.append(job_id)
@@ -952,6 +952,14 @@ def create_app():
                 abort(409, 'The server is stopping. Reopen the app to continue.')
             active = [op for op in operations.values()
                       if op['scope'] == scope and op['state'] == 'running']
+            if label == 'delete':
+                deleting = next((op for op in active if op['label'] == 'delete'), None)
+                if deleting:
+                    return jsonify(deleting), 202
+                dependencies = list(active)
+                active = []
+            else:
+                dependencies = []
             if label == 'stop':
                 # Double clicks and requests from other tabs must join the
                 # existing stop, rather than report it as a conflicting action.
@@ -975,8 +983,19 @@ def create_app():
         def run():
             try:
                 with log.open('w') as stream:
+                    for previous in dependencies:
+                        stream.write(f"Waiting for {previous['label']} to finish before stopping and deleting…\n")
+                        stream.flush()
+                        deadline = time.monotonic() + 300
+                        while previous['state'] == 'running':
+                            if time.monotonic() >= deadline:
+                                raise RuntimeError('The previous operation has not finished; job was kept. Retry Delete when it completes.')
+                            time.sleep(0.2)
                     code = subprocess.run(argv, cwd=cwd, env=environment, stdout=stream, stderr=subprocess.STDOUT).returncode
                 operations[key].update(state='done' if code == 0 else 'failed', code=code)
+                if label == 'delete' and code == 0:
+                    with guard:
+                        announced_jobs.pop((environment['SLURMY_HOST'], scope.split(':', 1)[1]), None)
                 match = re.search(r'^Slurmy job ID: ([A-Za-z0-9._-]+)$', log.read_text(encoding='utf-8', errors='replace'), re.MULTILINE)
                 if match and show_dispatching:
                     announce_operation_job(operations[key], match.group(1), cwd, environment)
@@ -1041,48 +1060,14 @@ def create_app():
     @app.post('/api/jobs/<job_id>/delete')
     def delete_job(job_id):
         job_id = safe_job(job_id)
-        job = job_snapshot(job_id, force=True)
-        if job.percent < 100 and job.submission_state != 'stopped':
-            abort(409, 'Stop this unfinished job and wait for Stop to complete before deleting it.')
-        if job.active_records:
-            abort(409, 'This job still has active SLURM allocations. Cancel them and wait for completion before deleting it.')
-        with guard:
-            if any(op['scope'] == host() + ':' + job_id and op['state'] == 'running' for op in operations.values()):
-                abort(409, 'Wait for the active job operation to finish before deleting it.')
-        local = REPO / 'job-results' / job_id
-        verbose_local = REPO / 'job-results' / 'verbose' / job_id
-        if local.is_symlink() or verbose_local.is_symlink():
-            abort(409, 'The local result directory is a symlink; remove it manually.')
-        script = r'''set -euo pipefail
-job="$HOME/slurmy/jobs/$1"
-[[ -d "$job" && ! -L "$job" ]] || { echo 'Job directory not found or is a symlink.' >&2; exit 2; }
-exec 9> "$job/.submit-controller.lock"
-flock -n 9 || { echo 'The submission controller is still active.' >&2; exit 3; }
-snapshot=$(squeue -h -r -u "$USER" -o '%Z') || { echo 'Cannot confirm SLURM queue state; deletion refused.' >&2; exit 3; }
-if grep -Fxq -- "$job" <<< "$snapshot"; then
-    echo 'SLURM still has an active allocation for this job.' >&2
-    exit 3
-fi
-rm -r -- "$job"
-'''
-        try:
-            result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host(), 'bash', '-s', '--', job_id],
-                                    input=script, text=True, capture_output=True, timeout=60, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            abort(503, f'Could not confirm cluster deletion over SSH: {exc}. The local results were kept.')
-        if result.returncode:
-            abort(409, (result.stderr.strip() or 'Could not delete the cluster job directory.') + ' Local results were kept.')
-        if bool((request.get_json() or {}).get('delete_local')):
-            try:
-                for directory in (local, verbose_local):
-                    if directory.is_dir():
-                        shutil.rmtree(directory)
-            except OSError as exc:
-                abort(500, f'Cluster job was deleted, but local results could not be removed: {exc}')
-        with guard:
-            announced_jobs.pop((host(), job_id), None)
-            cache.clear()
-        return jsonify(deleted=job_id, local_deleted=not local.exists() and not verbose_local.exists())
+        # Deletion is an observable background operation: stop, wait, then remove.
+        delete_local = bool((request.get_json() or {}).get('delete_local'))
+        argv = [sys.executable, str(REPO/'implementation/slurmy-job.py'),
+                'delete', job_id, '--host', host()]
+        if delete_local:
+            argv.append('--delete-local')
+        return operation(argv, REPO, {**os.environ, 'SLURMY_HOST': host()},
+                         'delete', host() + ':' + job_id)
 
     @app.get('/api/jobs/<job_id>/delete-options')
     def job_delete_options(job_id):
@@ -1137,7 +1122,7 @@ rm -r -- "$job"
         op = operations[key]
         phase = ({'sync': 'Download results', 'sync_verbose': 'Download complete/verbose results',
                   'stop': 'Stop job', 'resume': 'Resume unfinished solver-problem pairs',
-                  'cancel': 'Cancel SLURM task'}.get(op['label'])
+                  'delete': 'Stop and delete job', 'cancel': 'Cancel SLURM task'}.get(op['label'])
                  or submission_phase(content))
         return jsonify(**op, log=content, phase=phase)
 

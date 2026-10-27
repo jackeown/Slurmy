@@ -73,6 +73,54 @@ class ExportTests(unittest.TestCase):
         sync.consolidate_solver_streams(self.root, self.records)
         self.assert_archives(self.root)
 
+    def test_verbose_layout_migrates_old_download_and_preserves_raw_references(self):
+        originals = {path.name: path.read_bytes() for path in (self.root/'results').iterdir()}
+        args = SimpleNamespace(host='test-host', job_id='study', ssh_timeout=10,
+                               output=str(self.root), follow=False)
+        with patch.object(sync, 'resolve_job_id', return_value='study'), patch.object(sync, 'rsync_job', return_value=0) as transfer:
+            self.assertEqual(sync.sync_loop(args), 0)
+            transfer.assert_called_with('test-host', 'study', self.root/'diagnostics', 10)
+            self.assertFalse((self.root/'results').exists())
+            self.assert_archives(self.root)
+            for name, body in originals.items():
+                self.assertEqual((self.root/'diagnostics/results'/name).read_bytes(), body)
+            pairs = self.root/'solver-problem-pairs'
+            expected = []
+            for task_id, problem in enumerate(self.problems):
+                stem = f'E_solver + strategy___{problem}___{task_id:09d}'
+                path = pairs/(stem+'.tgz')
+                expected.append(path.name)
+                with tarfile.open(path) as archive:
+                    self.assertEqual(archive.getnames(), [stem, stem+'/'+stem+'.log', stem+'/'+stem+'.stderr.log'])
+                    self.assertEqual(archive.extractfile(stem+'/'+stem+'.log').read(), b'solver stdout')
+                    self.assertEqual(archive.extractfile(stem+'/'+stem+'.stderr.log').read(), b'solver stderr')
+            self.assertEqual(sorted(p.name for p in pairs.glob('*.tgz')), sorted(expected))
+            before = {p.name: p.stat().st_mtime_ns for p in pairs.glob('*.tgz')}
+            self.assertEqual(sync.sync_loop(args), 0)
+            self.assertEqual(before, {p.name: p.stat().st_mtime_ns for p in pairs.glob('*.tgz')})
+            summary = json.loads((self.root/'sync-metadata.json').read_text())
+            self.assertEqual(summary['completed_tasks'], len(self.problems))
+            self.assertEqual(summary['local_directory'], str(self.root))
+            self.assertTrue((self.root/'CONTENTS.txt').is_file())
+
+    def test_verbose_pair_republish_replaces_latest_but_keeps_raw_history(self):
+        destination = self.root/'readable'
+        destination.mkdir()
+        sync.publish_verbose_pairs(destination, self.root)
+        record = self.records[0]
+        old = self.root/'results'/record['archive']
+        new = self.root/'results'/'batch_retry.tar.gz'
+        shutil.copyfile(old, new)
+        csv_path = self.root/'results/batch_000000_task_000000000.csv'
+        csv_path.write_text(csv_path.read_text().replace(old.name, new.name))
+        unrelated = destination/'solver-problem-pairs/notes.txt'
+        unrelated.write_text('keep me')
+        sync.publish_verbose_pairs(destination, self.root)
+        self.assertTrue(old.exists())
+        self.assertTrue(new.exists())
+        self.assertEqual(len(list((destination/'solver-problem-pairs').glob('*.tgz'))), len(self.problems))
+        self.assertEqual(unrelated.read_text(), 'keep me')
+
     def test_plus_and_caret_are_distinct_even_for_same_task_id(self):
         self.assertNotEqual(
             remote_export.stream_name({'problem': 'SET002+3.p'}, 0, False),

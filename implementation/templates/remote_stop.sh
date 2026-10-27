@@ -21,6 +21,7 @@ for attempt in {1..30}; do
         echo 'Job stopped: no active SLURM allocations or submission controller remain.'
         exit 0
     fi
+    echo "Waiting for SLURM tasks and submission controller to stop (check $attempt/30)…"
     sleep 2
 done
 echo 'Stop requested, but SLURM or the submission controller is still active; check again before deletion.' >&2

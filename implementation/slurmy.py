@@ -133,6 +133,7 @@ class BuildSpec:
     recipe: Path | None
     source: Path | None = None
     artifact: str | None = None
+    build_policy: str = "always"
 
 
 def read_builds(filename: Path, check_paths: bool = True) -> list[BuildSpec]:
@@ -160,7 +161,10 @@ def read_builds(filename: Path, check_paths: bool = True) -> list[BuildSpec]:
                 source = root
             if any(root == previous.root for previous in builds):
                 raise SlurmyError(f'duplicate resource root: {root}')
-            builds.append(BuildSpec(root, recipe, source, artifact))
+            policy = record.get("build_policy", "always")
+            if policy not in {"always", "changed"}:
+                raise SlurmyError("Unknown build policy")
+            builds.append(BuildSpec(root, recipe, source, artifact, policy))
         return builds
     lines = content.splitlines()
     if len(lines) % 2:
@@ -429,6 +433,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
                        + (f'--context {shlex.quote(str(build.source))} ' if build.source else '')
                        + ('--in-place ' if build.source == build.root else '')
                        + f'--output {shlex.quote(str(build.root))} '
+                       + f'--build-policy {build.build_policy} '
                        + f'--artifact={shlex.quote(build.artifact or ".slurmy-built")} '
                        + '--sbatch-option="--partition=${SLURMY_PARTITION:?Set SLURMY_PARTITION}" '
                        + '${SLURMY_RESERVATION:+--sbatch-option=--reservation=$SLURMY_RESERVATION}')

@@ -347,7 +347,8 @@ def import_bundle(stream, name):
                         pair_order=payload.get('pair_order', 'solver-major'), building_mode='create',
                         resources=[dict(root=build['root'], source=build.get('source') or '',
                                         mode='script' if build.get('recipe') else 'none',
-                                        script=build.get('recipe') or '', artifact=build.get('artifact') or '')
+                                        script=build.get('recipe') or '', artifact=build.get('artifact') or '',
+                                        build_policy=build.get('build_policy', 'always'))
                                    for build in resources])
             data = workflows.resource_roles(data)
         (staging/'.slurmy-workflow.json').write_text(json.dumps(data, indent=2))

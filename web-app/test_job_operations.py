@@ -101,40 +101,43 @@ class JobOperationTests(unittest.TestCase):
         self.assertEqual(self.action('resume').status_code, 202)
         self.assertEqual(self.action('stop').status_code, 202)
 
-    def test_delete_refreshes_cached_state_and_blocks_active_operation(self):
-        self.action('sync')  # Populate a cached, unfinished snapshot.
-        self.job = SimpleNamespace(percent=20, submission_state='stopped', active_records=[], task_count=10)
-        # A fresh stopped snapshot must still not allow deleting an active download.
-        response = self.client.post('/api/jobs/test-job/delete', json={}, headers=self.headers)
-        self.assertEqual(self.fetch.call_count, 2)
-        self.assertEqual(response.status_code, 409)
-        self.assertIn('active job operation', response.json['error'])
+    def delete(self, **options):
+        return self.client.post('/api/jobs/test-job/delete', json=options, headers=self.headers)
 
-    def test_delete_rechecks_slurm_after_stop(self):
-        self.action('unknown')  # Cache the unfinished job without starting work.
-        self.job = SimpleNamespace(percent=20, submission_state='stopped', active_records=[], task_count=10)
-        with patch.object(web.subprocess, 'run', return_value=SimpleNamespace(
-                returncode=1, stderr='SLURM still has an active allocation for this job.')) as run:
-            response = self.client.post('/api/jobs/test-job/delete', json={}, headers=self.headers)
-        self.assertEqual(self.fetch.call_count, 2)
-        self.assertEqual(response.status_code, 409)
-        self.assertIn('active allocation', response.json['error'])
-        script = run.call_args.kwargs['input']
-        self.assertLess(script.index('flock -n 9'), script.index('squeue'))
-        self.assertLess(script.index('squeue'), script.index('rm -r'))
+    def test_delete_unfinished_job_starts_background_stop_and_delete(self):
+        response = self.delete(delete_local=True)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json['label'], 'delete')
+        with patch.object(web.subprocess, 'run', return_value=SimpleNamespace(returncode=0)) as run:
+            web.threading.Thread.call_args.kwargs['target']()
+        argv = run.call_args.args[0]
+        self.assertIn('delete', argv)
+        self.assertIn('--delete-local', argv)
+        state = self.client.get('/api/operations/'+response.json['id']).json
+        self.assertEqual(state['state'], 'done')
+        self.assertEqual(state['phase'], 'Stop and delete job')
 
-    def test_stopped_idle_job_can_be_deleted(self):
-        self.job = SimpleNamespace(percent=20, submission_state='stopped', active_records=[], task_count=10)
+    def test_repeated_delete_joins_existing_operation(self):
+        first, second = self.delete(), self.delete()
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(first.json['id'], second.json['id'])
+        self.assertEqual(web.threading.Thread.call_count, 1)
+
+    def test_delete_waits_for_stop_and_blocks_resume(self):
+        stopping = self.action('stop')
+        deleting = self.delete()
+        self.assertEqual(deleting.status_code, 202)
+        self.assertEqual(self.action('resume').status_code, 409)
+        # Complete the preceding Stop before executing the Delete worker.
+        worker = web.threading.Thread.call_args.kwargs['target']
         with patch.object(web.subprocess, 'run', return_value=SimpleNamespace(returncode=0)):
-            response = self.client.post('/api/jobs/test-job/delete', json={}, headers=self.headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json['deleted'], 'test-job')
-
-    def test_delete_unfinished_job_is_rejected(self):
-        with patch.object(web.subprocess, 'run') as run:
-            response = self.client.post('/api/jobs/test-job/delete', json={}, headers=self.headers)
-        self.assertEqual(response.status_code, 409)
-        run.assert_not_called()
+            # Operation objects are returned by reference through the worker closure.
+            stop_worker = web.threading.Thread.call_args_list[0].kwargs['target']
+            stop_worker()
+            worker()
+        state = self.client.get('/api/operations/'+deleting.json['id']).json
+        self.assertEqual(state['state'], 'done')
+        self.assertIn('Waiting for stop', state['log'])
 
 
 if __name__ == '__main__':

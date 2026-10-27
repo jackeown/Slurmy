@@ -216,8 +216,15 @@ for stderr). Problem filenames, including their extensions and characters such
 as `+` and `^`, are preserved exactly. Unsafe filename characters in the job
 name are replaced with hyphens. The arrow menu offers
 **Complete/verbose download**
-for raw per-solver-problem pair archives, SLURM logs, plans, and metadata under
-`job-results/verbose/JOB_ID/`.
+under `job-results/verbose/JOB_ID/`. Readable individual archives are grouped in
+`solver-problem-pairs/` and named
+`<solver>___<original-problem-filename>___<solver-problem-pair-id>.tgz`.
+Each extracts into a matching directory containing solver logs and diagnostic
+files. The `diagnostics/` directory preserves the original cluster files,
+including raw archives and retry history, SLURM logs, plans, and metadata.
+Consolidated stdout/stderr archives and download statistics remain at the top
+level. `CONTENTS.txt` explains the layout. Existing verbose downloads are
+organized into this layout on their next download.
 
 </blockquote>
 </details>

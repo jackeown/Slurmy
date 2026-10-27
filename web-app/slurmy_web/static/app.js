@@ -160,7 +160,7 @@ async function watchOperation(id){
     if(match&&['prepare and dispatch SLURM job','dispatch prepared SLURM job'].includes(op.label)){announceJob(match[1],op.requested_name);if($('#jobs-body'))renderJobs();const node=link('View submitted job →','/jobs/'+encodeURIComponent(match[1])+'?'+params({}));node.id='submitted-link';$('#operation').append(node);refresh();}
     if(op.scope===host+':'+document.body.dataset.job){jobAction=op.state==='running'?op.label:null;jobActionControls();}
     if(op.state==='running'){lockWorkflowActions(true);operationTimer=setTimeout(()=>watchOperation(id),1500);}
-    else{lockWorkflowActions(false);sessionStorage.removeItem('slurmy-operation');text('#show-operation','View completed operation');await refresh(true);}
+    else{lockWorkflowActions(false);sessionStorage.removeItem('slurmy-operation');text('#show-operation','View completed operation');if(op.label!=='delete')await refresh(true);}
   }catch(error){jobAction=null;jobActionControls();lockWorkflowActions(false);text('#operation-log',error.message);sessionStorage.removeItem('slurmy-operation');}
 }
 $('#dismiss-operation')?.addEventListener('click',()=>{operationHidden=true;if(currentOperationId)sessionStorage.setItem('slurmy-operation-hidden',currentOperationId);operationVisibility();});
@@ -190,6 +190,7 @@ async function deleteJob(id, control, redirect=false){
    if(confirm(`The last download of “${id}” was ${options.percent_complete==null?'not verified':`${Number(options.percent_complete).toFixed(1)}% complete`}. Download the latest results before deleting the cluster job?`)){
     control.textContent='Downloading…';
     const op=await api(`/api/jobs/${encodeURIComponent(id)}/action?`+params({}),{action:'sync'});
+    operationHidden=false;watchOperation(op.id);
     let state=op;
     while(state.state==='running'){
      await new Promise(resolve=>setTimeout(resolve,1500));
@@ -199,7 +200,15 @@ async function deleteJob(id, control, redirect=false){
    }
   }
   const deleteLocal=options.synced&&confirm(`Also delete downloaded results for “${id}” from this laptop?\n\nCancel keeps the local copy; the cluster job will still be deleted.`);
-  await api(`/api/jobs/${encodeURIComponent(id)}/delete?`+params({}),{delete_local:deleteLocal});
+  control.textContent='Stopping and deleting…';
+  const deleting=await api(`/api/jobs/${encodeURIComponent(id)}/delete?`+params({}),{delete_local:deleteLocal});
+  operationHidden=false;sessionStorage.removeItem('slurmy-operation-hidden');watchOperation(deleting.id);
+  let deletion=deleting;
+  while(deletion.state==='running'){
+   await new Promise(resolve=>setTimeout(resolve,1500));
+   deletion=await api(`/api/operations/${encodeURIComponent(deleting.id)}`);
+  }
+  if(deletion.state!=='done')throw new Error(`Deletion did not complete. ${deletion.log||''}`);
   savePendingJobs(pendingJobs().filter(item=>item.id!==id));
   if(redirect){location.href='/?'+params({});return;}
   jobs=jobs.filter(item=>item.id!==id);renderJobs();

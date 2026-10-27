@@ -213,7 +213,10 @@ def specification(data, destination_override=None, progress=None):
             if artifact_path and (artifact_path.is_absolute() or not artifact_path.parts or '..' in artifact_path.parts or '\n' in artifact):
                 raise ValueError('Expected executable must be a relative path inside the solver root.')
             from slurmy import BuildSpec
-            builds.append(BuildSpec(root, recipe, source or (root if recipe and not artifact else None), artifact or None))
+            policy = entry.get("build_policy", "always")
+            if policy not in {"always", "changed"}:
+                raise ValueError("Choose a valid build policy.")
+            builds.append(BuildSpec(root, recipe, source or (root if recipe and not artifact else None), artifact or None, policy))
     else:
         raise ValueError('Choose how to define resource builds.')
     if data.get('limiter_mode') == 'existing':
@@ -235,11 +238,11 @@ def specification(data, destination_override=None, progress=None):
     if axiom_patterns:
         files['axiom-globs.txt'] = '\n'.join(axiom_patterns) + '\n'
     def building_text(staged=None):
-        if data.get('building_mode') == 'existing' and not any(build.artifact for build in builds):
+        if data.get('building_mode') == 'existing' and not any(build.artifact or build.build_policy != 'always' for build in builds):
             return ''.join(str(build.root) + '\n' + (str(build.recipe) if build.recipe else '') + '\n' for build in builds)
         return json.dumps([{'root': str(build.root), 'source': str(build.source) if build.source else '',
                             'recipe': str(staged / build.recipe.name) if staged and build.recipe and build.recipe.name in recipes and build.recipe.parent == destination else str(build.recipe) if build.recipe else '',
-                            'artifact': build.artifact or '', 'legacy': bool(build.recipe and not build.artifact)} for build in builds], indent=2) + '\n'
+                            'artifact': build.artifact or '', 'build_policy': build.build_policy, 'legacy': bool(build.recipe and not build.artifact)} for build in builds], indent=2) + '\n'
     files['building.txt'] = building_text()
     # Reuse the core validator/planner. Preview never builds, submits or keeps files.
     with tempfile.TemporaryDirectory(prefix='slurmy-preview-') as folder:
@@ -556,7 +559,7 @@ def decisions(directory, check_paths=True):
     builds = read_builds(directory / 'building.txt', check_paths=check_paths)
     resources = [dict(root=str(build.root), mode='script' if build.recipe else 'none',
                       script=str(build.recipe) if build.recipe else '', commands='',
-                      source=str(build.source) if build.source else '', artifact=build.artifact or '') for build in builds]
+                      source=str(build.source) if build.source else '', artifact=build.artifact or '', build_policy=build.build_policy) for build in builds]
     limiter = (directory / 'resource_limiter_template.txt').read_text(encoding='utf-8').strip()
     lexer = shlex.shlex(limiter, posix=True)
     lexer.whitespace_split = True
@@ -600,7 +603,8 @@ def copyable_solver_configurations(directory):
         build = resources.get(card['solver_directory'])
         card.update(build_mode='script' if build and build.get('mode') == 'script' else 'none',
                     build_source=str(build.get('source') or '') if build else '',
-                    build_script=str(build.get('script') or '') if build else '')
+                    build_script=str(build.get('script') or '') if build else '',
+                    build_policy=build.get('build_policy', 'always') if build else 'always')
         result.append(card)
     return result
 
@@ -630,11 +634,12 @@ def copyable_limiter_configuration(directory):
     if not matches:
         raise ValueError('This workflow has no build resource containing its limiter executable.')
     _, _, entry, root = max(matches, key=lambda item: item[:2])
-    resource = {key: str(entry.get(key) or '') for key in ('mode', 'script', 'commands', 'source', 'artifact')}
+    resource = {key: str(entry.get(key) or '') for key in ('mode', 'script', 'commands', 'source', 'artifact', 'build_policy')}
     resource['root'] = str(root)
     for key in ('script', 'source'):
         if resource[key]:
             resource[key] = str(expand_repo_root(resource[key]) or path_at(resource[key], BASE))
+    resource['build_policy'] = resource.get('build_policy') or 'always'
     if resource['mode'] in {'script', 'commands'} and not resource['artifact']:
         resource['artifact'] = str(limiter_path.relative_to(root))
     return {'invocation': invocation, 'resource': resource}

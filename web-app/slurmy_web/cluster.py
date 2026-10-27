@@ -26,7 +26,7 @@ if [[ -z "$node" ]]; then
 fi
 printf 'TOPOLOGY\n'
 # Node details are also needed when only the jobs on one node are requested.
-sinfo -a -h -N -o '%N|%Z' | sort -u
+sinfo -a -h -N -o '%N|%Z|%Y' | sort -u
 printf 'ALLOCATIONS\n'
 allocations=$(scontrol -a show job -d) || exit 1
 printf '%s\n' "$allocations"
@@ -112,14 +112,21 @@ def parse_status(host, partition, output):
             continue
     hostlists = dict(line.split('|', 1) for line in sections['HOSTS'] if '|' in line)
     topology = {}
+    cores_per_socket = {}
     for line in sections['TOPOLOGY']:
-        name, _, value = line.partition('|')
+        fields = line.split('|')
+        if len(fields) < 2:
+            continue
+        name, value = fields[:2]
         if value.isdigit() and int(value) > 0:
             topology[name] = int(value)
+        if len(fields) > 2 and fields[2].isdigit() and int(fields[2]) > 0:
+            cores_per_socket[name] = int(fields[2])
     # SLURM's CPU_IDs use abstract topology order, with sibling CPUs adjacent.
     # Count distinct physical cores, not NumCPUs or the call's requested cores:
     # socket-exclusive jobs may reserve more cores than the solver uses.
     allocations = {}
+    placements = {}
     job_ids = []
     for line in sections['ALLOCATIONS']:
         identity = re.search(r'\bJobId=(\S+)', line)
@@ -142,6 +149,10 @@ def parse_status(host, partition, output):
                 cores.update(cpu // siblings for cpu in range(int(first), int(last or first) + 1))
             for job_id in job_ids:
                 allocations.setdefault(job_id, {})[node_name] = len(cores)
+                socket_size = cores_per_socket.get(node_name)
+                placements.setdefault(job_id, {})[node_name] = dict(
+                    core_ids=sorted(cores),
+                    socket_ids=sorted({core // socket_size for core in cores}) if socket_size else None)
     for line in sections['METADATA']:
         fields = line.split('|')
         if len(fields) == 3 and fields[1].isdigit() and fields[2].isdigit():
@@ -188,6 +199,7 @@ def parse_status(host, partition, output):
                           all(node in node_cores for node in allocated_nodes) else None)
         entry = dict(id=job_id, user=user, name=name, state=state, nodes=node_count,
                      reserved_cores=reserved_cores, node_cores=node_cores,
+                     node_placement=placements.get(job_id, {}),
                      elapsed=elapsed, limit=limit, nodelist=nodelist,
                      hostnames=allocated_nodes,
                      reason=reason, slurmy=slurmy, slurmy_id=parts[-1] if slurmy else None,

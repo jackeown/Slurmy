@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import fcntl
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -112,7 +115,8 @@ def make_context_archive(source: Path, destination: Path) -> None:
         raise BuildError(f"build context is not a directory: {source}")
     with tarfile.open(destination, "w:gz") as archive:
         for child in sorted(source.iterdir(), key=lambda path: path.name):
-            archive.add(child, arcname=child.name)
+            archive.add(child, arcname=child.name,
+                        filter=lambda entry: None if PurePosixPath(entry.name).name in CACHE_FILES else entry)
 
 
 def build_job_script(args: argparse.Namespace, *, has_context: bool) -> str:
@@ -287,11 +291,84 @@ def execute_build(args: argparse.Namespace) -> None:
         raise BuildError(f"SLURM build job {job_id} ended in state {state or 'UNKNOWN'}")
 
     output.mkdir(parents=True, exist_ok=True)
+    try:
+        args._inputs_unchanged = input_fingerprint(args) == getattr(args, '_initial_fingerprint', None)
+    except (BuildError, OSError):
+        args._inputs_unchanged = False
     run(["rsync", "-a", "--delay-updates", "--partial-dir=.rsync-partial", "-e", "ssh -o BatchMode=yes -o ConnectTimeout=10", "--", f"{args.host}:slurmy/builds/{build_id}/output/", f"{output}/"])
     for artifact in args.artifact:
         if not (output / artifact).exists():
             raise BuildError(f"downloaded output is missing required artifact: {artifact}")
     print(f"Downloaded artifacts to {output}")
+
+
+CACHE_FILES = {'.slurmy-build-cache.json', '.slurmy-build-cache.lock'}
+
+
+def tree_fingerprint(root: Path) -> str:
+    """Hash names, file contents, permissions and symlink targets without following directories."""
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob('*')):
+        if path.name in CACHE_FILES:
+            continue
+        relative = path.relative_to(root).as_posix()
+        stat = path.lstat()
+        digest.update(json.dumps([relative, stat.st_mode]).encode())
+        if path.is_symlink():
+            # Symlinked inputs may live outside the source directory. Disable
+            # reuse rather than claim we tracked their external contents.
+            raise BuildError('Source/output contains symlinks; build reuse is disabled for this resource.')
+        elif path.is_file():
+            with path.open('rb') as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                    digest.update(chunk)
+        elif not path.is_dir():
+            raise BuildError(f'Cannot fingerprint special file: {path}')
+    return digest.hexdigest()
+
+
+def input_fingerprint(args) -> str:
+    settings = {key: value for key, value in vars(args).items()
+                if key not in {'name', 'poll_interval', 'build_policy'} and not key.startswith('_')}
+    settings['recipe_contents'] = Path(args.recipe).expanduser().read_text()
+    settings['source_contents'] = tree_fingerprint(Path(args.context).expanduser()) if args.context else None
+    settings['driver_contents'] = Path(__file__).read_text()
+    return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()
+
+
+def cached_build(args) -> None:
+    output = Path(args.output).expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    cache = output / '.slurmy-build-cache.json'
+    # Serialize builds sharing one runtime root, including builds from other workflows.
+    with (output / '.slurmy-build-cache.lock').open('w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        before = None
+        try:
+            before = input_fingerprint(args)
+            recorded = json.loads(cache.read_text()) if cache.exists() else {}
+            valid = all((output / artifact).is_file() for artifact in args.artifact or [])
+            if (args.build_policy == 'changed' and valid and recorded.get('inputs') == before
+                    and recorded.get('outputs') == tree_fingerprint(output)):
+                print(f'Reusing successful build in {output}: source, recipe, settings and outputs unchanged.', flush=True)
+                return
+        except (BuildError, OSError, ValueError) as exc:
+            print(f'Build cache unavailable: {exc}', flush=True)
+        cache.unlink(missing_ok=True)
+        args._initial_fingerprint = before
+        execute_build(args)
+        # Downloading an in-place build changes the source tree itself. Record
+        # that final tree, but only if local inputs stayed unchanged during the build.
+        if before is not None and getattr(args, '_inputs_unchanged', False):
+            try:
+                record = dict(inputs=input_fingerprint(args), outputs=tree_fingerprint(output))
+                temporary = cache.with_suffix('.tmp')
+                temporary.write_text(json.dumps(record))
+                temporary.replace(cache)
+            except (BuildError, OSError, ValueError) as exc:
+                print(f'Build succeeded; reuse could not be recorded: {exc}', flush=True)
+        else:
+            print('Build succeeded; inputs changed during the build or cannot be tracked. Next job will rebuild.', flush=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -306,6 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--context", metavar="DIRECTORY", help="optional local directory unpacked into the build work directory")
     parser.add_argument("--output", required=True, metavar="DIRECTORY", help="local directory that receives the built artifacts")
     parser.add_argument("--artifact", action="append", type=checked_artifact, metavar="RELATIVE_PATH", help="required path below the output directory; repeat as needed")
+    parser.add_argument("--build-policy", choices=("always", "changed"), default="always")
     parser.add_argument("--in-place", action="store_true", help="run the recipe in the copied source directory and download its entire resulting tree; no Slurmy variables are needed")
     parser.add_argument("--cpus-per-task", type=int, default=4)
     parser.add_argument("--memory", type=slurm_memory, default="4096M", help="SLURM memory request (default: 4GiB)")
@@ -324,7 +402,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.poll_interval < 0.2:
         raise SystemExit("--poll-interval must be at least 0.2 seconds")
     try:
-        execute_build(args)
+        cached_build(args)
     except (BuildError, OSError, tarfile.TarError) as exc:
         print(f"Slurmy build: {exc}", file=sys.stderr)
         return 1

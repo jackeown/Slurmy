@@ -35,3 +35,24 @@ for a separate source and runtime root may still write selected files to
 The driver verifies the named artifacts before downloading with rsync.
 Remote build directories and logs remain under `~/slurmy/builds/` for inspection.
 This tool does not execute the downloaded binaries on your computer.
+
+## Reusing successful builds
+
+The workflow editor offers **Build on every run?** for solver and resource builds:
+**build for every job** (the existing default), or **only build on first job or
+when source changes**. Standalone builds accept `--build-policy changed`.
+
+Slurmy hashes the source tree contents, paths and permissions, recipe, build
+settings and driver. It also verifies that downloaded outputs are intact.
+A successful build/download records a local receipt in the runtime root;
+unchanged inputs and outputs reuse that build without submitting a build job.
+In-place builds record the tree after downloading, so generated build files do
+not trigger a rebuild on every job. Failed builds invalidate the receipt. If
+local inputs change during a build, its result is not cached. Builds sharing a
+runtime root are serialized.
+
+This tracks local files, not remote Git branches, downloaded dependencies,
+cluster modules, or other external state. Choose **build for every job** to
+refresh those. Source/output trees containing symlinks or special files build
+normally but do not reuse builds, because their external inputs cannot safely
+be inferred. Workflow exports preserve the selected policy.

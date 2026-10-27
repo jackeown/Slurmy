@@ -564,6 +564,83 @@ def consolidate_solver_streams(destination: Path, records: dict[int, dict[str, A
             path.unlink(missing_ok=True)
 
 
+def publish_verbose_pairs(destination: Path, raw: Path) -> None:
+    """Publish readable latest-result archives without rewriting the raw mirror."""
+    definitions = {int(item['task_id']): item for item in
+                   (json.loads(line) for line in (raw / 'manifest.jsonl').read_text().splitlines())}
+    records = read_result_records(raw)
+    pairs = destination / 'solver-problem-pairs'
+    pairs.mkdir(exist_ok=True)
+    index_path = pairs / '.archive-index.json'
+    try:
+        previous = json.loads(index_path.read_text())
+    except (OSError, ValueError):
+        previous = {}
+    current = {}
+    for task_id, record in sorted(records.items()):
+        original = str(record.get('archive', ''))
+        if not re.fullmatch(r'[A-Za-z0-9._-]+\.tar\.gz', original):
+            continue
+        source = raw / 'results' / original
+        if not source.is_file():
+            continue
+        definition = definitions.get(task_id, {})
+        stem = stream_name(definition, task_id, False).removesuffix('.log')
+        name = stem + '.tgz'
+        target = pairs / name
+        stat = source.stat()
+        signature = [original, stat.st_size, stat.st_mtime_ns]
+        current[name] = signature
+        if previous.get(name) == signature and target.is_file():
+            continue
+        fd, temporary = tempfile.mkstemp(prefix='.pair-', suffix='.tmp', dir=pairs)
+        os.close(fd)
+        try:
+            with tarfile.open(source, 'r:gz') as archive, tarfile.open(temporary, 'w:gz') as output:
+                folder = tarfile.TarInfo(stem + '/')
+                folder.type, folder.mode = tarfile.DIRTYPE, 0o700
+                output.addfile(folder)
+                for member in archive:
+                    if not member.isfile():
+                        continue  # Original archive, including links, remains in diagnostics.
+                    relative = PurePosixPath(member.name)
+                    if relative.is_absolute() or '..' in relative.parts:
+                        raise SyncError(f'Unsafe archive member: {member.name}')
+                    basename = relative.name
+                    if basename.endswith('.solver.log'):
+                        relative = PurePosixPath(stem + '.log')
+                    elif basename.endswith('.solver-stderr.log'):
+                        relative = PurePosixPath(stem + '.stderr.log')
+                    elif basename.startswith('task_') and '.' in basename:
+                        relative = PurePosixPath(stem + '.' + basename.split('.', 1)[1])
+                    info = tarfile.TarInfo(f'{stem}/{relative}')
+                    info.size, info.mode = member.size, 0o600
+                    content = archive.extractfile(member)
+                    if content is not None:
+                        output.addfile(info, content)
+            os.replace(temporary, target)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+    # Remove only previously generated files, never unrelated user files.
+    for name in previous.keys() - current.keys():
+        if Path(name).name == name and name.endswith('.tgz'):
+            (pairs / name).unlink(missing_ok=True)
+    temporary_index = index_path.with_suffix('.tmp')
+    temporary_index.write_text(json.dumps(current))
+    temporary_index.replace(index_path)
+    (destination / 'CONTENTS.txt').write_text(
+        'Complete Slurmy download\n\n'
+        'solver-problem-pairs/: latest downloaded result for each solver-problem pair,\n'
+        'named solver___original-problem-filename___pair-id.tgz. Each extracts into\n'
+        'a matching directory and includes solver stdout/stderr and diagnostic files.\n'
+        'diagnostics/: unchanged cluster files, original archives (including retries),\n'
+        'SLURM logs, batch plans, manifests and result indexes. Archive references in\n'
+        'these indexes are relative to diagnostics/results/.\n'
+        '*_solver-stdout.tgz and *_solver-stderr.tgz: consolidated solver streams.\n'
+        'sync-metadata.json: download completeness, statistics and warnings.\n'
+        'Unfinished solver-problem pairs may have no archive yet.\n')
+
+
 def sync_loop(args: argparse.Namespace) -> int:
     job_id = resolve_job_id(args.host, args.job_id, args.ssh_timeout)
     destination = (
@@ -576,22 +653,36 @@ def sync_loop(args: argparse.Namespace) -> int:
 
     print(f"Slurmy job: {job_id}")
     print(f"Local directory: {destination.resolve()}")
+    destination.mkdir(parents=True, exist_ok=True)
+    raw = destination / 'diagnostics'
+    raw.mkdir(exist_ok=True)
+    # Upgrade an existing verbose download without discarding its raw data.
+    for name in ('metadata.json', 'allocations.csv', 'manifest.jsonl', 'submission.csv',
+                 'submission.tsv', 'batches', 'chunks', 'progress', 'logs', 'results'):
+        old = destination / name
+        if old.exists() and not (raw / name).exists():
+            old.rename(raw / name)
     cache = ArchiveStatusCache()
     iteration = 0
     while True:
         iteration += 1
-        changed_paths = rsync_job(args.host, job_id, destination, args.ssh_timeout)
+        changed_paths = rsync_job(args.host, job_id, raw, args.ssh_timeout)
         summary = build_summary(
             host=args.host,
             job_id=job_id,
-            destination=destination,
+            destination=raw,
             changed_paths=changed_paths,
             iteration=iteration,
             cache=cache,
         )
         if not args.follow or summary['all_tasks_complete']:
-            consolidate_solver_streams(destination, read_result_records(destination))
+            consolidate_solver_streams(raw, read_result_records(raw))
+            names = export_names({**load_job_metadata(raw), 'job_name': load_job_metadata(raw).get('job_name') or job_id})
+            for name in names[1:]:
+                shutil.copy2(raw / name, destination / name)
+            publish_verbose_pairs(destination, raw)
             summary['downloaded_bytes'] = directory_size(destination)
+        summary['local_directory'] = os.fspath(destination.resolve())
         summary_path = write_summary(destination, summary)
         print(
             f"[{summary['updated_at']}] "

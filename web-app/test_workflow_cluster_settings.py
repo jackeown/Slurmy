@@ -104,7 +104,7 @@ class ClusterSettingsTests(unittest.TestCase):
                                              mem_limit='100MB', cores=1)],
                         globs=['tptp://TPTP-v10/Problems/SET/*.p'],
                         building_mode='create', resources=[dict(root=str(root), mode='script',
-                            script=str(recipe), artifact='limiter', role='limiter')],
+                            script=str(recipe), artifact='limiter', role='limiter', build_policy='changed')],
                         limiter_mode='inline', limiter=f'{root}/limiter {{{{solver_command}}}}')
             with patch.object(workflows, 'check_requested'), patch.object(workflows, 'problem_glob',
                     return_value=(data['globs'][0], [problem])):
@@ -116,7 +116,9 @@ class ClusterSettingsTests(unittest.TestCase):
             for filename, body in files.items():
                 (destination / filename).write_text(body)
             generate(destination/'jobpairs.csv', destination/'building.txt', destination/'resource_limiter_template.txt')
+            self.assertEqual(json.loads(files['building.txt'])[0]['build_policy'], 'changed')
             assets = destination/'submit.sh.files'
+            self.assertIn('--build-policy changed', (assets/'builds/run.sh').read_text())
             self.assertIn('TPTP_DEFAULT_ROOT=/share/TPTP/TPTP-v10', (assets/'calls/0/config.sh').read_text())
             # Run the generated build wrapper with a fake python; verify its actual argv.
             fakebin = root/'fakebin'

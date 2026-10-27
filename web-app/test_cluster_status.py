@@ -105,6 +105,18 @@ class ClusterStatusTests(unittest.TestCase):
         self.assertEqual(job['reserved_cores'], 16)
         self.assertEqual(status['users'][1]['allocated_cores'], 16)
 
+    def test_cpu_socket_placement_is_per_node_and_zero_based(self):
+        output = snapshot().replace('node1|2\n', 'node1|2|32\n').replace('node2|1\n', 'node2|1|4\n')
+        jobs = parse_status('test-host', 'all', output)['jobs']
+        self.assertEqual(jobs[0]['node_placement']['node1'],
+                         dict(core_ids=list(range(32)), socket_ids=[0]))
+        self.assertEqual(jobs[1]['node_placement']['node1'],
+                         dict(core_ids=list(range(32, 40)), socket_ids=[1]))
+        self.assertEqual(jobs[1]['node_placement']['node2']['socket_ids'], [0, 1])
+        self.assertEqual(jobs[2]['node_placement'], {})
+        legacy = parse_status('test-host', 'all', snapshot())['jobs'][0]
+        self.assertIsNone(legacy['node_placement']['node1']['socket_ids'])
+
     def test_pending_or_unavailable_allocation_is_not_guessed(self):
         status = parse_status('test-host', 'all', snapshot())
         self.assertIsNone(status['jobs'][2]['reserved_cores'])

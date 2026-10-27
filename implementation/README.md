@@ -155,7 +155,10 @@ named `<solver>___<original-problem-filename>___<solver-problem-pair-id>.log` (o
 `.stderr.log` for stderr). The full problem filename is preserved exactly,
 including its extension and characters such as `+` and `^`. Original archives
 and diagnostics stay on the cluster. Use `slurmy-sync.py --verbose`
-for all raw files under `job-results/verbose/JOB_ID/`.
+for readable per-pair archives under `job-results/verbose/JOB_ID/solver-problem-pairs/`
+and original cluster files under `job-results/verbose/JOB_ID/diagnostics/`.
+Each per-pair archive extracts into its own directory; the original archive
+references and retry history are preserved in `diagnostics/results/`.
 
 Relative solver commands run from their `solver_directory` copy. Local paths
 for listed problems and packaged resources are translated into the cluster's
