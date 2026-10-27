@@ -695,6 +695,11 @@ def create_app():
                                     workflows.alias(data.get('partition')), int(requested))
         return jsonify(supported=supported)
 
+    @app.post('/api/suggest-batch-size')
+    def suggest_batch_size():
+        from .batch_suggestion import suggest
+        return jsonify(suggest(request.get_json() or {}))
+
     @app.post('/api/validate-solver-cores')
     def validate_solver_cores():
         from check_threads import check_cores

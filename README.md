@@ -226,6 +226,17 @@ Consolidated stdout/stderr archives and download statistics remain at the top
 level. `CONTENTS.txt` explains the layout. Existing verbose downloads are
 organized into this layout on their next download.
 
+The workflow editor suggests a batch size when you enter **SLURM settings**:
+`ceil(total solver-problem pairs / (2 × maximum parallelism))`, with a minimum
+of 1. It queries the selected partition's current node topology and counts the
+selected problem sources. Shared tasks fit by requested physical cores;
+dedicated CPU tasks consume whole sockets, and dedicated-node tasks consume a
+whole node. The estimate uses the least parallel solver configuration and is
+capped by the workflow's maximum outstanding SLURM tasks. It measures total
+CPU capacity rather than idle capacity; memory and other scheduling constraints
+can reduce actual parallelism. Saved values and manual overrides are retained;
+**Use suggested batch size** applies the freshly calculated value.
+
 </blockquote>
 </details>
 

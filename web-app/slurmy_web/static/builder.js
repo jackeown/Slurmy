@@ -237,7 +237,31 @@ if(document.body.dataset.page==='new'){
  function fields(card){return Object.fromEntries([...card.querySelectorAll('[name]')].map(n=>[n.name,n.value]));}
  function payload(){const names=['name','host','partition','reservation','batch_size','max_outstanding','pair_order','mode','jobpairs','configurations_file','building_mode','building_file','limiter_mode','limiter_file','limiter','axiom_mode'];const data=Object.fromEntries(names.map(n=>[n,rootValue(n)]));const cards=[...document.querySelectorAll('.configuration')];data.configurations=cards.map(card=>{const row=fields(card);for(const key of Object.keys(row))if(key.startsWith('build_'))delete row[key];row.cpus='auto';return row;});data.resources=[...document.querySelectorAll('.resource')].sort((a,b)=>Number(a.dataset.resourceOrder)-Number(b.dataset.resourceOrder)).filter(node=>data.mode!=='interactive'||node.dataset.resourceRole==='limiter').map(node=>({...fields(node),role:node.dataset.resourceRole}));if(data.mode==='interactive'&&data.building_mode==='create'){const seen=new Map();for(const card of cards){const value=fields(card);const resource={role:'solver',root:value.solver_directory,mode:value.build_mode,source:value.build_source,script:value.build_script,build_policy:value.build_policy,artifact:value.build_mode==='script'?solverArtifact(value.command,value.solver_directory):''};const previous=seen.get(resource.root);if(previous){if(resource.mode!=='none'&&previous.mode!=='none'&&JSON.stringify(resource)!==JSON.stringify(previous))throw new Error(`Conflicting build settings for solver root ${resource.root}`);if(previous.mode==='none'&&resource.mode!=='none')Object.assign(previous,resource);}else{seen.set(resource.root,resource);data.resources.push(resource);}}}data.globs=[...document.querySelectorAll('[name="glob"]')].map(n=>n.value);data.axiom_globs=data.axiom_mode==='custom'?[...document.querySelectorAll('[name="axiom_glob"]')].map(n=>n.value):[];return data;}
  function solverArtifact(command,root){const executable=command.trim().match(/^(?:'([^']+)'|"([^"]+)"|(\S+))/)?.slice(1).find(Boolean)||'';if(!executable)throw new Error('Enter the solver command before configuring its build.');const path=executable.startsWith(root+'/')?executable.slice(root.length+1):executable.replace(/^\.\//,'');if(path.startsWith('/')||path==='..'||path.startsWith('../')||path.includes('/../')||path.includes('{{'))throw new Error('For a remote build, start the solver command with an executable relative to the solver root.');return path;}
- function renderStep(){sections.forEach((s,i)=>s.hidden=i!==step);document.querySelectorAll('#steps li').forEach((n,i)=>{n.classList.toggle('current',i===step);const tab=$('button',n);if(i===step)tab.setAttribute('aria-current','step');else tab.removeAttribute('aria-current');});$('#builder-back').hidden=step===0;$('#builder-next').hidden=step===5;$('#builder-save').hidden=step!==5;text('#step-count',`Step ${step+1} of 6`);$('#builder-error').hidden=true;}
+ const batchInput=form.querySelector('[name="batch_size"]');
+ let automaticBatch=!initial.batch_size,batchRequest=0,batchTimer=null,lastBatchSuggestion=null;
+ async function suggestBatchSize(){
+  const request=++batchRequest, status=$('#batch-suggestion'), use=$('#use-batch-suggestion');
+  status.className='validation';status.textContent='Checking partition nodes and counting solver-problem pairs…';use.hidden=true;
+  try{
+   const data=await api('/api/suggest-batch-size',payload());
+   if(request!==batchRequest)return;
+   lastBatchSuggestion=data.batch_size;
+   if(automaticBatch)batchInput.value=data.batch_size;
+   status.className='validation valid';
+   status.textContent=`Suggested: ${data.batch_size} = ceil(${data.total_pairs.toLocaleString()} pairs ÷ (2 × ${data.maximum_parallelism} parallel tasks)). ${data.node_count} partition nodes; hardware capacity ${data.hardware_parallelism} tasks, using the least parallel configuration and capped by maximum outstanding tasks. Based on total capacity, not current availability.`;
+   use.hidden=automaticBatch||Number(batchInput.value)===data.batch_size;
+   updateStepStates();
+  }catch(error){if(request!==batchRequest)return;lastBatchSuggestion=null;status.className='validation invalid';status.textContent=`Could not suggest a batch size: ${error.message} You can enter a size manually.`;}
+ }
+ batchInput.addEventListener('input',()=>{automaticBatch=!batchInput.value;$('#use-batch-suggestion').hidden=lastBatchSuggestion===null||Number(batchInput.value)===lastBatchSuggestion;if(automaticBatch&&step===4)suggestBatchSize();});
+ $('#use-batch-suggestion').addEventListener('click',()=>{if(lastBatchSuggestion!==null){automaticBatch=true;batchInput.value=lastBatchSuggestion;$('#use-batch-suggestion').hidden=true;updateStepStates();}});
+ form.addEventListener('input',event=>{
+  if(event.target===batchInput)return;
+  ++batchRequest;lastBatchSuggestion=null;clearTimeout(batchTimer);
+  if(step===4)batchTimer=setTimeout(suggestBatchSize,400);
+ });
+ form.addEventListener('change',event=>{if(event.target!==batchInput&&step===4){++batchRequest;clearTimeout(batchTimer);batchTimer=setTimeout(suggestBatchSize,400);}});
+ function renderStep(){sections.forEach((s,i)=>s.hidden=i!==step);document.querySelectorAll('#steps li').forEach((n,i)=>{n.classList.toggle('current',i===step);const tab=$('button',n);if(i===step)tab.setAttribute('aria-current','step');else tab.removeAttribute('aria-current');});$('#builder-back').hidden=step===0;$('#builder-next').hidden=step===5;$('#builder-save').hidden=step!==5;text('#step-count',`Step ${step+1} of 6`);$('#builder-error').hidden=true;if(step===4)suggestBatchSize();}
  function showError(error){text('#builder-error',error.message);$('#builder-error').hidden=false;}
  async function validSection(){
   if(step===1&&rootValue('mode')==='interactive'&&!$('#configurations .configuration'))throw new Error('Add a solver configuration or copy one from an existing workflow before continuing.');
