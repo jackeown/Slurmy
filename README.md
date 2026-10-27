@@ -258,3 +258,16 @@ can reduce actual parallelism. Saved values and manual overrides are retained;
 
 </blockquote>
 </details>
+
+Job history shows each job's name and a combined status/progress bar. Hover a
+segment for its solver outcome, count and percentage; striped segments mark
+unfinished solver-problem pairs. Execution failures are outcomes rather than a
+separate “Issues” column. The job page links to its originating workflow, and
+hovering its title reveals the full ID.
+
+When no custom job name is supplied, Slurmy uses the workflow name, adding
+`(1)`, `(2)`, etc. only when that name is already present on the cluster. Name
+assignment is serialized across submissions. A submission retry retains its
+assigned name. Names are stored alongside stable filename-safe IDs in job
+metadata; names never need to be decoded from filenames. Existing job IDs and
+custom job names remain valid.

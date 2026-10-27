@@ -38,7 +38,11 @@ fi
     echo 'This job predates coordinated submission; resume it with its original prepared submit.sh.' >&2
     exit 1
 }
-if [[ ! -f submission.csv ]]; then python3 - "${5:-}" <<'PY'
+if [[ ! -f submission.csv ]]; then
+    # Serialize name assignment across jobs, not just this submission controller.
+    exec 8> "$HOME/slurmy/.job-names.lock"
+    flock 8
+    python3 - "${5:-}" "${8:-0}" <<'PY'
 import base64
 import json
 from pathlib import Path
@@ -49,12 +53,31 @@ if not name.strip() or len(name) > 100 or any(ord(char) < 32 or ord(char) == 127
     raise SystemExit('Invalid job name.')
 path = Path('metadata.json')
 metadata = json.loads(path.read_text(encoding='utf-8'))
+if metadata.get('job_id') == Path.cwd().name and metadata.get('job_name'):
+    name = metadata['job_name']  # Retrying submission keeps its assigned name.
+elif sys.argv[2] == '1':
+    from job_names import unused_job_name
+    existing = set()
+    for directory in Path.cwd().parent.iterdir():
+        if directory == Path.cwd() or not directory.is_dir() or directory.is_symlink() or directory.name.startswith('.'):
+            continue
+        try:
+            other = json.loads((directory / 'metadata.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            # Incomplete and historical folders may not contain metadata yet.
+            existing.add(directory.name.rsplit('_', 2)[0])
+            continue
+        existing.add(other.get('job_name') or Path(other.get('workflow_directory') or directory.name).name)
+    name = unused_job_name(name, existing)
 metadata['job_name'] = name.strip()
 metadata['job_id'] = Path.cwd().name
 temporary = path.with_suffix('.tmp')
 temporary.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 temporary.replace(path)
+print('Job name: ' + metadata['job_name'])
 PY
+    flock -u 8
+    exec 8>&-
     if [[ -f ./prepare_axioms.sh ]]; then bash ./prepare_axioms.sh; fi
 fi
 source ./csv.sh

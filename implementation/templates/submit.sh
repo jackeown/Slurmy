@@ -22,12 +22,14 @@ ssh_stage() {
 }
 : "${SLURMY_PARTITION:?Set SLURMY_PARTITION to the SLURM partition to use}"
 [[ "$SLURMY_PARTITION" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo 'Invalid partition' >&2; exit 1; }
+AUTO_JOB_NAME=0
+[[ -n ${SLURMY_JOB_NAME:-} ]] || AUTO_JOB_NAME=1
 JOB_NAME_B64=$(printf '%s' "$JOB_DISPLAY_NAME" | base64 | tr -d '\r\n')
 if [[ -n ${SLURMY_RESUME_JOB_ID:-} ]]; then
     JOB_ID=$SLURMY_RESUME_JOB_ID
     [[ "$JOB_ID" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Invalid SLURMY_RESUME_JOB_ID.' >&2; exit 1; }
     echo "Resuming accepted batches for $JOB_ID; no inputs are rebuilt or uploaded."
-    ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" < "$ASSETS/remote_submit.sh"
+    ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" "$AUTO_JOB_NAME" < "$ASSETS/remote_submit.sh"
     exit $?
 fi
 
@@ -48,6 +50,7 @@ trap 'rm -rf -- "$TEMP_DIR"' EXIT
 python "$ASSETS/package_inputs.py" --label inputs --output "$TEMP_DIR/inputs.tar.gz" --base / --paths "$ASSETS/archive-paths.txt"
 python "$ASSETS/package_inputs.py" --label job-files --output "$TEMP_DIR/job-files.tar.gz" --base "$ASSETS"
 JOB_ID="${JOB_PREFIX}_$(date +%s)_$$"
+
 
 # 3. Transfer archives. Remote shell logic lives in readable helper files.
 echo 'Submission phase: Uploading inputs to cluster'
@@ -71,7 +74,7 @@ fi
 
 # 4. Calculate allocations using cluster topology, then submit each batch.
 echo 'Submission phase: Submitting SLURM batches'
-if ! ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" < "$ASSETS/remote_submit.sh"; then
+if ! ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" "$AUTO_JOB_NAME" < "$ASSETS/remote_submit.sh"; then
     echo "Submission connection failed. Some batches may already be accepted; inspect job $JOB_ID before retrying." >&2
     echo "To resume only unaccepted batches: SLURMY_RESUME_JOB_ID=$JOB_ID bash ./submit.sh" >&2
     exit 1

@@ -186,8 +186,18 @@ async function deleteJob(id, control, redirect=false){
  control.disabled=true;
  try{
   const options=await api(`/api/jobs/${encodeURIComponent(id)}/delete-options?`+params({}));
-  if(options.synced&&Number(options.percent_complete)<100){
-   if(confirm(`The last download of “${id}” was ${options.percent_complete==null?'not verified':`${Number(options.percent_complete).toFixed(1)}% complete`}. Download the latest results before deleting the cluster job?`)){
+  const name=jobs.find(job=>job.id===id)?.name||jobData?.name||id;
+  const choice=await SlurmyDialog.choose({title:'Delete Job?',danger:true,
+   message:`“${name}” will be stopped before its cluster files are deleted. Deleted jobs cannot be resumed.${options.synced?' Choose whether to keep the downloaded results on this computer.':''}`,
+   choices:[{value:'keep',label:options.synced?'Delete Job, Keep Downloads':'Delete Job',danger:true},...(options.synced?[{value:'both',label:'Delete Job and Downloads',danger:true}]:[])]});
+  if(choice===null)return;
+  const deleteLocal=choice==='both';
+  if(options.synced&&!deleteLocal&&(options.percent_complete==null||Number(options.percent_complete)<100)){
+   const download=await SlurmyDialog.choose({title:'Download Latest Results?',
+    message:`The last download was ${options.percent_complete==null?'not verified':`${Number(options.percent_complete).toFixed(1)}% complete`}. You can download the latest results before deleting “${name}”, or keep your current download.`,
+    choices:[{value:'skip',label:'Keep Current Download',secondary:true},{value:'download',label:'Download Latest Results'}]});
+   if(download===null)return;
+   if(download==='download'){
     control.textContent='Downloading…';
     const op=await api(`/api/jobs/${encodeURIComponent(id)}/action?`+params({}),{action:'sync'});
     operationHidden=false;watchOperation(op.id);
@@ -199,7 +209,6 @@ async function deleteJob(id, control, redirect=false){
     if(state.state!=='done')throw new Error(`Download failed; job was not deleted. ${state.log||''}`);
    }
   }
-  const deleteLocal=options.synced&&confirm(`Also delete downloaded results for “${id}” from this laptop?\n\nCancel keeps the local copy; the cluster job will still be deleted.`);
   control.textContent='Stopping and deleting…';
   const deleting=await api(`/api/jobs/${encodeURIComponent(id)}/delete?`+params({}),{delete_local:deleteLocal});
   operationHidden=false;sessionStorage.removeItem('slurmy-operation-hidden');watchOperation(deleting.id);
@@ -216,7 +225,7 @@ async function deleteJob(id, control, redirect=false){
  }catch(error){notice(error.message);}finally{control.disabled=false;control.textContent=originalLabel;}
 }
 async function renameJob(id,current){
- const proposed=prompt('Job name (1–100 characters):',current||id);
+ const proposed=await SlurmyDialog.text({title:'Rename Job',message:'Choose a display name for this job.',acceptLabel:'Save Name',input:{label:'Job Name',value:current||id,maxLength:100,validate:value=>/[\x00-\x1f\x7f]/.test(value)?'Use a name without control characters.':''}});
  if(proposed===null)return;
  try{
   const result=await api(`/api/jobs/${encodeURIComponent(id)}/name?`+params({}),{name:proposed});
@@ -238,6 +247,48 @@ function scheduleStaleWarning(){
  const delay=(page==='job'||page==='problem')&&autoRefreshTotal>10000?75000:25000;
  staleTimer=setTimeout(()=>{if(hasLoadedRemote&&!refreshInFlight){remoteState('stale');text('#connection',`Data may be stale · last successful refresh ${lastLoadedAt.toLocaleTimeString()} · automatic refresh is delayed`);}},delay);
 }
+let jobStatusTooltip = null;
+function jobCompletionLabel(job){
+ const total=job.total||0, completed=job.completed||0;
+ if(total&&completed>=total)return `Complete · ${total.toLocaleString()} solver-problem pairs finished`;
+ const state=(job.state||'Pending').toLowerCase().replace(/\b[a-z]/g,letter=>letter.toUpperCase());
+ if(!total)return `${state} · Awaiting solver-problem pair count`;
+ return `${state} · ${completed.toLocaleString()} / ${total.toLocaleString()} solver-problem pairs finished (${job.percent.toFixed(1)}%)`;
+}
+function jobStatusBar(job){
+ const container=el('div',undefined,'job-status-summary');
+ const total=job.total||0, completed=job.completed||0;
+ const description=total?`${completed.toLocaleString()} / ${total.toLocaleString()} finished${completed<total?` · ${(total-completed).toLocaleString()} unfinished`:''}`:job.provisional?'Preparing submission metadata…':'Awaiting cluster metadata…';
+ const heading=el('div',undefined,'job-status-heading');
+ heading.append(badge(total&&completed>=total?'Complete':job.state),el('span',description,'progress-label'));
+ container.append(heading);
+ if(!total)return container;
+ const segments=job.outcomes?.length?job.outcomes:[{label:'Finished · outcome pending',count:completed},{label:'Not finished',count:Math.max(0,total-completed)}];
+ const bar=el('div',undefined,'job-status-bar');bar.setAttribute('role','group');bar.setAttribute('aria-label','Solver-problem pair status breakdown');
+ let other=0;
+ for(const segment of segments){
+  if(!segment.count)continue;
+  const label=`${segment.label}${segment.source?` (${segment.source})`:''}: ${segment.count.toLocaleString()} solver-problem pairs (${(100*segment.count/total).toFixed(1)}%)`;
+  const part=el('span',undefined,'job-status-segment');part.tabIndex=0;
+  part.style.width=`${100*segment.count/total}%`;
+  part.style.backgroundColor=outcomeColors[segment.label.toLowerCase()]||otherOutcomeColors[other++%otherOutcomeColors.length];
+  if(segment.label==='Not finished')part.classList.add('unfinished');
+  part.setAttribute('aria-label',label);
+  const hide=()=>{if(jobStatusTooltip)jobStatusTooltip.hidden=true;};
+  const show=(x,y)=>{
+   if(!jobStatusTooltip){jobStatusTooltip=el('div',undefined,'pie-tooltip');jobStatusTooltip.setAttribute('role','tooltip');document.body.append(jobStatusTooltip);}
+   jobStatusTooltip.textContent=label;jobStatusTooltip.hidden=false;
+   jobStatusTooltip.style.left=`${Math.max(8,Math.min(x+12,innerWidth-jobStatusTooltip.offsetWidth-8))}px`;
+   jobStatusTooltip.style.top=`${Math.max(8,Math.min(y+12,innerHeight-jobStatusTooltip.offsetHeight-8))}px`;
+  };
+  part.addEventListener('pointermove',event=>show(event.clientX,event.clientY));
+  part.addEventListener('pointerleave',hide);part.addEventListener('blur',hide);
+  part.addEventListener('focus',()=>{const bounds=part.getBoundingClientRect();show(bounds.left,bounds.bottom);});
+  bar.append(part);
+ }
+ container.append(bar);return container;
+}
+window.addEventListener('scroll',()=>{if(jobStatusTooltip)jobStatusTooltip.hidden=true;},true);
 function renderJobs(){
  const query=$('#job-filter')?.value.toLowerCase()||'';
  const remoteIds=new Set(jobs.map(job=>job.id));
@@ -249,13 +300,14 @@ function renderJobs(){
  filtered.sort((a,b)=>{const av=a[key]??'',bv=b[key]??'';const result=typeof av==='number'&&typeof bv==='number'?av-bv:String(av).localeCompare(String(bv),undefined,{numeric:true});return (direction==='asc'?result:-result)||String(a.id).localeCompare(String(b.id));});
  const perPage=pageSize('#jobs-page-size');jobsPage=Math.min(jobsPage,Math.max(0,Math.ceil(filtered.length/perPage)-1));
  syncTableUrl();
+ if(jobStatusTooltip)jobStatusTooltip.hidden=true;
  const body=$('#jobs-body');body.replaceChildren();
  for(const job of filtered.slice(jobsPage*perPage,(jobsPage+1)*perPage)){
-  const title=job.provisional?el('div',job.name,'job-link'):link(job.name,'/jobs/'+encodeURIComponent(job.id)+'?'+params({}));title.className='job-link';title.append(el('small',job.id));
-  const progress=el('div');if(job.total){progress.append(el('span',`${job.completed} / ${job.total} · ${job.percent.toFixed(1)}%`,'progress-label'));const bar=el('progress');bar.max=100;bar.value=job.percent;bar.setAttribute('aria-label',`${job.percent.toFixed(1)} percent complete`);progress.append(bar);}else progress.append(el('span',job.provisional?'Preparing submission metadata…':'Awaiting cluster metadata…','progress-label'));
+  const title=job.provisional?el('div',job.name,'job-link'):link(job.name,'/jobs/'+encodeURIComponent(job.id)+'?'+params({}));title.className='job-link';
+  const progress=jobStatusBar(job);
   if(job.phase)progress.append(el('small',job.phase,'submission-phase'));
   else if(job.submission_state==='submitting')progress.append(el('small',`Submitting batches: ${job.submitted_batches} / ${job.batch_count} accepted`,'submission-phase'));
-  const cells=[title,badge(job.state),progress,job.issues?el('strong',job.issues,'error'):'—',new Date(job.created*1000).toLocaleString()];
+  const cells=[title,progress,new Date(job.created*1000).toLocaleString()];
   const actions=el('div',undefined,'job-row-actions');
   if(job.provisional)actions.append('Awaiting submission');
   else{actions.append(button('Rename',()=>renameJob(job.id,job.name)));if(page==='jobs')actions.append(button('Delete',event=>deleteJob(job.id,event.currentTarget),'danger'));}
@@ -265,16 +317,16 @@ function renderJobs(){
  $('#empty').hidden=filtered.length!==0;
  text('#jobs-page-label',`${filtered.length} matching jobs ·`);$('#jobs-page').value=jobsPage+1;$('#jobs-page').max=Math.max(1,Math.ceil(filtered.length/perPage));text('#jobs-page-count',Math.max(1,Math.ceil(filtered.length/perPage)));
  $('#jobs-previous').disabled=jobsPage===0;$('#jobs-next').disabled=(jobsPage+1)*perPage>=filtered.length;
- text('#stat-total',visible.length);text('#stat-active',visible.filter(j=>['RUNNING','PENDING','SUBMITTED','SUBMITTING','DISPATCHING'].includes(j.state)).length);text('#stat-done',visible.reduce((a,j)=>a+j.completed,0).toLocaleString());text('#stat-issues',visible.reduce((a,j)=>a+j.issues,0));
+ text('#stat-total',visible.length);text('#stat-active',visible.filter(j=>['RUNNING','PENDING','SUBMITTED','SUBMITTING','DISPATCHING'].includes(j.state)).length);text('#stat-done',visible.reduce((a,j)=>a+j.completed,0).toLocaleString());
 }
 async function fetchJobs(){const directory=document.body.dataset.directory;const data=await api('/api/jobs?'+params(directory?{directory}:{}));jobs=data.jobs;renderJobs();text('#connection',`Connected to ${host} · refreshed ${new Date(data.updated*1000).toLocaleTimeString()} · refreshes every 10 seconds`);}
 async function openOutput(task){
- const panel=$('#call-output');panel.hidden=false;$('#stream').closest('label').hidden=false;text('#output-title',`Solver-problem pair ${task.id} · ${task.solver}`);highlightShell($('#command'),`Solver command: ${task.command}\nLimiter command: ${task.limiter_command||'Unavailable for this older job'}\nWorking directory: ${task.directory}`);$('#command').hidden=false;text('#output-info',task.problem);text('#output-text','Loading saved output…');selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
+ const panel=$('#call-output');panel.hidden=false;$('#stream').closest('label').hidden=false;text('#output-title',`Solver-Problem Pair ${task.id} · ${task.solver}`);highlightShell($('#command'),`Solver command: ${task.command}\nLimiter command: ${task.limiter_command||'Unavailable for this older job'}\nWorking directory: ${task.directory}`);$('#command').hidden=false;text('#output-info',task.problem);text('#output-text','Loading saved output…');selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
  try{const data=await api(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/output/${task.id}?`+params({}));selectedOutput=data;renderOutput();}catch(error){text('#output-text',error.message);}
 }
 function openDiagnostic(task){
  const panel=$('#call-output');panel.hidden=false;$('#stream').closest('label').hidden=true;
- text('#output-title',`Solver-problem pair ${task.id} · batch diagnostic`);
+ text('#output-title',`Solver-Problem Pair ${task.id} · Batch Diagnostic`);
  highlightShell($('#command'),`Solver command: ${task.command}\nLimiter command: ${task.limiter_command}\nWorking directory: ${task.directory}`);
  $('#command').hidden=false;text('#output-info',task.reason);
  text('#output-text',task.diagnostic||'No SLURM log is available for this batch yet.');
@@ -294,12 +346,11 @@ async function fetchJob(fresh=false){
  autoRefreshTotal=data.total;autoRefreshPercent=data.percent;
  const lastPage=Math.max(0,Math.ceil(data.matched/perPage)-1);if(taskPage>lastPage){taskPage=lastPage;syncTableUrl();scheduleRefresh();return;}
  syncTableUrl();
- const submission=data.submission_state==='submitting'?` · submitting batches ${data.submitted_batches}/${data.batch_count}`:data.submission_state==='failed'?' · batch submission stopped before all solver-problem pairs were queued':'';
+ const origin=$('#job-workflow-origin');if(origin){origin.replaceChildren();origin.hidden=!data.directory;if(data.directory)origin.append(document.createTextNode('(from '),link(data.workflow_name||data.directory.split('/').pop(),'/workflow?'+params({directory:data.directory})),document.createTextNode(')'));}
  text('#job-display-name',data.name);document.title=`${data.name} · Slurmy`;
   jobActionControls();
- const refreshNote=data.percent>=100?' · auto-refresh off (100% complete)':data.total>10000?' · auto-refreshes every 30 seconds':' · auto-refreshes every 10 seconds';
- text('#connection',`Connected to ${host} · refreshed ${new Date().toLocaleTimeString()}${submission}${refreshNote} · completion counts finished solver-problem pairs, not proof-search progress`);
- text('#stat-state',data.state);text('#stat-done',`${data.completed} / ${data.total}`);text('#stat-percent',data.percent.toFixed(1)+'%');text('#stat-issues',data.issues);
+ text('#connection',`Last refreshed ${new Date().toLocaleTimeString()}`);
+ text('#job-completion',jobCompletionLabel(data));
  renderOutcomes(data.outcomes);
  const tasks=$('#tasks-body');tasks.replaceChildren();
  for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):task.diagnostic?button('Inspect log →',()=>openDiagnostic(task)):'—';const placement=task.node?link(`${task.node} · ${task.slurm_id}`,`/cluster?`+params({partition:'all',nodes:'job',job:jobId})):task.slurm_id?`Queued · ${task.slurm_id}`:'—';tasks.append(tableRow([String(task.id),task.solver||'—',problem,badge(task.state),task.will_run||'—',placement,task.reason||'—',duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
@@ -378,16 +429,35 @@ $('#submit')?.addEventListener('click',()=>workflowAction('prepare-submit'));
 $('#submit-only')?.addEventListener('click',()=>workflowAction('submit'));
 $('#duplicate')?.addEventListener('click',async()=>{
  const suggested=(document.querySelector('h1')?.textContent||'workflow')+'-copy';
- const name=prompt('Name the workflow copy (lowercase letters, numbers, and hyphens):',suggested);
+ const name=await SlurmyDialog.text({title:'Duplicate Workflow',message:'The original workflow stays unchanged.',acceptLabel:'Create Copy',input:{label:'New Workflow Name',value:suggested,maxLength:100,validate:value=>/^[a-z0-9][a-z0-9-]*$/.test(value)?'':'Use lowercase letters, numbers, and hyphens.'}});
  if(name===null)return;
  try{const data=await api('/api/workflows/duplicate?'+params({directory:document.body.dataset.directory}),{name:name.trim()});location.href='/workflow?'+params({directory:data.directory});}
  catch(error){notice(error.message);}
 });
+function rememberedWorkflowDeletion(now=Date.now()){
+ try{
+  const choice=JSON.parse(localStorage.getItem('slurmy-workflow-delete-choice')||'null');
+  if(choice&&['archive','permanent'].includes(choice.mode)&&Number.isFinite(choice.expires)&&choice.expires>now&&choice.expires<=now+300000)return choice.mode;
+ }catch{}
+ return null;
+}
 async function deleteWorkflow(directory,name,control){
- if(!confirm(`Delete “${name}”?\n\nIts submitted jobs will remain in Job history. The workflow will be moved to the local recovery archive.`))return;
+ if(control.disabled)return;
  control.disabled=true;
- try{await api('/api/workflows/delete?'+params({directory}),{name});location.href='/workflows?'+params({deleted:name});}
- catch(error){control.disabled=false;notice(error.message);}
+ let cancelled=false;
+ try{
+  let mode=rememberedWorkflowDeletion();
+  if(!mode){
+   const choice=await SlurmyDialog.choose({title:'Delete Workflow?',danger:true,remember:true,
+    message:`How would you like to delete “${name}”? Moving it to the recovery archive lets you recover its files later. Permanent deletion cannot be undone. Submitted jobs remain in Job History either way.`,
+    choices:[{value:'archive',label:'Move to Recovery Archive',secondary:true},{value:'permanent',label:'Delete Permanently',danger:true}]});
+   if(choice===null){cancelled=true;return;}
+   mode=choice.value;
+   if(choice.remember)try{localStorage.setItem('slurmy-workflow-delete-choice',JSON.stringify({mode,expires:Date.now()+300000}));}catch{}
+  }
+  await api('/api/workflows/delete?'+params({directory}),{name,permanent:mode==='permanent'});
+  location.href='/workflows?'+params({deleted:name,permanent:mode==='permanent'?'1':'0'});
+ }catch(error){notice(error.message);}finally{control.disabled=false;if(cancelled)control.focus();}
 }
 $('#delete-workflow')?.addEventListener('click',event=>{
  deleteWorkflow(document.body.dataset.directory,document.querySelector('h1')?.textContent||'',event.currentTarget);
@@ -416,7 +486,7 @@ $('#upload-workflow')?.addEventListener('click',()=>$('#workflow-upload-file').c
 $('#workflow-upload-file')?.addEventListener('change',async event=>{
  const file=event.target.files[0];if(!file)return;
  const proposed=file.name.replace(/\.slurmy\.tgz$|\.tar\.gz$|\.tgz$/i,'').toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+/,'')||'imported-workflow';
- const name=prompt('Name the imported workflow (lowercase letters, numbers and hyphens):',proposed+'-imported');
+ const name=await SlurmyDialog.text({title:'Import Workflow',message:'Choose a name for the uploaded workflow.',acceptLabel:'Import Workflow',input:{label:'Workflow Name',value:proposed+'-imported',maxLength:100,validate:value=>/^[a-z0-9][a-z0-9-]*$/.test(value)?'':'Use lowercase letters, numbers, and hyphens.'}});
  if(name===null){event.target.value='';return;}
  const control=$('#upload-workflow');control.disabled=true;control.textContent='Importing…';
  try{

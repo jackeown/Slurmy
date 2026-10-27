@@ -185,7 +185,7 @@ function clusterTasksForUser(data) {
     const {entries, denominator, allocated, capacity, unknown} = usage;
     const descriptions=[], segments=[];
     const scope = data.partition === 'all' ? 'All partitions' : data.partition;
-    find('#cluster-core-chart-title').textContent = `Allocated cores by user · ${scope}`;
+    find('#cluster-core-chart-title').textContent = `Allocated Cores by User · ${scope}`;
     find('#cluster-core-chart-explanation').textContent = totalView
       ? `Percentages show each user’s share of all physical cores in ${scope}. Unallocated cores may include offline or otherwise unavailable nodes.`
       : `Percentages show each user’s share of allocated physical cores in ${scope}.`;
@@ -223,7 +223,7 @@ function clusterTasksForUser(data) {
     window.SlurmyPie.setSegments(chart, []);
     find('#cluster-core-legend').replaceChildren();
     const scope = partitionSelect.value === 'all' ? 'All partitions' : partitionSelect.value;
-    find('#cluster-core-chart-title').textContent = `Allocated cores by user · ${scope}`;
+    find('#cluster-core-chart-title').textContent = `Allocated Cores by User · ${scope}`;
     find('#cluster-core-chart-explanation').textContent = 'Chart percentages follow the selected partition.';
     find('#cluster-core-chart-status').textContent = `Loading allocations for ${scope}…`;
   }

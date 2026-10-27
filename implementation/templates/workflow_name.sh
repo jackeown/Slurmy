@@ -13,7 +13,8 @@ export WORKFLOW_NAME
 
 # A submitted job may have its own name. Keep its display name in metadata,
 # while using a filesystem- and SLURM-safe prefix for its ID and batch jobs.
-JOB_DISPLAY_NAME=${SLURMY_JOB_NAME:-$WORKFLOW_NAME}
+JOB_DISPLAY_NAME=${SLURMY_JOB_NAME:-${WORKFLOW_DIR##*/}}
+if [[ -z ${SLURMY_JOB_NAME:-} ]]; then JOB_DISPLAY_NAME=${JOB_DISPLAY_NAME:0:100}; fi
 JOB_PREFIX=${JOB_DISPLAY_NAME//[^a-zA-Z0-9_.-]/-}
 while [[ -n "$JOB_PREFIX" && ! "$JOB_PREFIX" =~ ^[A-Za-z0-9] ]]; do
     JOB_PREFIX=${JOB_PREFIX:1}

@@ -21,3 +21,8 @@ __pycache__/
 /workflows/my-workflows/.problem-archives/
 
 /workflows/example-workflows/example-shared-tptp/jobpairs.csv
+
+# Local build-reuse receipts and process locks
+.slurmy-build-cache.json
+.slurmy-build-cache.lock
+.slurmy-build-cache.tmp

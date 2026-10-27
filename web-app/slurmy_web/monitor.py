@@ -124,6 +124,7 @@ for directory in "${job_dirs[@]}"; do
                     tolower(value($16)) !~ /^(error|oserror|inputerror|syntaxerror|semanticerror|typeerror|usageerror)$/ &&
                     tolower(value($16)) != "timeout" && tolower(value($16)) != "countersatisfiable")
                     result_status[id] = "ok"
+                szs[id] = value($16)
                 wall[id] = value($5)
             }
             END {
@@ -131,6 +132,7 @@ for directory in "${job_dirs[@]}"; do
                     if (complete[id] == "true") {
                         completed++
                         count[result_status[id]]++
+                        outcomes[result_status[id] "\t" szs[id]]++
                         if (wall[id] ~ /^[0-9]+([.][0-9]+)?$/) {
                             wall_sum += wall[id]
                             if (wall[id] > wall_max) wall_max = wall[id]
@@ -140,6 +142,7 @@ for directory in "${job_dirs[@]}"; do
                     }
                 }
                 printf "completed\t%d\nwall_sum\t%.9f\nwall_max\t%.9f\n", completed, wall_sum, wall_max
+                for (outcome in outcomes) printf "outcome\t%s\t%d\n", outcome, outcomes[outcome]
                 for (status in count) printf "status\t%s\t%d\n", status, count[status]
                 for (status in unresolved) printf "unresolved\t%s\t%d\n", status, unresolved[status]
                 for (id in suspect_archive) printf "candidate\t%s\t%s\n", id, suspect_archive[id]
@@ -153,6 +156,7 @@ for directory in "${job_dirs[@]}"; do
             NF >= 3 && $1 ~ /^[0-9]+$/ {
                 complete[$1] = $2
                 result_status[$1] = $3
+                szs[$1] = $16
                 wall[$1] = $5
             }
             END {
@@ -160,6 +164,7 @@ for directory in "${job_dirs[@]}"; do
                     if (complete[id] == "true") {
                         completed++
                         count[result_status[id]]++
+                        outcomes[result_status[id] "\t" szs[id]]++
                         if (wall[id] ~ /^[0-9]+([.][0-9]+)?$/) {
                             wall_sum += wall[id]
                             if (wall[id] > wall_max) wall_max = wall[id]
@@ -169,6 +174,7 @@ for directory in "${job_dirs[@]}"; do
                     }
                 }
                 printf "completed\t%d\nwall_sum\t%.9f\nwall_max\t%.9f\n", completed, wall_sum, wall_max
+                for (outcome in outcomes) printf "outcome\t%s\t%d\n", outcome, outcomes[outcome]
                 for (status in count) printf "status\t%s\t%d\n", status, count[status]
                 for (status in unresolved) printf "unresolved\t%s\t%d\n", status, unresolved[status]
             }
@@ -482,6 +488,7 @@ class JobSnapshot:
     wall_sum: float = 0.0
     wall_max: float = 0.0
     status_counts: dict[str, int] = field(default_factory=dict)
+    outcome_counts: dict[tuple[str, str], int] = field(default_factory=dict)
     unresolved_counts: dict[str, int] = field(default_factory=dict)
     results: dict[int, ResultRecord] = field(default_factory=dict)
     tasks: dict[int, TaskDefinition] = field(default_factory=dict)
@@ -769,6 +776,8 @@ def parse_summary(job: JobSnapshot, payload: str) -> None:
             job.wall_max = float(fields[1])
         elif len(fields) == 3 and fields[0] == "status":
             job.status_counts[fields[1]] = int(fields[2])
+        elif len(fields) == 4 and fields[0] == "outcome":
+            job.outcome_counts[(fields[1], fields[2])] = int(fields[3])
         elif len(fields) == 3 and fields[0] == "unresolved":
             job.unresolved_counts[fields[1]] = int(fields[2])
 
@@ -910,6 +919,9 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
                     if not job.status_counts['solver-error']:
                         del job.status_counts['solver-error']
                     job.status_counts[override] = job.status_counts.get(override, 0) + 1
+                    if job.outcome_counts.get(('solver-error', ''), 0):
+                        job.outcome_counts[('solver-error', '')] -= 1
+                        job.outcome_counts[(override, '')] = job.outcome_counts.get((override, ''), 0) + 1
         elif job_id in legacy_overviews:
             summarize_results(job, parse_jsonl_results(legacy_overviews[job_id]))
 

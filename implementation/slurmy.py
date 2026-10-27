@@ -384,6 +384,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             shutil.copyfile(source, destination)
             shutil.copymode(source, destination)
         (assets / "submission_settings.sh").write_text(f'MAX_OUTSTANDING_DEFAULT={max_outstanding}\n', encoding='utf-8')
+        shutil.copyfile(REPO / "implementation/job_names.py", assets / "job_names.py")
         # Reuse the local build driver. Remote recipes build in a disposable
         # copy of the declared root; downloaded files preserve that layout.
         shutil.copy2(REPO / "implementation/build/slurmy-build.py", assets / "builds/driver.py")

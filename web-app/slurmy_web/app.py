@@ -23,7 +23,7 @@ from flask import Flask, Response, abort, jsonify, redirect, render_template, re
 from werkzeug.exceptions import HTTPException
 from slurmy_archives import is_archive
 
-from .monitor import RemoteCollector, summarize_results
+from .monitor import RemoteCollector, summarize_results, ResultRecord
 from .cluster import fetch_status
 from .launcher import web_version
 from . import workflows
@@ -62,10 +62,12 @@ def summary(job):
     workflow_name = Path(workflow_directory).name if workflow_directory else ''
     if workflow_name.startswith('example-') and Path(workflow_directory).parent == workflows.USER_RUNS:
         workflow_name = workflow_name.removeprefix('example-')
-    return dict(id=job.job_id, name=job.metadata.get('job_name') or workflow_name or job.job_name, state=job.state,
+    name = job.metadata.get('job_name') or workflow_name or job.job_name
+    return dict(id=job.job_id, name=name, state=job.state,
                 total=job.task_count, completed=job.effective_completed,
                 percent=job.percent, issues=job.issue_count, created=job.created_epoch,
-                directory=workflow_directory,
+                directory=workflow_directory, workflow_name=workflow_name,
+                outcomes=history_outcomes(job),
                 submission_state=job.submission_state, submitted_batches=job.submission_count,
                 batch_count=job.batch_count,
                 statuses=job.status_counts)
@@ -104,6 +106,32 @@ def call_outcome(result):
               'controller' if result.status in {'worker-error', 'interrupted'} else
               'execution')
     return label, source
+
+
+def history_outcomes(job):
+    """Use compact final-result counts; live progress has no published answer yet."""
+    counts = Counter()
+    outcomes = getattr(job, 'outcome_counts', {})
+    if outcomes:
+        for (status, szs), count in outcomes.items():
+            if count > 0:
+                counts[call_outcome(ResultRecord(0, True, status, szs_status=szs))] += count
+    elif job.results:
+        for result in job.results.values():
+            if result.complete:
+                counts[call_outcome(result)] += 1
+    else:
+        for status, count in job.status_counts.items():
+            counts[call_outcome(ResultRecord(0, True, status))] += count
+    published = sum(counts.values())
+    live_finished = max(0, job.effective_completed - published)
+    if live_finished:
+        counts[('Finished · outcome pending', 'controller')] += live_finished
+    unfinished = max(0, job.task_count - sum(counts.values()))
+    if unfinished:
+        counts[('Not finished', '')] += unfinished
+    return [dict(label=label, source=source, count=count) for (label, source), count in
+            sorted(counts.items(), key=lambda item: (item[0][0] != 'Not finished', item[0])) if count > 0]
 
 
 def outcome_breakdown(job):
@@ -557,7 +585,7 @@ def create_app():
                 and query in ' '.join(str(v) for v in row.values()).lower()]
         page_number, per_page, sort, direction = call_page_args()
         rows = sorted_call_rows(rows, sort, direction)
-        return jsonify(**summary(job), outcomes=outcome_breakdown(job),
+        return jsonify(**{**summary(job), "outcomes": outcome_breakdown(job)},
                        tasks=rows[page_number*per_page:(page_number+1)*per_page], matched=len(rows))
 
     @app.post('/api/jobs/<job_id>/name')
@@ -890,13 +918,17 @@ def create_app():
         if path.parent != workflows.USER_RUNS.resolve():
             raise ValueError('Example workflows cannot be deleted. Duplicate one to customize it.')
         expected = path.name.removeprefix('example-')
-        if (request.get_json() or {}).get('name') != expected:
+        options = request.get_json() or {}
+        if not isinstance(options.get('permanent', False), bool):
+            raise ValueError('Permanent deletion must be true or false.')
+        if options.get('name') != expected:
             raise ValueError('Workflow name does not match the workflow being deleted.')
         with guard:
             if any(op['scope'] == str(path) and op['state'] == 'running' for op in operations.values()):
                 raise ValueError('Wait for the active workflow operation to finish before deleting it.')
-            archived = workflows.delete_workflow(path)
-        return jsonify(deleted=expected, archived=str(archived))
+            archived = workflows.delete_workflow(path, permanent=options.get('permanent', False))
+        return jsonify(deleted=expected, permanent=options.get('permanent', False),
+                       archived=str(archived) if archived else None)
 
     def dispatch_metadata(operation, cwd):
         """Never show a previous preparation's count for a newly prepared job."""

@@ -352,10 +352,15 @@ def rename_and_save(data, source, progress=None):
     return destination, count
 
 
-def delete_workflow(source):
-    """Remove a user workflow from the UI by moving it to a recoverable archive."""
+def delete_workflow(source, permanent=False):
+    """Remove only the selected local workflow, preserving submitted cluster jobs."""
     if source.parent != USER_RUNS.resolve():
         raise ValueError('Only user workflows can be deleted.')
+    if source.is_symlink():
+        raise ValueError('Workflow directory must not be a symlink.')
+    if permanent:
+        shutil.rmtree(source)
+        return None
     DELETED.mkdir(parents=True, exist_ok=True)
     archived = DELETED / f'{source.name}-{time.time_ns()}'
     source.rename(archived)
