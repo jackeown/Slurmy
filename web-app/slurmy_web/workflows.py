@@ -6,6 +6,7 @@ from slurmy_archives import expand_cluster_tptp_many
 import csv
 import io
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import shlex
@@ -356,6 +357,73 @@ def rename_and_save(data, source, progress=None):
     return destination, count
 
 
+def rename_workflow(source,name):
+    """Rename locally, retaining job links and relocatable prepared submissions."""
+    if source.parent!=USER_RUNS.resolve() or source.is_symlink():
+        raise ValueError('Only your own workflows can be renamed.')
+    if not isinstance(name,str) or len(name)>100 or not re.fullmatch(r'[a-z0-9][a-z0-9-]*',name):
+        raise ValueError('Workflow name: use lowercase letters, numbers and hyphens (up to 100 characters).')
+    destination=USER_RUNS/name
+    if destination==source:return source
+    if destination.exists() or destination.is_symlink():raise ValueError('A workflow with that name already exists.')
+    data=decisions(source,check_paths=False)
+    old,new=str(source),str(destination)
+    full_pattern=re.compile(re.escape(old)+r'''(?=[/\s\x22\x27]|$)''')
+    def remap(value):
+        if isinstance(value,str):return full_pattern.sub(lambda _:new,value)
+        if isinstance(value,list):return [remap(item) for item in value]
+        if isinstance(value,dict):return {key:remap(item) for key,item in value.items()}
+        return value
+    data=remap(data);data['name']=name
+    data['_previous_directories']=list(dict.fromkeys([*data.get('_previous_directories',[]),old]))
+    path_pattern=re.compile(re.escape(old.lstrip('/').encode())+rb'''(?=[/\x00\s\x22\x27]|$)''')
+    def rewrite(body):
+        return path_pattern.sub(lambda _:new.lstrip('/').encode(),body)
+    candidates=[path for path in source.iterdir() if path.is_file() and not path.is_symlink()
+                and (path.name=='Makefile' or path.suffix in {'.json','.jsonl','.csv','.txt','.mk','.sh'})]
+    assets=source/'submit.sh.files'
+    if assets.is_dir() and not assets.is_symlink():
+        for folder,dirs,files in os.walk(assets,followlinks=False):
+            dirs[:]=[item for item in dirs if not (Path(folder)/item).is_symlink()]
+            candidates.extend(Path(folder)/item for item in files if Path(item).suffix in {'.json','.jsonl','.csv','.txt','.mk','.sh'} and not (Path(folder)/item).is_symlink())
+    updates={}
+    for path in candidates:
+        body=path.read_bytes();changed=rewrite(body)
+        if changed!=body:updates[path.relative_to(source)]=(body,changed)
+    manifest=source/'.slurmy-workflow.json'
+    updates[Path('.slurmy-workflow.json')]=(manifest.read_bytes() if manifest.is_file() else None,(json.dumps(data,indent=2,sort_keys=True)+'\n').encode())
+    # Bundles contain the same shell files as calls/, and must move with them.
+    import io
+    import tarfile
+    if (assets/'call-bundles').is_dir():
+        for path in (assets/'call-bundles').glob('*.tar.gz'):
+            if path.is_symlink():continue
+            original=path.read_bytes();output=io.BytesIO();changed=False
+            with tarfile.open(fileobj=io.BytesIO(original),mode='r:gz') as archive,tarfile.open(fileobj=output,mode='w:gz',compresslevel=1) as target:
+                for member in archive:
+                    if member.isfile():
+                        body=archive.extractfile(member).read();updated=rewrite(body);changed|=body!=updated
+                        member.size=len(updated);target.addfile(member,io.BytesIO(updated))
+                    else:target.addfile(member)
+            if changed:updates[path.relative_to(source)]=(original,output.getvalue())
+    source.rename(destination)
+    written=[]
+    try:
+        for relative,(before,after) in updates.items():
+            path=destination/relative;temporary=path.with_name('.'+path.name+'.rename-tmp')
+            temporary.write_bytes(after)
+            if path.exists():shutil.copymode(path,temporary)
+            temporary.replace(path);written.append(relative)
+    except Exception:
+        for relative in reversed(written):
+            before=updates[relative][0];path=destination/relative
+            if before is None:path.unlink(missing_ok=True)
+            else:path.write_bytes(before)
+        destination.rename(source)
+        raise
+    return destination
+
+
 def delete_workflow(source, permanent=False):
     """Remove only the selected local workflow, preserving submitted cluster jobs."""
     if source.parent != USER_RUNS.resolve():
@@ -658,7 +726,7 @@ def duplicate(source, name):
     """Copy a workflow definition without stale submission output."""
     if not isinstance(name, str) or not re.fullmatch(r'[a-z0-9][a-z0-9-]*', name):
         raise ValueError('Workflow name: use lowercase letters, numbers and hyphens.')
-    source_data = decisions(source)
+    source_data = decisions(source, check_paths=False)
     destination = USER_RUNS / name
     if destination.exists():
         raise ValueError(f'Workflow already exists: {destination}')
@@ -680,8 +748,8 @@ def duplicate(source, name):
         makefile.write_text(re.sub(r'(?m)^REPO_ROOT\s*:?=.*$', 'REPO_ROOT := ../../..',
                                    makefile.read_text(encoding='utf-8'), count=1), encoding='utf-8')
         def remap(value):
-            if isinstance(value, str) and (value == str(source) or value.startswith(str(source) + '/')):
-                return str(destination) + value[len(str(source)):]
+            if isinstance(value, str):
+                return str(destination) if value == str(source) else value.replace(str(source) + '/', str(destination) + '/')
             if isinstance(value, list):
                 return [remap(item) for item in value]
             if isinstance(value, dict):
@@ -689,17 +757,33 @@ def duplicate(source, name):
             return value
         data = remap(source_data)
         data['name'] = name
+        data['_created_at'] = time.time()
         data.pop('_previous_directories', None)
         (destination / '.slurmy-workflow.json').write_text(
             json.dumps(data, indent=2, sort_keys=True) + '\n', encoding='utf-8')
-        (destination / 'building.txt').write_text(''.join(
-            item['root'] + '\n' + (item.get('script', '') if item['mode'] == 'script' else
-                                   str(destination / f'build-resource-{index}.sh') if item['mode'] == 'commands' else '') + '\n'
-            for index, item in enumerate(data['resources'])), encoding='utf-8')
-        (destination / 'resource_limiter_template.txt').write_text(data['limiter'].rstrip() + '\n', encoding='utf-8')
-        jobpairs = destination / 'jobpairs.csv'
-        if jobpairs.is_file():
-            jobpairs.write_text(jobpairs.read_text(encoding='utf-8').replace(str(source), str(destination)), encoding='utf-8')
+        builds=[]
+        recipes=[]
+        for index,item in enumerate(data['resources']):
+            recipe=(item.get('script','') if item['mode']=='script' else
+                    str(destination/f'build-resource-{index}.sh') if item['mode']=='commands' else '')
+            if item['mode']=='commands':
+                (destination/f'build-resource-{index}.sh').write_text(item.get('commands',''),encoding='utf-8')
+            if recipe:recipes.append(recipe)
+            builds.append(dict(root=item['root'],source=item.get('source',''),recipe=recipe,
+                               artifact=item.get('artifact',''),build_policy=item.get('build_policy','always'),
+                               legacy=bool(recipe and not item.get('artifact'))))
+        (destination/'building.txt').write_text(json.dumps(builds,indent=2)+'\n',encoding='utf-8')
+        text=makefile.read_text()
+        text=re.sub(r'(?m)^BUILD_RECIPES\s*:?=.*$',lambda _: 'BUILD_RECIPES := '+' '.join(path.replace(' ','\\ ') for path in recipes),text)
+        makefile.write_text(text,encoding='utf-8')
+        (destination / 'resource_limiter_template.txt').write_text(remap(data['limiter']).rstrip() + '\n', encoding='utf-8')
+        for filename,configurations in [('configurations.csv',True),('jobpairs.csv',False)]:
+            if (source/filename).is_file():
+                rows=remap(imported_rows(source/filename,configurations,check_paths=False))
+                (destination/filename).write_text(csv_text(rows,tuple(c for c in COLUMNS if not configurations or c!='problem')),encoding='utf-8')
+        for filename,key in [('problem-globs.txt','globs'),('axiom-globs.txt','axiom_globs')]:
+            if (source/filename).is_file():
+                (destination/filename).write_text('\n'.join(data.get(key,[]))+'\n',encoding='utf-8')
     except Exception:
         shutil.rmtree(destination)
         raise

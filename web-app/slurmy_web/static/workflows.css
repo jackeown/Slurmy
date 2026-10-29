@@ -335,10 +335,11 @@ html[data-theme="dark"] .collapse-toggle:hover { background: #20382e; }
   border-bottom: 5px solid transparent;
   border-left: 7px solid currentColor;
   transform: rotate(0deg);
-  transition: transform 180ms ease;
+  transition: transform var(--section-duration,240ms) var(--section-easing,ease);
 }
 .collapse-toggle[aria-expanded="true"]::before, details[open] > summary::before { transform: rotate(90deg); }
 .collapse-toggle:focus-visible { outline: 2px solid #52aa86; outline-offset: 2px; }
+.collapsed > .collapse-header { margin-block: 0; }
 .collapsed > :not(.collapse-header) { display: none !important; }
 
 summary {
@@ -396,7 +397,8 @@ html[data-theme="dark"] .sort-button:hover, html[data-theme="dark"] .sort-button
 .outcome-cube-legend > span { display: inline-flex; align-items: center; gap: 6px; }
 .outcome-legend-item { padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); cursor: grab; user-select: none; touch-action: none; }
 .outcome-legend-item:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
-.outcome-legend-item.dragging { position: fixed; z-index: 1000; margin: 0; pointer-events: none; cursor: grabbing; box-shadow: 0 6px 20px #0003; }
+.outcome-legend-item.dragging { position: fixed; inset: auto; z-index: 1000; margin: 0; pointer-events: none; cursor: grabbing; box-shadow: 0 6px 20px #0003; }
+.outcome-legend-item.dragging::backdrop { background: transparent; pointer-events: none; }
 .legend-placeholder { flex: 0 0 auto; border: 2px dashed var(--green); border-radius: 6px; background: var(--paper); opacity: .6; }
 .legend-grip { color: var(--muted); font-size: 19px; line-height: 1; }
 .outcome-cube-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
@@ -496,3 +498,23 @@ html[data-theme="dark"] .sort-button:hover, html[data-theme="dark"] .sort-button
 .job-rename-button svg { width: 19px; height: 19px; }
 .job-results-heading { flex-wrap: wrap; }
 .job-completion { margin: 0; font-size: 14px; color: var(--muted); }
+
+.workflow-group > summary .recovery-trigger { margin-left: auto; font-size: 11px; padding: 6px 9px; color: var(--muted); }
+.recovery-dialog { width: min(760px,calc(100vw - 32px)); max-height: 85dvh; padding: 24px; overflow-y: auto; }
+.recovery-dialog::backdrop { background: #0007; backdrop-filter: blur(3px); }
+.recovery-dialog h2,.recovery-entry h3 { margin: 0; }
+.recovery-dialog > .muted { font-size: 13px; line-height: 1.6; }
+.recovery-entry { padding: 18px 0; border-top: 1px solid var(--line); }
+.recovery-entry .section-heading { flex-wrap: wrap; gap: 12px; }
+.recovery-entry .tools { flex-wrap: wrap; }
+.recovery-entry .tools button { font-size: 12px; }
+.recovery-entry pre { max-height: 260px; font-size: 11px; }
+@media(max-width:600px) { .workflow-group > summary { flex-wrap: wrap; } .workflow-group > summary .recovery-trigger { margin-left: 0; } }
+
+.workflow-group > summary .count { margin-left: 0; flex: 0 0 auto; min-width: 26px; height: 26px; padding: 0 7px; line-height: 1; font-variant-numeric: tabular-nums; }
+
+details[data-section-state="closing"] > summary::before { transform: rotate(0deg); }
+
+.workflow-card-title,.workflow-title-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.workflow-card-title h2,.workflow-title-row h1 { min-width: 0; overflow-wrap: anywhere; margin-bottom: 0; }
+.rename-workflow { flex: 0 0 auto; width: 30px; height: 30px; padding: 5px; font-size: 12px; }

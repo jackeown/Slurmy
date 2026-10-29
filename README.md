@@ -318,3 +318,23 @@ batch exit. Upload commit and SLURM dispatch share one SSH channel. Prebuilt-onl
 jobs perform no cluster builds, and `/share/TPTP` problems are never uploaded.
 SLURM queue waits, solver runtime and genuinely large resource transfers still
 contribute to time to first result.
+
+On the Workflows page, **Recovery Archive** beside **Your Workflows** lists local
+archived workflows. **Inspect Files** shows a bounded file listing without following
+resource symlinks. **Restore** moves a workflow back to its original folder and
+refuses to overwrite an existing definition. **Remove Permanently** asks for
+confirmation before deleting that archived copy; submitted jobs are unaffected.
+Example workflow cards also have **Duplicate**, which creates an editable copy in
+Your Workflows while preserving solver paths, TPTP choices and build settings.
+
+Your workflow cards and workflow detail pages have a pencil action for renaming.
+Renaming is local: folder paths and prepared script bundles are updated, and prior
+workflow locations are retained so submitted jobs stay linked. Existing names are
+never overwritten. Duplicate is available on both user and example cards.
+
+Action buttons use locally bundled Font Awesome Free 6.7.2 icons; attribution and
+licenses are in `web-app/slurmy_web/static/vendor/fontawesome/LICENSE.txt`.
+See [Font Awesome's self-hosting documentation](https://docs.fontawesome.com/web/setup/host-yourself/webfonts/).
+Section transitions vary by theme. Custom Theme exposes expand/collapse duration,
+easing, and slide/fade style; these settings are included in named theme exports.
+Reduced-motion preferences disable the section animations.

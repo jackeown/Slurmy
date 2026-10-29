@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block page_heading %}<p class="eyebrow">WORKFLOW</p><h1>{{ name }}</h1>{% endblock %}
+{% block page_heading %}<p class="eyebrow">WORKFLOW</p><div class="workflow-title-row"><h1>{{ name }}</h1>{% if directory.startswith(base) %}<button class="secondary rename-workflow" type="button" data-directory="{{ directory }}" data-name="{{ name }}" aria-label="Rename Workflow" title="Rename Workflow"></button>{% endif %}</div>{% endblock %}
 {% block title %}{{ name }}{% endblock %}
 {% block data %}data-page="workflow" data-directory="{{ directory }}"{% endblock %}
 {% block content %}

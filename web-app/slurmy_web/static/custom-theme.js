@@ -32,6 +32,11 @@ window.SlurmyCustomTheme = (() => {
       ['opacity','Panel Opacity','range',40,100,'%'],['blur','Glass Blur','range',0,20,'px'],
       ['transition','Transition Duration','range',0,600,'ms'],
     ]],
+    ['Section Animations', [
+      ['collapseDuration','Expand / Collapse Duration','range',0,800,'ms'],
+      ['collapseEasing','Expand / Collapse Easing','select',[['smooth','Smooth'],['gentle','Gentle'],['snappy','Snappy'],['linear','Linear']]],
+      ['collapseStyle','Expand / Collapse Style','select',[['slide','Slide'],['fade','Fade'],['slide-fade','Slide & Fade']]],
+    ]],
     ['Background & Motion', [
       ['pattern','Background Pattern','select',[['none','None'],['grid','Grid'],['dots','Dots'],['weave','Woven Paper'],['diagonal','Diagonal Lines'],['stars','Stardust']]],
       ['patternSize','Pattern Scale','range',8,100,'px'],

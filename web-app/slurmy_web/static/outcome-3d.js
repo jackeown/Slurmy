@@ -87,7 +87,11 @@ function renderTable() {
     let drag = null;
     const clearDrag = () => {
       if (drag?.placeholder) drag.placeholder.remove();
-      if (drag?.active) item.style.cssText = drag.originalStyle;
+      if (drag?.active) {
+        item.hidePopover();
+        item.removeAttribute('popover');
+        item.style.cssText = drag.originalStyle;
+      }
       drag = null; item.classList.remove('dragging');
     };
     item.addEventListener('pointerdown', event => {
@@ -110,6 +114,11 @@ function renderTable() {
         placeholder.style.width = `${drag.width}px`; placeholder.style.height = `${drag.height}px`;
         item.before(placeholder); drag.placeholder = placeholder;
         item.classList.add('dragging');
+        // Glass/filtered panels establish a containing block for fixed children.
+        // The browser's top layer uses viewport coordinates regardless of those
+        // ancestors, while keeping the real item and pointer capture intact.
+        item.setAttribute('popover', 'manual');
+        item.showPopover();
         item.style.width = `${drag.width}px`; item.style.height = `${drag.height}px`;
       }
       // Move the actual item with the pointer, preserving the initial grab offset.

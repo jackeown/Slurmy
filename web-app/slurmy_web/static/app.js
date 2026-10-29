@@ -125,7 +125,7 @@ function initCollapsibles(){
   if(!caption)return;
   section.dataset.collapsibleReady='true';header.classList.add('collapse-header');caption.classList.add('collapse-caption');
   const control=el('button',undefined,'collapse-toggle');control.type='button';control.setAttribute('aria-expanded','true');control.setAttribute('aria-label',`Collapse ${caption.textContent.trim()}`);control.title='Collapse section';
-  const toggle=()=>{const collapsed=section.classList.toggle('collapsed');control.setAttribute('aria-expanded',String(!collapsed));control.setAttribute('aria-label',`${collapsed?'Expand':'Collapse'} ${caption.textContent.trim()}`);control.title=`${collapsed?'Expand':'Collapse'} section`;};
+  const toggle=()=>{const collapsed=window.SlurmySections?!window.SlurmySections.isCollapsed(section):!section.classList.contains('collapsed');if(window.SlurmySections)window.SlurmySections.toggle(section,collapsed);else section.classList.toggle('collapsed',collapsed);control.setAttribute('aria-expanded',String(!collapsed));control.setAttribute('aria-label',`${collapsed?'Expand':'Collapse'} ${caption.textContent.trim()}`);control.title=`${collapsed?'Expand':'Collapse'} section`;};
   control.addEventListener('click',event=>{event.stopPropagation();toggle();});
   header.addEventListener('click',event=>{if(event.target.closest('button, a, input, select, textarea, label, summary'))return;toggle();});
   caption.prepend(control);
@@ -423,13 +423,29 @@ function workflowAction(action){closeSubmitMenu();startOperation('/api/workflow/
 $('#prepare')?.addEventListener('click',()=>workflowAction('prepare'));
 $('#submit')?.addEventListener('click',()=>workflowAction('prepare-submit'));
 $('#submit-only')?.addEventListener('click',()=>workflowAction('submit'));
-$('#duplicate')?.addEventListener('click',async()=>{
- const suggested=(document.querySelector('h1')?.textContent||'workflow')+'-copy';
- const name=await SlurmyDialog.text({title:'Duplicate Workflow',message:'The original workflow stays unchanged.',acceptLabel:'Create Copy',input:{label:'New Workflow Name',value:suggested,maxLength:100,validate:value=>/^[a-z0-9][a-z0-9-]*$/.test(value)?'':'Use lowercase letters, numbers, and hyphens.'}});
- if(name===null)return;
- try{const data=await api('/api/workflows/duplicate?'+params({directory:document.body.dataset.directory}),{name:name.trim()});location.href='/workflow?'+params({directory:data.directory});}
- catch(error){notice(error.message);}
-});
+async function renameWorkflow(directory,name,control){
+ if(control.disabled)return;
+ control.disabled=true;
+ try{
+  const chosen=await SlurmyDialog.text({title:'Rename Workflow',message:'The folder is renamed too. Previously submitted jobs remain linked.',acceptLabel:'Rename',input:{label:'Workflow Name',value:name,maxLength:100,validate:value=>/^[a-z0-9][a-z0-9-]*$/.test(value)?'':'Use lowercase letters, numbers, and hyphens.'}});
+  if(chosen===null||chosen===name)return;
+  const data=await api('/api/workflows/name?'+params({directory}),{name:chosen});
+  location.href=page==='workflow'?'/workflow?'+params({directory:data.directory}):'/workflows?'+params({});
+ }catch(error){notice(error.message);}finally{control.disabled=false;}
+}
+document.querySelectorAll('.rename-workflow').forEach(control=>control.addEventListener('click',()=>renameWorkflow(control.dataset.directory,control.dataset.name,control)));
+async function duplicateWorkflow(directory,workflowName,control){
+ if(control.disabled)return;
+ control.disabled=true;
+ try{
+  const suggested=workflowName.replace(/^example-/,'')+'-copy';
+  const name=await SlurmyDialog.text({title:'Duplicate Workflow',message:'Create an editable copy in Your Workflows.',acceptLabel:'Create Copy',input:{label:'New Workflow Name',value:suggested,maxLength:100,validate:value=>/^[a-z0-9][a-z0-9-]*$/.test(value)?'':'Use lowercase letters, numbers, and hyphens.'}});
+  if(name===null)return;
+  const data=await api('/api/workflows/duplicate?'+params({directory}),{name:name.trim()});location.href='/workflow?'+params({directory:data.directory});
+ }catch(error){notice(error.message);}finally{control.disabled=false;}
+}
+$('#duplicate')?.addEventListener('click',event=>duplicateWorkflow(document.body.dataset.directory,document.querySelector('h1')?.textContent||'workflow',event.currentTarget));
+document.querySelectorAll('.duplicate-workflow-card').forEach(control=>control.addEventListener('click',()=>duplicateWorkflow(control.dataset.directory,control.dataset.name,control)));
 function rememberedWorkflowDeletion(now=Date.now()){
  try{
   const choice=JSON.parse(localStorage.getItem('slurmy-workflow-delete-choice')||'null');

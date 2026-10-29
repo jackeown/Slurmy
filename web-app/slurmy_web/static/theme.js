@@ -10,11 +10,11 @@ window.SlurmyThemes = (() => {
     compact: '"Arial Narrow", "Liberation Sans Narrow", Arial, sans-serif',
   };
   const defaults = {mode:'light',paper:'#f3f6f0',surface:'#ffffff',well:'#edf2e9',ink:'#23392e',muted:'#59695f',line:'#d8e2d5',accent:'#297351',sidebar:'#172f27',accentInk:'#ffffff',
-    font:'system',fontFamily:'',radius:10,opacity:100,blur:0,transition:160,motion:'none',pattern:'none',patternSize:32,
+    font:'system',fontFamily:'',radius:10,opacity:100,blur:0,transition:160,collapseDuration:240,collapseEasing:'smooth',collapseStyle:'slide-fade',motion:'none',pattern:'none',patternSize:32,
     shadowColor:'#000000',shadowY:3,shadowBlur:18,shadowOpacity:5,textShadowColor:'#297351',textShadowBlur:0,textShadowOpacity:30,
     image:'',imageName:'',imageFit:'cover',imageOpacity:35};
-  const choices = {mode:['light','dark'],font:Object.keys(fonts),motion:['none','drift','breathe'],pattern:['none','grid','dots','weave','diagonal','stars'],imageFit:['cover','contain','tile']};
-  const limits = {radius:[0,28],opacity:[40,100],blur:[0,20],transition:[0,600],patternSize:[8,100],shadowY:[0,24],shadowBlur:[0,60],shadowOpacity:[0,60],textShadowBlur:[0,24],textShadowOpacity:[0,80],imageOpacity:[0,100]};
+  const choices = {collapseEasing:['smooth','gentle','snappy','linear'],collapseStyle:['slide','fade','slide-fade'],mode:['light','dark'],font:Object.keys(fonts),motion:['none','drift','breathe'],pattern:['none','grid','dots','weave','diagonal','stars'],imageFit:['cover','contain','tile']};
+  const limits = {collapseDuration:[0,800],radius:[0,28],opacity:[40,100],blur:[0,20],transition:[0,600],patternSize:[8,100],shadowY:[0,24],shadowBlur:[0,60],shadowOpacity:[0,60],textShadowBlur:[0,24],textShadowOpacity:[0,80],imageOpacity:[0,100]};
   function normalizeColor(value) {
     if(typeof value !== 'string')return null;
     if(/^#[a-f0-9]{6}([a-f0-9]{2})?$/i.test(value))return value.toLowerCase();
@@ -37,6 +37,7 @@ window.SlurmyThemes = (() => {
   function tokensFor(settings) {
     return {'--paper':settings.paper,'--white':settings.surface,'--surface-2':settings.well,'--ink':settings.ink,'--muted':settings.muted,'--line':settings.line,'--green':settings.accent,'--dark':settings.sidebar,'--accent-ink':settings.accentInk,
       '--red':settings.mode === 'dark' ? '#ff9b98' : '#ab363e','--orange':settings.mode === 'dark' ? '#e9bf7c' : '#956020',
+      '--section-duration':settings.collapseDuration+'ms','--section-easing':({smooth:'cubic-bezier(.22,.61,.36,1)',gentle:'cubic-bezier(.25,.1,.25,1)',snappy:'cubic-bezier(.2,.8,.2,1)',linear:'linear'})[settings.collapseEasing],'--section-style':settings.collapseStyle,
       '--theme-font':settings.fontFamily || fonts[settings.font],'--theme-radius':settings.radius+'px','--theme-control-radius':Math.round(settings.radius*.7)+'px','--theme-opacity':settings.opacity+'%','--theme-chrome-opacity':(settings.opacity===100?100:Math.max(40,settings.opacity-10))+'%','--theme-blur':settings.blur+'px','--theme-transition':settings.transition+'ms',
       '--theme-shadow':settings.shadowOpacity ? `0 ${settings.shadowY}px ${settings.shadowBlur}px ${alpha(settings.shadowColor,settings.shadowOpacity)}` : 'none',
       '--theme-text-shadow':settings.textShadowBlur ? `0 0 ${settings.textShadowBlur}px ${alpha(settings.textShadowColor,settings.textShadowOpacity)}` : 'none',
@@ -44,11 +45,11 @@ window.SlurmyThemes = (() => {
       '--custom-pattern-size':settings.patternSize+'px'};
   }
   const profiles = {
-    garden:{radius:10},porcelain:{radius:4,font:'humanist',transition:100},sandstone:{radius:14,font:'serif',shadowColor:'#795a38',shadowOpacity:9},pearl:{radius:20,font:'rounded',transition:240},
-    evergreen:{radius:10},graphite:{radius:3,font:'compact',transition:90},midnight:{radius:8,transition:220},obsidian:{radius:2,font:'mono',shadowBlur:4,shadowOpacity:35},
-    'neon-haze':{pattern:'grid',radius:5,font:'mono',opacity:88,blur:10,motion:'drift',shadowColor:'#30ddca',shadowBlur:26,shadowOpacity:15,textShadowColor:'#68f8e7',textShadowBlur:12,textShadowOpacity:40},
-    aurora:{pattern:'diagonal',radius:18,font:'humanist',opacity:88,blur:12,motion:'drift',transition:280,shadowColor:'#54cda4',shadowOpacity:12},
-    amethyst:{pattern:'stars',radius:22,font:'serif',transition:360,opacity:90,blur:8,motion:'breathe',textShadowColor:'#d8adff',textShadowBlur:8,textShadowOpacity:28,shadowColor:'#a767d8',shadowOpacity:16},
+    garden:{radius:10},porcelain:{collapseDuration:180,collapseEasing:'snappy',collapseStyle:'slide',radius:4,font:'humanist',transition:100},sandstone:{radius:14,font:'serif',shadowColor:'#795a38',shadowOpacity:9},pearl:{radius:20,font:'rounded',transition:240},
+    evergreen:{radius:10},graphite:{collapseDuration:160,collapseEasing:'snappy',collapseStyle:'slide',radius:3,font:'compact',transition:90},midnight:{radius:8,transition:220},obsidian:{radius:2,font:'mono',shadowBlur:4,shadowOpacity:35},
+    'neon-haze':{collapseDuration:300,collapseEasing:'gentle',pattern:'grid',radius:5,font:'mono',opacity:88,blur:10,motion:'drift',shadowColor:'#30ddca',shadowBlur:26,shadowOpacity:15,textShadowColor:'#68f8e7',textShadowBlur:12,textShadowOpacity:40},
+    aurora:{collapseDuration:320,collapseEasing:'gentle',pattern:'diagonal',radius:18,font:'humanist',opacity:88,blur:12,motion:'drift',transition:280,shadowColor:'#54cda4',shadowOpacity:12},
+    amethyst:{collapseDuration:360,collapseEasing:'gentle',collapseStyle:'fade',pattern:'stars',radius:22,font:'serif',transition:360,opacity:90,blur:8,motion:'breathe',textShadowColor:'#d8adff',textShadowBlur:8,textShadowOpacity:28,shadowColor:'#a767d8',shadowOpacity:16},
     ember:{pattern:'diagonal',opacity:88,blur:10,radius:3,font:'compact',motion:'breathe',shadowColor:'#ff843a',shadowBlur:24,shadowOpacity:12},
     blueprint:{radius:2,font:'mono',pattern:'grid'},botanical:{radius:18,font:'humanist',opacity:94,pattern:'dots',transition:240},rosewater:{radius:22,font:'serif',pattern:'weave',shadowColor:'#a34f77',shadowOpacity:8},
     sunprint:{radius:14,font:'rounded',opacity:94,pattern:'diagonal',motion:'drift',shadowColor:'#a86d23',shadowOpacity:10},

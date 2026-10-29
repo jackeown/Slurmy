@@ -59,7 +59,7 @@ const source=fs.readFileSync(process.argv[1],'utf8');
 const legend={children:[],getBoundingClientRect:()=>({left:0,right:500,top:0,bottom:100}),
  querySelectorAll(){return this.children.filter(node=>node.className==='outcome-legend-item');}};
 function make(tag,label){
- const node={style:{cssText:''},dataset:{},listeners:{},className:'',setAttribute(){},append(){},
+ const node={style:{cssText:''},dataset:{},listeners:{},className:'',attributes:{},setAttribute(key,value){this.attributes[key]=value;},removeAttribute(key){delete this.attributes[key];},showPopover(){this.topLayer=true;},hidePopover(){this.topLayer=false;},append(){},
  addEventListener(type,fn){this.listeners[type]=fn;},setPointerCapture(){},hasPointerCapture(){return true;},releasePointerCapture(){},
  getBoundingClientRect(){return {left:0,top:0,width:100,height:30,right:100,bottom:30};},
  before(other){other.remove();legend.children.splice(legend.children.indexOf(this),0,other);},
@@ -81,11 +81,11 @@ legend.children=[item,b,c];
 const event=(x,y=10)=>({button:0,isPrimary:true,pointerId:1,clientX:x,clientY:y});
 item.listeners.pointerdown(event(5));item.listeners.pointermove(event(280,20));
 assert.equal(item.style.left,'275px');assert.equal(item.style.top,'10px');
-assert.equal(item.activeClass,'dragging');
+assert.equal(item.activeClass,'dragging');assert.equal(item.topLayer,true);assert.equal(item.attributes.popover,'manual');
 assert.equal(legend.children[3].className,'legend-placeholder');
 item.listeners.pointerup(event(280,20));
 assert.deepEqual(moves,[['Not finished',2]]);assert.equal(legend.children.length,3);
-assert.equal(item.activeClass,null);assert.equal(item.style.cssText,'');
+assert.equal(item.activeClass,null);assert.equal(item.style.cssText,'');assert.equal(item.topLayer,false);assert.equal(item.attributes.popover,undefined);
 assert.equal(item.listeners.keydown,undefined);
 item.listeners.pointerdown(event(5));item.listeners.pointermove(event(180));item.listeners.pointercancel();
 assert.equal(legend.children.length,3);assert.equal(moves.length,1);assert.equal(item.activeClass,null);

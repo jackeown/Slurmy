@@ -886,6 +886,15 @@ def create_app():
             destination, count = workflows.rename_and_save(data, path)
         return jsonify(directory=str(destination), count=count)
 
+    @app.post('/api/workflows/name')
+    def rename_workflow():
+        path=directory()
+        with guard:
+            if any(op['scope']==str(path) and op['state']=='running' for op in operations.values()):
+                abort(409,'Wait for the active workflow operation to finish before renaming it.')
+            destination=workflows.rename_workflow(path,(request.get_json() or {}).get('name'))
+        return jsonify(directory=str(destination),name=destination.name)
+
     @app.post('/api/workflows/duplicate')
     def duplicate_workflow():
         source = directory()
@@ -917,6 +926,30 @@ def create_app():
         except (tarfile.TarError, UnicodeError, json.JSONDecodeError) as exc:
             raise ValueError('Invalid portable workflow archive.') from exc
         return jsonify(directory=str(destination), count=count), 201
+
+    @app.get('/api/workflows/recovery')
+    def recovery_list():
+        from . import recovery
+        return jsonify(entries=recovery.entries())
+
+    @app.get('/api/workflows/recovery/<archive_id>')
+    def recovery_inspect(archive_id):
+        from . import recovery
+        return jsonify(recovery.inspect(archive_id))
+
+    @app.post('/api/workflows/recovery/<archive_id>')
+    def recovery_action(archive_id):
+        from . import recovery
+        options=request.get_json() or {}
+        with guard:
+            _,item=recovery.entry(archive_id)
+            if options.get('action')=='restore':
+                destination=recovery.restore(archive_id)
+                return jsonify(directory=str(destination),name=item['name'])
+            if options.get('action')=='remove' and options.get('name')==item['name']:
+                recovery.remove(archive_id)
+                return jsonify(removed=item['name'])
+            raise ValueError('Choose Restore or confirm the archived workflow name for permanent removal.')
 
     @app.post('/api/workflows/delete')
     def delete_workflow():

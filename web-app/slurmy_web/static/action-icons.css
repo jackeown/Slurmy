@@ -1,0 +1,38 @@
+/* Font Awesome Free 6.7.2 by @fontawesome — https://fontawesome.com
+ * Font: SIL OFL 1.1; code: MIT. See vendor/fontawesome/LICENSE.txt. */
+@font-face { font-family: 'Slurmy Actions'; font-style: normal; font-weight: 900; font-display: block; src: url('./vendor/fontawesome/fa-solid-900.woff2') format('woff2'); }
+[data-action-icon]::before {
+  content: var(--action-glyph) / ''; display: inline-block; width: 1em;
+  margin-inline-end: .5em; text-align: center; vertical-align: -.03em;
+  font: normal 900 1em/1 'Slurmy Actions' !important;
+  text-shadow: none !important; flex: 0 0 auto;
+  -webkit-font-smoothing: antialiased;
+}
+.action-icon-only::before { margin-inline-end: 0; }
+.workflow-card-actions { flex-wrap: wrap; justify-content: flex-end; flex-shrink: 1; }
+[data-action-icon="copy"] { --action-glyph: "\f0c5"; }
+[data-action-icon="trash-can"] { --action-glyph: "\f2ed"; }
+[data-action-icon="download"] { --action-glyph: "\f019"; }
+[data-action-icon="upload"] { --action-glyph: "\f093"; }
+[data-action-icon="pen"] { --action-glyph: "\f304"; }
+[data-action-icon="plus"] { --action-glyph: "\2b"; }
+[data-action-icon="rotate"] { --action-glyph: "\f2f1"; }
+[data-action-icon="play"] { --action-glyph: "\f04b"; }
+[data-action-icon="stop"] { --action-glyph: "\f04d"; }
+[data-action-icon="floppy-disk"] { --action-glyph: "\f0c7"; }
+[data-action-icon="folder-open"] { --action-glyph: "\f07c"; }
+[data-action-icon="eye"] { --action-glyph: "\f06e"; }
+[data-action-icon="xmark"] { --action-glyph: "\f00d"; }
+[data-action-icon="box-archive"] { --action-glyph: "\f187"; }
+[data-action-icon="clock-rotate-left"] { --action-glyph: "\f1da"; }
+[data-action-icon="paper-plane"] { --action-glyph: "\f1d8"; }
+[data-action-icon="gears"] { --action-glyph: "\f085"; }
+[data-action-icon="plug"] { --action-glyph: "\f1e6"; }
+[data-action-icon="cube"] { --action-glyph: "\f1b2"; }
+[data-action-icon="arrow-left"] { --action-glyph: "\f060"; }
+[data-action-icon="arrow-right"] { --action-glyph: "\f061"; }
+[data-action-icon="arrow-up"] { --action-glyph: "\f062"; }
+[data-action-icon="check"] { --action-glyph: "\f00c"; }
+[data-action-icon="palette"] { --action-glyph: "\f53f"; }
+[data-action-icon="chevron-down"] { --action-glyph: "\f078"; }
+[data-action-icon="hourglass-half"] { --action-glyph: "\f252"; }

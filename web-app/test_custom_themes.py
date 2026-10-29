@@ -31,7 +31,7 @@ const change=(key,value)=>{const input=get('#custom-'+key);input.value=String(va
  assert.equal(root.style.values['--theme-radius'],'24px');assert.match(root.style.values['--theme-font'],/Georgia/);
  assert.equal(root.style.values['--theme-opacity'],'62%');assert.equal(root.style.values['--theme-chrome-opacity'],'52%');assert.match(root.style.values['--theme-shadow'],/40px/);
  assert.equal(store.get('slurmy-theme'),'garden');get('#discard-custom-theme').events.click();assert.equal(root.dataset.colorTheme,'garden');assert.equal(editor.isOpen,false);
- editor.open();assert.equal(get('#custom-radius').value,10);change('radius',24);change('ink','#345678');change('ink-alpha',40);get('#save-custom-theme').events.click();
+ editor.open();assert.equal(get('#custom-radius').value,10);change('radius',24);change('collapseDuration',420);change('collapseEasing','gentle');change('collapseStyle','fade');assert.equal(root.style.values['--section-duration'],'420ms');assert.equal(root.style.values['--section-style'],'fade');change('ink','#345678');change('ink-alpha',40);get('#save-custom-theme').events.click();
  assert.equal(root.style.values['--ink'],'#34567866');
  assert.equal(themes.normalize({accent:'rgba(12, 34, 56, 0.5)'}).accent,'#0c223880');
  assert.equal(themes.normalize({accent:'rgba(999, 0, 0, 0.5)'}).accent,'#297351');
@@ -57,7 +57,7 @@ const change=(key,value)=>{const input=get('#custom-'+key);input.value=String(va
  assert.equal(themes.normalize({hover:'spotlight'}).hover,undefined);assert.equal(invalid.radius,28);assert.equal(invalid.opacity,40);assert.equal(invalid.image,'');assert.equal(invalid.fontFamily,'');assert.equal(invalid.shadowBlur,18);
  const reloaded={...context,window:{},document:{...context.document,documentElement:make()}};
  vm.createContext(reloaded);vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),reloaded);
- assert.equal(reloaded.window.SlurmyThemes.library.length,2);assert.equal(reloaded.window.SlurmyThemes.library[0].name,'My Theme');assert.equal(reloaded.window.SlurmyThemes.custom.ink,'#34567866');assert.equal(reloaded.window.SlurmyThemes.selected,'custom');assert.equal(reloaded.window.SlurmyThemes.custom.radius,24);assert.match(reloaded.window.SlurmyThemes.custom.image,/data:image/);
+ assert.equal(reloaded.window.SlurmyThemes.library.length,2);assert.equal(reloaded.window.SlurmyThemes.library[0].name,'My Theme');assert.equal(reloaded.window.SlurmyThemes.custom.collapseDuration,420);assert.equal(reloaded.window.SlurmyThemes.custom.collapseEasing,'gentle');assert.equal(reloaded.window.SlurmyThemes.custom.ink,'#34567866');assert.equal(reloaded.window.SlurmyThemes.selected,'custom');assert.equal(reloaded.window.SlurmyThemes.custom.radius,24);assert.match(reloaded.window.SlurmyThemes.custom.image,/data:image/);
 })().catch(error=>{console.error(error);process.exitCode=1;});
 '''
         root=Path(__file__).parent/'slurmy_web/static'
