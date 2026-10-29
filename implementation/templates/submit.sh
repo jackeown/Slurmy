@@ -58,7 +58,11 @@ JOB_ID="${JOB_PREFIX}_$(date +%s)_$$"
 
 
 # 3. Transfer archives. Remote shell logic lives in readable helper files.
-echo 'Submission phase: Uploading inputs to cluster'
+if (( ${LOCAL_PROBLEM_FILES_DEFAULT:-1} == 0 )); then
+    echo 'Submission phase: Uploading local resources and batch definitions; TPTP problems stay on the cluster'
+else
+    echo 'Submission phase: Uploading local problems, resources, and batch definitions'
+fi
 if ! ssh_stage remote_prepare.sh 'Preparing upload'; then
     echo 'SSH failed while creating upload staging; no SLURM batch was submitted.' >&2; exit 1
 fi

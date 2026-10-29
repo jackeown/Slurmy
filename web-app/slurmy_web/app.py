@@ -180,7 +180,7 @@ def submission_phase(log):
     """Summarize the newest visible step of a web-triggered submission."""
     phase = 'Preparing submission files…'
     for line in log.splitlines():
-        if line.startswith(('Build progress: ', 'Packaging progress: ', 'Submission phase: ', 'Submission waiting: ',
+        if line.startswith(('Preparation progress: ', 'Build progress: ', 'Packaging progress: ', 'Submission phase: ', 'Submission waiting: ',
                             'Submission progress: ', 'Submission complete: ')):
             phase = line
         elif match := re.fullmatch(r'Batch \d+: SLURM \d+ \((\d+/\d+) accepted\)', line):
@@ -188,7 +188,7 @@ def submission_phase(log):
     return phase
 
 
-def unfinished_call(job, task_id, progress):
+def unfinished_call(job, task_id, progress, batch_records=None):
     """Explain a missing result using this solver-problem pair's actual SLURM batch."""
     if job.submission_state == 'stopped':
         return 'stopped', 'After resume', 'This job was stopped. Resume it to run this unfinished call.', ''
@@ -197,11 +197,14 @@ def unfinished_call(job, task_id, progress):
         batch_id = progress.batch_id
     if batch_id is None:
         batch_id = task_id // job.batch_size
-    records = [record for record in job.slurm
-               if record.array_task_id.isdigit()
-               and job.submission_offsets.get(record.array_job_id, 0) + int(record.array_task_id) == batch_id]
-    records.sort(key=lambda record: record.source != 'queue')
-    record = records[0] if records else None
+    if batch_records is None:
+        records = [record for record in job.slurm
+                   if record.array_task_id.isdigit()
+                   and job.submission_offsets.get(record.array_job_id, 0) + int(record.array_task_id) == batch_id]
+        records.sort(key=lambda record: record.source != 'queue')
+        record = records[0] if records else None
+    else:
+        record=batch_records.get(batch_id)
     log = ''
     if record:
         log = job.logs.get(f'slurm_{record.array_job_id}_{record.array_task_id}.out', '')
@@ -236,8 +239,21 @@ def unfinished_call(job, task_id, progress):
     return 'scheduler status unknown', 'Unknown', f'No current or historical SLURM record is available for batch {batch_id}; cannot tell whether it will run.', log
 
 
-def task_rows(job):
-    for task_id in sorted(set(job.tasks) | set(job.results)):
+def batch_allocations(job):
+    cached=getattr(job,"_batch_allocations",None)
+    if cached is not None:return cached
+    batch_records={}
+    for record in sorted(job.slurm,key=lambda item:item.source!='queue'):
+        if record.array_task_id.isdigit():
+            batch=job.submission_offsets.get(record.array_job_id,0)+int(record.array_task_id)
+            batch_records.setdefault(batch,record)
+    job._batch_allocations=batch_records
+    return batch_records
+
+
+def task_rows(job,task_ids=None):
+    batch_records=batch_allocations(job)
+    for task_id in (sorted(set(job.tasks) | set(job.results)) if task_ids is None else task_ids):
         definition = job.tasks.get(task_id)
         result = job.results.get(task_id)
         progress = job.call_progress.get(task_id)
@@ -247,10 +263,7 @@ def task_rows(job):
         diagnostic = ''
         wall = None
         batch_id = job.task_batches.get(task_id, task_id // job.batch_size)
-        allocations = [record for record in job.slurm if record.array_task_id.isdigit()
-                       and job.submission_offsets.get(record.array_job_id, 0) + int(record.array_task_id) == batch_id]
-        allocations.sort(key=lambda record: record.source != 'queue')
-        allocation = allocations[0] if allocations else None
+        allocation=batch_records.get(batch_id)
         if result:
             state, wall = result.szs_status or result.status.replace('-', ' '), result.wall_seconds
             if result.status in {'resource-limiter-error', 'worker-error', 'interrupted'}:
@@ -263,7 +276,7 @@ def task_rows(job):
                 legacy = job.progress.get(task_id // job.batch_size)
                 if legacy and legacy.task_id == task_id:
                     progress = legacy
-            state, will_run, reason, diagnostic = unfinished_call(job, task_id, progress)
+            state, will_run, reason, diagnostic = unfinished_call(job, task_id, progress,batch_records)
             if progress and progress.state == 'running' and state == 'running':
                 wall = max(0, time.time() - progress.started_epoch) if progress.started_epoch else None
         yield dict(id=task_id, solver=definition.solver if definition else '',
@@ -297,6 +310,42 @@ def sorted_call_rows(rows, field, direction):
     return present + missing
 
 
+def task_page(job,page,per_page,field,direction,query='',outcomes=None,task_ids=None):
+    """Only build rich display rows for the page unless search/sort requires them."""
+    if field not in CALL_SORT_FIELDS or direction not in {'asc','desc'}:
+        abort(400,'Invalid solver-problem pair sort order.')
+    if task_ids is None:
+        if not hasattr(job,'_view_ids'):job._view_ids=sorted(set(job.tasks)|set(job.results))
+        ids=job._view_ids
+    else:ids=sorted(task_ids)
+    if outcomes:ids=[task_id for task_id in ids if call_outcome(job.results.get(task_id)) in outcomes]
+    start=page*per_page;end=start+per_page
+    if query or field in {'state','will_run','node','reason'}:
+        # These fields include derived scheduler diagnostics. Searching all
+        # displayed fields or globally sorting diagnostics genuinely needs them.
+        rows=[row for row in task_rows(job,ids) if not query or query in ' '.join(str(v) for v in row.values()).lower()]
+        return sorted_call_rows(rows,field,direction)[start:end],len(rows)
+    if field=='id':
+        ordered=ids if direction=='asc' else list(reversed(ids))
+    else:
+        def value(task_id):
+            definition=job.tasks.get(task_id);result=job.results.get(task_id)
+            if field in {'solver','problem'}:return getattr(definition,field,'')
+            if field=='cpu':return result.cpu_seconds if result else None
+            if field=='memory':return result.max_memory_kib*1024 if result and result.max_memory_kib is not None else None
+            if result:return result.wall_seconds
+            progress=job.call_progress.get(task_id) or job.progress.get(task_id//job.batch_size)
+            if progress and progress.task_id==task_id and progress.state=='running':
+                return next(task_rows(job,[task_id]))['wall']
+            return None
+        keys={task_id:value(task_id) for task_id in ids}
+        present=[task_id for task_id in ids if keys[task_id] is not None and keys[task_id]!='']
+        missing=[task_id for task_id in ids if keys[task_id] is None or keys[task_id]=='']
+        present.sort(key=lambda task_id:(keys[task_id].casefold() if isinstance(keys[task_id],str) else keys[task_id],task_id),reverse=direction=='desc')
+        ordered=present+missing
+    return list(task_rows(job,ordered[start:end])),len(ids)
+
+
 def call_page_args(default_sort='id'):
     try:
         page = int(request.args.get('page', '0'))
@@ -317,6 +366,7 @@ def create_app():
                       TRUSTED_HOSTS=['127.0.0.1', 'localhost'])
     cache, locks, operations, announced_jobs = {}, {}, {}, {}
     cluster_cache = {}
+    problem_text_cache = {}
     guard = threading.Lock()
     builder_lock = threading.Lock()
     builder_operations = {}
@@ -586,13 +636,10 @@ def create_app():
         ):
             abort(400, 'Invalid outcome filter.')
         selected_outcomes = set(zip(outcomes, origins))
-        rows = [row for row in task_rows(job)
-                if (not selected_outcomes or call_outcome(job.results.get(row['id'])) in selected_outcomes)
-                and query in ' '.join(str(v) for v in row.values()).lower()]
-        page_number, per_page, sort, direction = call_page_args()
-        rows = sorted_call_rows(rows, sort, direction)
-        return jsonify(**{**summary(job), "outcomes": outcome_breakdown(job)},
-                       tasks=rows[page_number*per_page:(page_number+1)*per_page], matched=len(rows))
+        page_number,per_page,sort,direction=call_page_args()
+        rows,matched=task_page(job,page_number,per_page,sort,direction,query,selected_outcomes)
+        if not hasattr(job,'_view_outcomes'):job._view_outcomes=outcome_breakdown(job)
+        return jsonify(**{**summary(job),"outcomes":job._view_outcomes},tasks=rows,matched=matched)
 
     @app.post('/api/jobs/<job_id>/name')
     def rename_job(job_id):
@@ -696,13 +743,18 @@ def create_app():
         if not definition:
             abort(404, 'Solver-problem pair not found in this job.')
         path = definition.problem
-        rows = [row for row in task_rows(job) if row['problem'] == path]
-        page_number, per_page, sort, direction = call_page_args('wall')
-        rows = sorted_call_rows(rows, sort, direction)
-        content, truncated = app.config.get('COLLECTOR', RemoteCollector)(host(), 10).fetch_problem_text(job_id, path)
-        return jsonify(problem=path, text=content, truncated=truncated,
-                       total=job.task_count, percent=job.percent,
-                       tasks=rows[page_number*per_page:(page_number+1)*per_page], matched=len(rows))
+        ids=[task_id for task_id,definition in job.tasks.items() if definition.problem==path]
+        page_number,per_page,sort,direction=call_page_args('wall')
+        rows,matched=task_page(job,page_number,per_page,sort,direction,task_ids=ids)
+        key=(host(),job_id,path)
+        cached=problem_text_cache.get(key)
+        if cached and request.args.get('fresh')!='1' and time.monotonic()-cached[0]<300:
+            content,truncated=cached[1:]
+        else:
+            content,truncated=app.config.get('COLLECTOR',RemoteCollector)(host(),10).fetch_problem_text(job_id,path)
+            problem_text_cache[key]=(time.monotonic(),content,truncated)
+            if len(problem_text_cache)>32:problem_text_cache.pop(next(iter(problem_text_cache)))
+        return jsonify(problem=path,text=content,truncated=truncated,total=job.task_count,percent=job.percent,tasks=rows,matched=matched)
 
     @app.post('/api/validate-path')
     def validate_path():

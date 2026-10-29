@@ -6,6 +6,7 @@ import argparse
 import csv
 from dataclasses import dataclass
 import hashlib
+import io
 import json
 import math
 import os
@@ -81,6 +82,8 @@ def memory_bytes(value: str) -> int:
 
 def read_pairs(filename: Path) -> list[dict]:
     tasks = []
+    solver_directories={}
+    local_problems={}
     with filename.open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         headers = reader.fieldnames or []
@@ -98,17 +101,23 @@ def read_pairs(filename: Path) -> list[dict]:
             if len(solver_name) > 80 or any(ord(char) < 32 or ord(char) == 127 for char in solver_name):
                 raise SlurmyError(f"{label}: solver_name must be at most 80 characters with no control characters")
             cluster_problem = row["problem"].startswith('tptp:')
-            problem = Path(row["problem"][5:]) if cluster_problem else path_at(row["problem"], filename.parent)
+            problem = Path(row["problem"][5:]) if cluster_problem else local_problems.setdefault(row["problem"],None)
+            if not cluster_problem and problem is None:
+                problem=path_at(row["problem"],filename.parent)
+                if not problem.is_file():raise SlurmyError(f"{label}: problem does not exist: {problem}")
+                local_problems[row["problem"]]=problem
             versioned_problem = (str(problem).startswith('/share/TPTP/') and
                                  len(problem.parts) >= 6 and problem.parts[4] == 'Problems')
             legacy_problem = str(problem).startswith('/share/Slurmy-TPTP-v9.2.1/Problems/')
             if cluster_problem and (not (versioned_problem or legacy_problem) or '..' in problem.parts):
                 raise SlurmyError(f"{label}: invalid cluster TPTP problem: {problem}")
-            if not row["problem"] or (not cluster_problem and not problem.is_file()):
+            if not row["problem"]:
                 raise SlurmyError(f"{label}: problem does not exist: {problem}")
-            solver_root = path_at(row["solver_directory"], filename.parent)
-            if not row["solver_directory"] or not solver_root.is_dir():
-                raise SlurmyError(f"{label}: solver_directory is not an existing directory: {solver_root}")
+            solver_root=solver_directories.get(row["solver_directory"])
+            if solver_root is None:
+                solver_root=path_at(row["solver_directory"],filename.parent)
+                if not row["solver_directory"] or not solver_root.is_dir():raise SlurmyError(f"{label}: solver_directory is not an existing directory: {solver_root}")
+                solver_directories[row["solver_directory"]]=solver_root
             task = {"task_id": len(tasks), "command": command, "problem": str(problem),
                     "remote_problem": cluster_problem,
                     "solver_root": str(solver_root),
@@ -241,7 +250,8 @@ def write_script(path: Path, content: str) -> None:
 
 def generate(jobpairs: Path, building: Path, limiter_file: Path,
              axioms_file: Path | None = None, batch_size: int = 1, progress=None,
-             max_outstanding: int = 32, pair_order: str | None = None) -> Path:
+             max_outstanding: int = 32, pair_order: str | None = None,
+             materialize_calls: bool = True) -> Path:
     tasks = read_pairs(jobpairs)
     positive(str(batch_size), 'batch size')
     positive(str(max_outstanding), 'maximum outstanding SLURM tasks')
@@ -313,65 +323,67 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         raise SlurmyError("submit.sh or submit.sh.files already exists; run make clean before regenerating")
     assets.mkdir()
     try:
-        (assets / "calls").mkdir()
+        if materialize_calls:(assets / "calls").mkdir()
         (assets / "plans").mkdir()
         (assets / "builds").mkdir()
         metadata = {"slurmy_version": VERSION, "workflow_directory": str(jobpairs.parent), "task_count": len(tasks), "batch_count": len(batches),
-                    "batch_size": batch_size, "pair_order": pair_order, "result_columns": RESULT_COLUMNS,
+                    "batch_size": batch_size, "pair_order": pair_order, "local_calls_materialized": materialize_calls, "result_columns": RESULT_COLUMNS,
                     "planned_batch_tasks": [[t["task_id"] for t in batch] for batch in batches],
                     "batch_policy": "one solver-problem pair at a time per batch; batches have matching core and sharing requests; solver-major batches do not span configurations",
                     "buffers": {"per_call_seconds": 30, "per_call_memory_mib": 128, "batch_seconds": 60}}
         (assets / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
         (assets / "manifest.jsonl").write_text("".join(json.dumps(t) + "\n" for t in tasks))
-        for index, task in enumerate(tasks, 1):
-            call = assets / "calls" / str(task["task_id"])
-            call.mkdir()
-            write_script(call / "solver.sh", "#!/usr/bin/env bash\n" +
-                         "# Capture the solver's stderr separately from its stdout.\n" +
-                         "( " + task["remote_command"] + " ) 2> \"$SOLVER_STDERR_LOG\"\n")
-            # Executable bits can be lost when resource trees cross filesystems
-            # (notably when workflows are prepared on macOS and staged on Linux).
-            # Repair the known limiter binary on the cluster immediately before
-            # invocation; if the filesystem is mounted noexec, the subsequent
-            # execution still fails with a useful diagnostic in controller.log.
-            limiter_exec = remote_path(limiter_path)
-            chmod_error = shlex.quote(f"Cannot make resource limiter executable: {limiter_path}")
-            not_exec_error = shlex.quote(
-                f"Resource limiter is not executable (possibly a noexec filesystem): {limiter_path}"
-            )
-            limiter_script = (
-                "#!/usr/bin/env bash\n"
-                f"if [[ ! -x {limiter_exec} ]]; then\n"
-                f"  chmod u+x -- {limiter_exec} || {{ printf '%s\\n' {chmod_error} >&2; exit 126; }}\n"
-                "fi\n"
-                f"[[ -x {limiter_exec} ]] || {{ printf '%s\\n' {not_exec_error} >&2; exit 126; }}\n"
-                + task["limiter_command"] + "\n"
-            )
-            write_script(call / "limiter.sh", limiter_script)
-            default_tptp = '/share/TPTP/TPTP-v9.2.1'
-            if task['remote_problem'] and task['problem'].startswith('/share/TPTP/'):
-                default_tptp = str(Path('/').joinpath(*Path(task['problem']).parts[1:4]))
-            config = "".join(key.upper() + "=" + shlex.quote(str(value)) + "\n" for key, value in {
-                "task_id": task["task_id"], "task_key": task["task_key"], "batch_id": task["batch_id"],
-                "cores": task["cores"], "threads_per_core": task["threads_per_core"],
-                "cpus": task["cpus"], "wc_limit": task["wc_limit"],
-                    "solver_root_rel": task['solver_root'].lstrip("/"),
-                    "tptp_root_rel": '.slurmy-tptp' if axioms else '',
-                    "tptp_default_root": os.environ.get('SLURMY_TPTP_ROOT') or default_tptp}.items())
-            (call / "config.sh").write_text(config)
-            if progress and (index % 100 == 0 or index == len(tasks)):
-                progress('calls', 'Generating solver-problem pair scripts', index, len(tasks))
-        # Publish O(batches) archive files on NFS, not three files and a
-        # directory per pair. Compute nodes expand only their own batch locally.
-        (assets / "call-bundles").mkdir()
-        for batch_id, batch in enumerate(batches):
-            with tarfile.open(assets / 'call-bundles' / f'batch_{batch_id:06d}.tar.gz',
-                              'w:gz', compresslevel=1) as bundle:
+        (assets/'call-bundles').mkdir()
+        index=0
+        for batch_id,batch in enumerate(batches):
+            with tarfile.open(assets/'call-bundles'/f'batch_{batch_id:06d}.tar.gz','w:gz',compresslevel=1) as bundle:
                 for task in batch:
-                    name=str(task['task_id'])
-                    bundle.add(assets / 'calls' / name,arcname=name)
-            if progress and ((batch_id+1)%100==0 or batch_id+1==len(batches)):
-                progress('batches','Bundling solver-problem pair scripts',batch_id+1,len(batches))
+                    index+=1
+                    def emit(name,body,mode=0o755):
+                        payload=body.encode('utf-8')
+                        member=tarfile.TarInfo(f"{task['task_id']}/{name}")
+                        member.size=len(payload);member.mode=mode
+                        bundle.addfile(member,io.BytesIO(payload))
+                        if materialize_calls:
+                            target=assets/'calls'/str(task['task_id'])/name
+                            target.write_bytes(payload);target.chmod(mode)
+                    call = assets / "calls" / str(task["task_id"])
+                    if materialize_calls:call.mkdir()
+                    emit("solver.sh", "#!/usr/bin/env bash\n" +
+                                 "# Capture the solver's stderr separately from its stdout.\n" +
+                                 "( " + task["remote_command"] + " ) 2> \"$SOLVER_STDERR_LOG\"\n")
+                    # Executable bits can be lost when resource trees cross filesystems
+                    # (notably when workflows are prepared on macOS and staged on Linux).
+                    # Repair the known limiter binary on the cluster immediately before
+                    # invocation; if the filesystem is mounted noexec, the subsequent
+                    # execution still fails with a useful diagnostic in controller.log.
+                    limiter_exec = remote_path(limiter_path)
+                    chmod_error = shlex.quote(f"Cannot make resource limiter executable: {limiter_path}")
+                    not_exec_error = shlex.quote(
+                        f"Resource limiter is not executable (possibly a noexec filesystem): {limiter_path}"
+                    )
+                    limiter_script = (
+                        "#!/usr/bin/env bash\n"
+                        f"if [[ ! -x {limiter_exec} ]]; then\n"
+                        f"  chmod u+x -- {limiter_exec} || {{ printf '%s\\n' {chmod_error} >&2; exit 126; }}\n"
+                        "fi\n"
+                        f"[[ -x {limiter_exec} ]] || {{ printf '%s\\n' {not_exec_error} >&2; exit 126; }}\n"
+                        + task["limiter_command"] + "\n"
+                    )
+                    emit("limiter.sh", limiter_script)
+                    default_tptp = '/share/TPTP/TPTP-v9.2.1'
+                    if task['remote_problem'] and task['problem'].startswith('/share/TPTP/'):
+                        default_tptp = str(Path('/').joinpath(*Path(task['problem']).parts[1:4]))
+                    config = "".join(key.upper() + "=" + shlex.quote(str(value)) + "\n" for key, value in {
+                        "task_id": task["task_id"], "task_key": task["task_key"], "batch_id": task["batch_id"],
+                        "cores": task["cores"], "threads_per_core": task["threads_per_core"],
+                        "cpus": task["cpus"], "wc_limit": task["wc_limit"],
+                            "solver_root_rel": task['solver_root'].lstrip("/"),
+                            "tptp_root_rel": '.slurmy-tptp' if axioms else '',
+                            "tptp_default_root": os.environ.get('SLURMY_TPTP_ROOT') or default_tptp}.items())
+                    emit("config.sh",config,0o644)
+                    if progress and (index % 1000 == 0 or index == len(tasks)):
+                        progress('calls', 'Generating solver-problem pair scripts', index, len(tasks))
         for i, batch in enumerate(batches):
             config = shell_array("TASK_IDS", [t["task_id"] for t in batch])
             for name, key in (("TASK_CORES", "cores"), ("TASK_CPUS", "cpus"), ("TASK_WALL", "wc_limit")):
@@ -395,7 +407,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             # template's old mtime, which made make immediately call it stale.
             shutil.copyfile(source, destination)
             shutil.copymode(source, destination)
-        (assets / "submission_settings.sh").write_text(f'MAX_OUTSTANDING_DEFAULT={max_outstanding}\nBUILD_COUNT_DEFAULT={sum(build.recipe is not None for build in builds)}\n', encoding='utf-8')
+        (assets / "submission_settings.sh").write_text(f'MAX_OUTSTANDING_DEFAULT={max_outstanding}\nBUILD_COUNT_DEFAULT={sum(build.recipe is not None for build in builds)}\nLOCAL_PROBLEM_FILES_DEFAULT={len(problems)}\nCLUSTER_PROBLEM_FILES_DEFAULT={len({task["problem"] for task in tasks if task["remote_problem"]})}\n', encoding='utf-8')
         shutil.copyfile(REPO / "implementation/job_names.py", assets / "job_names.py")
         # Reuse the local build driver. Remote recipes build in a disposable
         # copy of the declared root; downloaded files preserve that layout.
@@ -498,15 +510,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("building", type=Path)
     parser.add_argument("resource_limiter_template", type=Path)
     parser.add_argument('--axioms-file', type=Path, help='optional file with one TPTP axiom path or glob per line')
+    parser.add_argument("--materialize-calls",action="store_true",help="also write individual pair scripts locally for inspection")
     parser.add_argument("--batch-size", type=int, default=1, help="maximum solver-problem pairs owned by one SLURM array task; solver-problem pairs run sequentially (default: 1)")
     parser.add_argument("--max-outstanding", type=int, default=32, help="maximum pending/running SLURM tasks from one job (default: 32)")
     parser.add_argument('--pair-order', choices=PAIR_ORDERS,
                         help='declared input ordering; solver-major keeps configurations in separate batches')
     args = parser.parse_args(argv)
+    def report(kind,label,completed,total):
+        print(f'Preparation progress: {label}'+(f': {completed}/{total}' if total else ''),flush=True)
     try:
         output = generate(args.jobpairs.resolve(), args.building.resolve(), args.resource_limiter_template.resolve(),
                           args.axioms_file.resolve() if args.axioms_file else None, args.batch_size,
-                          max_outstanding=args.max_outstanding, pair_order=args.pair_order)
+                          max_outstanding=args.max_outstanding, pair_order=args.pair_order,
+                          materialize_calls=args.materialize_calls,progress=report)
     except (SlurmyError, OSError, ValueError) as exc:
         parser.error(str(exc))
     print(f"Prepared {output}. Inspect its companion files, then run it to build and submit.")

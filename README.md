@@ -311,7 +311,8 @@ user and have mode 0700; otherwise connection sharing is disabled. No changes to
 `~/.ssh/config` are required. Multiple TPTP globs are resolved in one remote query,
 with fresh matches on each preparation.
 
-Prepared workflows retain readable per-pair scripts locally. Uploads contain one
+Normal preparation streams per-pair scripts directly into batch bundles. Use
+`slurmy.py --materialize-calls` to also write individual scripts for inspection. Uploads contain one
 compressed script bundle per batch, rather than thousands of small script files.
 Each compute node unpacks its batch into node-local temporary storage, removed at
 batch exit. Upload commit and SLURM dispatch share one SSH channel. Prebuilt-only
@@ -338,3 +339,18 @@ See [Font Awesome's self-hosting documentation](https://docs.fontawesome.com/web
 Section transitions vary by theme. Custom Theme exposes expand/collapse duration,
 easing, and slide/fade style; these settings are included in named theme exports.
 Reduced-motion preferences disable the section animations.
+
+Job detail requests collect only the selected job and use compressed SSH responses.
+For indexed jobs, they avoid legacy-format globs in the raw results/progress
+folders: a glob that matches nothing still scans the whole directory on NFS.
+The usual paginated table builds diagnostics and display rows only for visible
+pairs. Global sorting uses lightweight IDs/measurements where possible; searching
+all displayed fields and sorting derived diagnostics still examines all candidates.
+Outcome totals remain global and are cached per monitoring snapshot. Problem-page
+source text is cached for paging, with an explicit refresh fetching it again.
+
+Preparation expands the problem table once per Make invocation. The CLI and web
+preview use direct script bundles, avoiding three local script files per pair.
+The upload phase distinguishes local problem uploads from cluster TPTP use;
+local solver/limiter resources and batch definitions still need transferring.
+A resource set to build for every job—including runsolver—still runs that build.

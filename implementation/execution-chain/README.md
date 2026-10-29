@@ -480,9 +480,10 @@ generated and uploaded copies.
 
 ### Submission Latency and Batch Script Bundles
 
-Readable `calls/<pair-id>/{config,solver,limiter}.sh` files remain in the local
-prepared workflow. The uploaded job-files archive excludes that directory and
-contains `call-bundles/batch_<id>.tar.gz` instead. At batch startup, `batch.sh`
+The compiler streams `config.sh`, `solver.sh`, and `limiter.sh` for each pair
+directly into `call-bundles/batch_<id>.tar.gz`. Individual local
+`calls/<pair-id>/` files are optional (`--materialize-calls`); the uploaded archive
+excludes them when present. At batch startup, `batch.sh`
 extracts its bundle into `$SLURM_TMPDIR` (or local temporary storage) and exports
 `CALLS_DIR`. `call.sh` reads from that directory, falling back to the legacy
 `$JOB_DIR/calls` layout for older jobs. Batch exit removes the temporary scripts.

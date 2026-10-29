@@ -7,6 +7,7 @@ from ssh_transport import connection_options
 
 import base64
 import csv
+import gzip
 from dataclasses import dataclass, field
 import io
 import json
@@ -66,6 +67,10 @@ emit_file() {
     done < "$1"
 }
 job_dirs=("$BASE"/*)
+if [[ -n "$DETAIL" && "$DETAIL" != - ]]; then
+    [[ "$DETAIL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || exit 2
+    job_dirs=("$BASE/$DETAIL")
+fi
 if [[ -z "$DETAIL" ]]; then
     for directory in "${job_dirs[@]}"; do
         [[ -d "$directory" ]] || continue
@@ -106,8 +111,12 @@ for directory in "${job_dirs[@]}"; do
         else
             csv_results=("$directory"/results/batch_*.csv)
         fi
-        # Keep TSV and pre-batch JSONL jobs readable in the historical dashboard.
-        tsv_results=("$directory"/results/batch_*.tsv "$directory"/results/chunk_*.tsv)
+        # Never glob the huge raw result directory for legacy formats when a
+        # compact index exists: even a no-match glob enumerates every archive.
+        tsv_results=()
+        if [[ ! -f "$directory/results/index/.ready" ]]; then
+            tsv_results=("$directory"/results/batch_*.tsv "$directory"/results/chunk_*.tsv)
+        fi
         if (( ${#csv_results[@]} )); then
             printf 'SUMMARY\0%s\0' "$job"
             # Slurmy quotes every CSV field. The summary uses only numeric and enum
@@ -191,7 +200,10 @@ for directory in "${job_dirs[@]}"; do
             ' "${tsv_results[@]}"
             printf '\0'
         else
-            legacy_results=("$directory"/results/chunk_*.jsonl)
+            legacy_results=()
+            if [[ ! -f "$directory/results/index/.ready" ]]; then
+                legacy_results=("$directory"/results/chunk_*.jsonl)
+            fi
             if (( ${#legacy_results[@]} )); then
                 printf 'LEGACY_RESULTS\0%s\0' "$job"
                 cat "${legacy_results[@]}"
@@ -207,23 +219,33 @@ for directory in "${job_dirs[@]}"; do
             done
         fi
         if [[ "$job" == "$DETAIL" ]]; then
-        csv_progress=("$directory"/progress/batch_*.csv)
-        tsv_progress=("$directory"/progress/batch_*.tsv "$directory"/progress/chunk_*.tsv)
-        if (( ${#csv_progress[@]} )); then
-            printf 'PROGRESS_CSV\0%s\0' "$job"
-            for progress_file in "${csv_progress[@]}"; do
-                printf '"%s",' "${progress_file##*/}"
-                emit_file "$progress_file"
-            done
-            printf '\0'
-        elif (( ${#tsv_progress[@]} )); then
-            printf 'PROGRESS_TSV\0%s\0' "$job"
-            for progress_file in "${tsv_progress[@]}"; do
-                printf '%s\t' "${progress_file##*/}"
-                emit_file "$progress_file"
-            done
-            printf '\0'
-        fi
+            csv_progress=(); tsv_progress=()
+            if [[ -f "$directory/results/index/.ready" ]]; then
+                # The small batch-plan directory supplies the exact progress filenames.
+                for plan in "$directory"/batches/batch_*.sh; do
+                    progress_name=${plan##*/}
+                    progress_file="$directory/progress/${progress_name%.sh}.csv"
+                    [[ ! -f "$progress_file" ]] || csv_progress+=("$progress_file")
+                done
+            else
+                csv_progress=("$directory"/progress/batch_*.csv)
+                tsv_progress=("$directory"/progress/batch_*.tsv "$directory"/progress/chunk_*.tsv)
+            fi
+            if (( ${#csv_progress[@]} )); then
+                printf 'PROGRESS_CSV\0%s\0' "$job"
+                for progress_file in "${csv_progress[@]}"; do
+                    printf '"%s",' "${progress_file##*/}"
+                    emit_file "$progress_file"
+                done
+                printf '\0'
+            elif (( ${#tsv_progress[@]} )); then
+                printf 'PROGRESS_TSV\0%s\0' "$job"
+                for progress_file in "${tsv_progress[@]}"; do
+                    printf '%s\t' "${progress_file##*/}"
+                    emit_file "$progress_file"
+                done
+                printf '\0'
+            fi
         fi
 
         if [[ -f "$directory/submission.csv" ]]; then
@@ -244,7 +266,11 @@ for directory in "${job_dirs[@]}"; do
         # Older runsolver result rows may say solver-error/143 and MEMOUT=false even
         # though their archived watcher explicitly records a memory-limit kill.
         # Inspect only those exceptional rows; never infer a limit from exit 143.
-        if (( ${#csv_results[@]} )); then
+        modern_results=0
+        if [[ -f "$directory/call.sh" ]] && grep -Fq 'The watcher is authoritative.' "$directory/call.sh"; then
+            modern_results=1
+        fi
+        if (( ${#csv_results[@]} && ! modern_results )); then
             while IFS=$'\t' read -r kind task_id archive; do
                 [[ "$kind" == candidate ]] || continue
                 [[ "$task_id" =~ ^[0-9]+$ && "$archive" =~ ^[A-Za-z0-9._-]+[.]tar[.]gz$ ]] || continue
@@ -274,7 +300,10 @@ for directory in "${job_dirs[@]}"; do
                 cat "${tsv_results[@]}"
                 printf '\0'
             fi
-            legacy_results=("$directory"/results/chunk_*.jsonl)
+            legacy_results=()
+            if [[ ! -f "$directory/results/index/.ready" ]]; then
+                legacy_results=("$directory"/results/chunk_*.jsonl)
+            fi
             if (( ${#legacy_results[@]} )); then
                 printf 'RESULTS_JSONL\0%s\0' "$job"
                 cat "${legacy_results[@]}"
@@ -1138,11 +1167,9 @@ class RemoteCollector:
             "-o", "ServerAliveCountMax=2",
             "--",
             self.host,
-            "bash",
-            "-s",
-            "--",
-            detail_job or "-",
-            str(max(0, int(since_epoch))) if since_epoch is not None else "",
+            shlex.join(['bash','-c','set -o pipefail; bash -s -- "$@" | gzip -1',
+                        'slurmy-monitor',detail_job or '-',
+                        str(max(0,int(since_epoch))) if since_epoch is not None else '']),
         ]
         try:
             process = subprocess.run(
@@ -1160,7 +1187,11 @@ class RemoteCollector:
         if process.returncode != 0:
             message = process.stderr.decode("utf-8", "replace").strip()
             raise RuntimeError(message or f"ssh exited with status {process.returncode}")
-        return parse_snapshot(self.host, process.stdout)
+        try:
+            payload=gzip.decompress(process.stdout)
+        except (OSError,EOFError) as exc:
+            raise RuntimeError('Incomplete compressed monitoring response; retry the refresh.') from exc
+        return parse_snapshot(self.host,payload)
 
     def fetch_problem_text(self, job_id: str, problem: str) -> tuple[str, bool]:
         """Read a packaged problem, never an arbitrary path on the SSH host."""
