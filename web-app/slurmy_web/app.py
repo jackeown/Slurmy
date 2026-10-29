@@ -279,7 +279,7 @@ def task_rows(job,task_ids=None):
             state, will_run, reason, diagnostic = unfinished_call(job, task_id, progress,batch_records)
             if progress and progress.state == 'running' and state == 'running':
                 wall = max(0, time.time() - progress.started_epoch) if progress.started_epoch else None
-        yield dict(id=task_id, solver=definition.solver if definition else '',
+        yield dict(id=task_id,finished=bool(result and result.complete), solver=definition.solver if definition else '',
                    problem=definition.problem if definition else '',
                    command=definition.command if definition else '',
                    limiter_command=definition.limiter_command if definition else '',

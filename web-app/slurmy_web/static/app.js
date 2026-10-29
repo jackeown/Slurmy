@@ -244,6 +244,29 @@ function scheduleStaleWarning(){
  staleTimer=setTimeout(()=>{if(hasLoadedRemote&&!refreshInFlight){remoteState('stale');text('#connection',`Data may be stale · last successful refresh ${lastLoadedAt.toLocaleTimeString()} · automatic refresh is delayed`);}},delay);
 }
 let jobStatusTooltip = null;
+function taskStatus(task){
+ const status=badge(task.state||'Unknown');status.classList.add('task-status');status.tabIndex=0;
+ const lines=[`Status: ${task.state||'Unknown'}`];
+ if(task.finished!==undefined)lines.push(task.finished?'Finished solver-problem pair.':'Not finished.');
+ if(task.will_run)lines.push(`Will run: ${task.will_run}`);
+ if(task.reason)lines.push(task.reason);
+ const description=lines.join('\n');
+ status.setAttribute('aria-label',task.state||'Unknown');
+ const show=(x,y)=>{
+  if(!jobStatusTooltip){jobStatusTooltip=el('div',undefined,'pie-tooltip');jobStatusTooltip.setAttribute('role','tooltip');document.body.append(jobStatusTooltip);}
+  jobStatusTooltip.id='pair-status-tooltip';jobStatusTooltip.textContent=description;jobStatusTooltip.hidden=false;
+  jobStatusTooltip.style.whiteSpace='pre-line';status.setAttribute('aria-describedby','pair-status-tooltip');
+  jobStatusTooltip.style.left=`${Math.max(8,Math.min(x+12,innerWidth-jobStatusTooltip.offsetWidth-8))}px`;
+  jobStatusTooltip.style.top=`${Math.max(8,Math.min(y+12,innerHeight-jobStatusTooltip.offsetHeight-8))}px`;
+ };
+ const hide=()=>{if(jobStatusTooltip)jobStatusTooltip.hidden=true;status.removeAttribute('aria-describedby');};
+ status.addEventListener('pointermove',event=>show(event.clientX,event.clientY));
+ status.addEventListener('pointerleave',hide);status.addEventListener('blur',hide);
+ const inspect=()=>{const bounds=status.getBoundingClientRect();show(bounds.left,bounds.bottom);};
+ status.addEventListener('focus',inspect);status.addEventListener('click',inspect);
+ status.addEventListener('keydown',event=>{if(event.key==='Escape')hide();});
+ return status;
+}
 function jobCompletionLabel(job){
  const total=job.total||0, completed=job.completed||0;
  if(total&&completed>=total)return `Complete · ${total.toLocaleString()} solver-problem pairs finished`;
@@ -348,9 +371,9 @@ async function fetchJob(fresh=false){
  text('#connection',`Last refreshed ${new Date().toLocaleTimeString()}`);
  text('#job-completion',jobCompletionLabel(data));
  renderOutcomes(data.outcomes);
- const tasks=$('#tasks-body');tasks.replaceChildren();
- for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):task.diagnostic?button('Inspect log →',()=>openDiagnostic(task)):'—';const placement=task.node?link(`${task.node} · ${task.slurm_id}`,`/cluster?`+params({partition:'all',nodes:'job',job:jobId})):task.slurm_id?`Queued · ${task.slurm_id}`:'—';tasks.append(tableRow([String(task.id),task.solver||'—',problem,badge(task.state),task.will_run||'—',placement,task.reason||'—',duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
- if(!data.tasks.length)tasks.append(tableRow(['No matching solver-problem pairs.','','','','','','','','','','']));
+ const tasks=$('#tasks-body');if(jobStatusTooltip)jobStatusTooltip.hidden=true;tasks.replaceChildren();
+ for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):task.diagnostic?button('Inspect log →',()=>openDiagnostic(task)):'—';const placement=task.node?link(`${task.node} · ${task.slurm_id}`,`/cluster?`+params({partition:'all',nodes:'job',job:jobId})):task.slurm_id?`Queued · ${task.slurm_id}`:'—';tasks.append(tableRow([String(task.id),task.solver||'—',problem,taskStatus(task),placement,duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
+ if(!data.tasks.length)tasks.append(tableRow(['No matching solver-problem pairs.','','','','','','','','']));
  text('#page-label',`${data.matched} matching solver-problem pairs ·`);$('#task-page').value=taskPage+1;$('#task-page').max=lastPage+1;text('#task-page-count',lastPage+1);$('#previous').disabled=taskPage===0;$('#next').disabled=(taskPage+1)*perPage>=data.matched;
  const selected=new URLSearchParams(location.search).get('call');if(selected&&data.tasks.some(task=>String(task.id)===selected)){const url=new URL(location.href);url.searchParams.delete('call');history.replaceState(null,'',url);openOutput(data.tasks.find(task=>String(task.id)===selected));}
  const diagnostic=new URLSearchParams(location.search).get('diagnostic');if(diagnostic&&data.tasks.some(task=>String(task.id)===diagnostic)){const url=new URL(location.href);url.searchParams.delete('diagnostic');history.replaceState(null,'',url);openDiagnostic(data.tasks.find(task=>String(task.id)===diagnostic));}
@@ -377,8 +400,8 @@ async function fetchProblem(fresh=false){
  if(typeof window.highlightTptp==='function')window.highlightTptp(source,data.text);
  else source.textContent=data.text;
  const truncated=$('#problem-truncated');if(truncated)truncated.hidden=!data.truncated;
- const body=$('#problem-tasks-body');body.replaceChildren();
- for(const task of data.tasks){const inspect=task.output?link('Inspect →',`/jobs/${encodeURIComponent(jobId)}?`+params({call:task.id})):task.diagnostic?link('Inspect log →',`/jobs/${encodeURIComponent(jobId)}?`+params({diagnostic:task.id})):'—';body.append(tableRow([String(task.id),task.solver||'—',badge(task.state),task.will_run||'—',task.reason||'—',duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
+ const body=$('#problem-tasks-body');if(jobStatusTooltip)jobStatusTooltip.hidden=true;body.replaceChildren();
+ for(const task of data.tasks){const inspect=task.output?link('Inspect →',`/jobs/${encodeURIComponent(jobId)}?`+params({call:task.id})):task.diagnostic?link('Inspect log →',`/jobs/${encodeURIComponent(jobId)}?`+params({diagnostic:task.id})):'—';body.append(tableRow([String(task.id),task.solver||'—',taskStatus(task),duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
  text('#problem-page-label',`${data.matched} solver-problem pairs ·`);$('#problem-page').value=problemPage+1;$('#problem-page').max=lastPage+1;text('#problem-page-count',lastPage+1);
  $('#problem-previous').disabled=problemPage===0;$('#problem-next').disabled=(problemPage+1)*perPage>=data.matched;
  const refreshNote=data.percent>=100?'auto-refresh off (100% complete)':data.total>10000?'auto-refreshes every 30 seconds':'auto-refreshes every 10 seconds';
@@ -391,7 +414,7 @@ async function refresh(fresh=false){
  if(page==='job'||page==='problem')lastRefreshStarted=Date.now();
  refreshInFlight=true;beginRefresh();
  try{if(page==='jobs'||page==='workflow')await fetchJobs();else if(page==='job')await fetchJob(fresh);else if(page==='problem')await fetchProblem(fresh);hasLoadedRemote=true;finishRefresh();scheduleStaleWarning();}
- catch(error){remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check the reported error; SSH failures may require reconnecting your VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),11,'Solver-problem pairs could not be loaded. Use Refresh to try again.',true);else if(page==='problem')loadingRow($('#problem-tasks-body'),9,'Solver-problem pairs could not be loaded. Use Refresh to try again.',true);else if(page==='jobs'||page==='workflow')loadingRow($('#jobs-body'),6,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
+ catch(error){remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check the reported error; SSH failures may require reconnecting your VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),9,'Solver-problem pairs could not be loaded. Use Refresh to try again.',true);else if(page==='problem')loadingRow($('#problem-tasks-body'),7,'Solver-problem pairs could not be loaded. Use Refresh to try again.',true);else if(page==='jobs'||page==='workflow')loadingRow($('#jobs-body'),6,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
  finally{refreshInFlight=false;if(refreshPending){refreshPending=false;scheduleRefresh();}}
 }
 $('#refresh')?.addEventListener('click',()=>refresh(true));

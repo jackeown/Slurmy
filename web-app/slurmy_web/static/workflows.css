@@ -518,3 +518,6 @@ details[data-section-state="closing"] > summary::before { transform: rotate(0deg
 .workflow-card-title,.workflow-title-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .workflow-card-title h2,.workflow-title-row h1 { min-width: 0; overflow-wrap: anywhere; margin-bottom: 0; }
 .rename-workflow { flex: 0 0 auto; width: 30px; height: 30px; padding: 5px; font-size: 12px; }
+
+.task-status { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
+.task-status:focus-visible { outline: 2px solid var(--green); outline-offset: 3px; }
