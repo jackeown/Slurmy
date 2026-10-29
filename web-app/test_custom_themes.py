@@ -27,9 +27,9 @@ const themes=context.window.SlurmyThemes,editor=context.window.SlurmyCustomTheme
 const change=(key,value)=>{const input=get('#custom-'+key);input.value=String(value);input.events.input();};
 (async()=>{
  editor.open();assert.equal(editor.isOpen,true);assert.equal(root.dataset.colorTheme,'custom');
- change('radius',24);change('font','serif');change('opacity',62);change('hover','spotlight');change('shadowBlur',40);change('textShadowBlur',12);
+ change('radius',24);change('font','serif');change('opacity',62);change('shadowBlur',40);change('textShadowBlur',12);
  assert.equal(root.style.values['--theme-radius'],'24px');assert.match(root.style.values['--theme-font'],/Georgia/);
- assert.equal(root.style.values['--theme-opacity'],'62%');assert.equal(root.dataset.themeHover,'spotlight');assert.equal(root.style.values['--hover-strength'],'6%');assert.match(root.style.values['--theme-shadow'],/40px/);
+ assert.equal(root.style.values['--theme-opacity'],'62%');assert.equal(root.style.values['--theme-chrome-opacity'],'52%');assert.match(root.style.values['--theme-shadow'],/40px/);
  assert.equal(store.get('slurmy-theme'),'garden');get('#discard-custom-theme').events.click();assert.equal(root.dataset.colorTheme,'garden');assert.equal(editor.isOpen,false);
  editor.open();assert.equal(get('#custom-radius').value,10);change('radius',24);change('ink','#345678');change('ink-alpha',40);get('#save-custom-theme').events.click();
  assert.equal(root.style.values['--ink'],'#34567866');
@@ -54,7 +54,7 @@ const change=(key,value)=>{const input=get('#custom-'+key);input.value=String(va
  // Restore the first saved theme for the reload assertions below.
  editor.open();get('#custom-theme-saved').value='0';get('#custom-theme-saved').events.change();get('#save-custom-theme').events.click();
  const invalid=themes.normalize({radius:999,opacity:-1,image:'url(https://example.com/track.png)',fontFamily:'x; background: url(evil)',shadowBlur:'oops'});
- assert.equal(invalid.radius,28);assert.equal(invalid.opacity,40);assert.equal(invalid.image,'');assert.equal(invalid.fontFamily,'');assert.equal(invalid.shadowBlur,18);
+ assert.equal(themes.normalize({hover:'spotlight'}).hover,undefined);assert.equal(invalid.radius,28);assert.equal(invalid.opacity,40);assert.equal(invalid.image,'');assert.equal(invalid.fontFamily,'');assert.equal(invalid.shadowBlur,18);
  const reloaded={...context,window:{},document:{...context.document,documentElement:make()}};
  vm.createContext(reloaded);vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),reloaded);
  assert.equal(reloaded.window.SlurmyThemes.library.length,2);assert.equal(reloaded.window.SlurmyThemes.library[0].name,'My Theme');assert.equal(reloaded.window.SlurmyThemes.custom.ink,'#34567866');assert.equal(reloaded.window.SlurmyThemes.selected,'custom');assert.equal(reloaded.window.SlurmyThemes.custom.radius,24);assert.match(reloaded.window.SlurmyThemes.custom.image,/data:image/);

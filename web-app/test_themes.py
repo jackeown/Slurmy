@@ -105,29 +105,3 @@ assert.equal(closed,1);assert.equal(focused,1);
             self.assertIn('id="theme-picker"',html)
             self.assertIn('themes.css',html)
             self.assertIn('Could Not Open This Page',html)
-
-    def test_cursor_spotlight_eases_across_surfaces_and_respects_reduced_motion(self):
-        script = r'''
-const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
-const source=fs.readFileSync(process.argv[1],'utf8'),events={},frames=new Map(),media={matches:false};let id=0,glow;
-function node(){return {style:{values:{},setProperty(key,value){this.values[key]=value;}},setAttribute(){},classList:{add(){},remove(){}}};}
-const target=node();target.closest=selector=>selector.startsWith('#theme-picker')?null:target;
-const sidebar=node();sidebar.closest=selector=>selector.startsWith('#theme-picker')?null:sidebar;
-const context={root:{dataset:{themeHover:'spotlight'}},hoverTuning:{hoverLag:160},matchMedia:()=>media,
- document:{createElement:node,body:{append(n){glow=n;}},addEventListener:(type,fn)=>events[type]=fn},window:{addEventListener(){}},
- requestAnimationFrame:fn=>{frames.set(++id,fn);return id;},cancelAnimationFrame:key=>frames.delete(key)};
-vm.createContext(context);vm.runInContext(source.slice(source.indexOf('  function initPointerEffects()'),source.indexOf("  document.addEventListener('DOMContentLoaded'")),context);context.initPointerEffects();
-function move(surface,x){events.pointermove({target:surface,pointerType:'mouse',clientX:x,clientY:50});}
-function tick(time){const [key,fn]=frames.entries().next().value;frames.delete(key);fn(time);}
-move(target,100);tick(16);assert.equal(parseFloat(glow.style.values['--glow-x']),100);
-move(target,400);tick(32);const first=parseFloat(glow.style.values['--glow-x']);assert.ok(first>100&&first<200);
-tick(48);assert.ok(parseFloat(glow.style.values['--glow-x'])>first);
-move(sidebar,500);tick(64);assert.ok(parseFloat(glow.style.values['--glow-x'])<300);assert.equal(glow.style.values['--glow-opacity'],'1');
-const background=node();let backgroundActive=false;background.classList={add(){backgroundActive=true;},remove(){}};background.closest=selector=>selector==='main'?background:null;
-move(background,600);tick(80);assert.equal(backgroundActive,true);assert.equal(glow.style.values['--glow-opacity'],'1');
-for(const effect of ['ribbon','haze']){context.root.dataset.themeHover=effect;move(background,650);tick(96);assert.equal(glow.style.values['--glow-opacity'],'1');}
-media.matches=true;move(sidebar,500);assert.equal(glow.style.values['--glow-opacity'],'0');assert.equal(frames.size,0);
-'''
-        path=Path(__file__).parent/'slurmy_web/static/theme.js'
-        result=subprocess.run(['node','-e',script,str(path)],capture_output=True,text=True)
-        self.assertEqual(result.returncode,0,result.stderr)

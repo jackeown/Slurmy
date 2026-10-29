@@ -28,10 +28,8 @@ window.SlurmyCustomTheme = (() => {
       ['font','Font Style','select',[['system','Modern Sans'],['humanist','Humanist Sans'],['serif','Editorial Serif'],['rounded','Rounded'],['mono','Monospace'],['compact','Compact Sans']]],
       ['fontFamily','Installed Font Family (overrides style)','text'],['radius','Corner Radius','range',0,28,'px'],
     ]],
-    ['Surfaces & Hover', [
+    ['Surfaces', [
       ['opacity','Panel Opacity','range',40,100,'%'],['blur','Glass Blur','range',0,20,'px'],
-      ['hover','Hover Effect','select',[['none','None'],['lift','Gentle Lift'],['spotlight','Soft Spotlight'],['ribbon','Directional Ribbon'],['haze','Living Mist'],['shimmer','Sweeping Shimmer'],['ink','Accent Highlight']]],
-      ['hoverLag','Hover Smoothing','range',0,300,'ms'],['hoverSoftness','Spotlight Softness','range',0,40,'px'],['hoverStrength','Spotlight Strength','range',1,30,'%'],
       ['transition','Transition Duration','range',0,600,'ms'],
     ]],
     ['Background & Motion', [

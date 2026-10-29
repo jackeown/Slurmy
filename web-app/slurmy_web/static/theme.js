@@ -10,11 +10,11 @@ window.SlurmyThemes = (() => {
     compact: '"Arial Narrow", "Liberation Sans Narrow", Arial, sans-serif',
   };
   const defaults = {mode:'light',paper:'#f3f6f0',surface:'#ffffff',well:'#edf2e9',ink:'#23392e',muted:'#59695f',line:'#d8e2d5',accent:'#297351',sidebar:'#172f27',accentInk:'#ffffff',
-    font:'system',fontFamily:'',radius:10,opacity:100,blur:0,hover:'none',hoverLag:120,hoverSoftness:18,hoverStrength:12,transition:160,motion:'none',pattern:'none',patternSize:32,
+    font:'system',fontFamily:'',radius:10,opacity:100,blur:0,transition:160,motion:'none',pattern:'none',patternSize:32,
     shadowColor:'#000000',shadowY:3,shadowBlur:18,shadowOpacity:5,textShadowColor:'#297351',textShadowBlur:0,textShadowOpacity:30,
     image:'',imageName:'',imageFit:'cover',imageOpacity:35};
-  const choices = {mode:['light','dark'],font:Object.keys(fonts),hover:['none','lift','spotlight','ribbon','haze','shimmer','ink'],motion:['none','drift','breathe'],pattern:['none','grid','dots','weave','diagonal','stars'],imageFit:['cover','contain','tile']};
-  const limits = {radius:[0,28],opacity:[40,100],blur:[0,20],transition:[0,600],hoverLag:[0,300],hoverSoftness:[0,40],hoverStrength:[1,30],patternSize:[8,100],shadowY:[0,24],shadowBlur:[0,60],shadowOpacity:[0,60],textShadowBlur:[0,24],textShadowOpacity:[0,80],imageOpacity:[0,100]};
+  const choices = {mode:['light','dark'],font:Object.keys(fonts),motion:['none','drift','breathe'],pattern:['none','grid','dots','weave','diagonal','stars'],imageFit:['cover','contain','tile']};
+  const limits = {radius:[0,28],opacity:[40,100],blur:[0,20],transition:[0,600],patternSize:[8,100],shadowY:[0,24],shadowBlur:[0,60],shadowOpacity:[0,60],textShadowBlur:[0,24],textShadowOpacity:[0,80],imageOpacity:[0,100]};
   function normalizeColor(value) {
     if(typeof value !== 'string')return null;
     if(/^#[a-f0-9]{6}([a-f0-9]{2})?$/i.test(value))return value.toLowerCase();
@@ -37,21 +37,21 @@ window.SlurmyThemes = (() => {
   function tokensFor(settings) {
     return {'--paper':settings.paper,'--white':settings.surface,'--surface-2':settings.well,'--ink':settings.ink,'--muted':settings.muted,'--line':settings.line,'--green':settings.accent,'--dark':settings.sidebar,'--accent-ink':settings.accentInk,
       '--red':settings.mode === 'dark' ? '#ff9b98' : '#ab363e','--orange':settings.mode === 'dark' ? '#e9bf7c' : '#956020',
-      '--theme-font':settings.fontFamily || fonts[settings.font],'--theme-radius':settings.radius+'px','--theme-control-radius':Math.round(settings.radius*.7)+'px','--theme-opacity':settings.opacity+'%','--theme-blur':settings.blur+'px','--theme-transition':settings.transition+'ms','--hover-softness':settings.hoverSoftness+'px','--hover-strength':(settings.hoverStrength*.5)+'%',
+      '--theme-font':settings.fontFamily || fonts[settings.font],'--theme-radius':settings.radius+'px','--theme-control-radius':Math.round(settings.radius*.7)+'px','--theme-opacity':settings.opacity+'%','--theme-chrome-opacity':(settings.opacity===100?100:Math.max(40,settings.opacity-10))+'%','--theme-blur':settings.blur+'px','--theme-transition':settings.transition+'ms',
       '--theme-shadow':settings.shadowOpacity ? `0 ${settings.shadowY}px ${settings.shadowBlur}px ${alpha(settings.shadowColor,settings.shadowOpacity)}` : 'none',
       '--theme-text-shadow':settings.textShadowBlur ? `0 0 ${settings.textShadowBlur}px ${alpha(settings.textShadowColor,settings.textShadowOpacity)}` : 'none',
       '--custom-image':settings.image ? `url("${settings.image}")` : 'none','--custom-image-opacity':settings.imageOpacity/100,'--custom-image-fit':settings.imageFit === 'tile' ? 'auto' : settings.imageFit,
       '--custom-pattern-size':settings.patternSize+'px'};
   }
   const profiles = {
-    garden:{radius:10},porcelain:{radius:4,font:'humanist',hover:'lift',transition:100},sandstone:{radius:14,font:'serif',shadowColor:'#795a38',shadowOpacity:9},pearl:{radius:20,font:'rounded',hover:'lift',transition:240},
-    evergreen:{radius:10},graphite:{radius:3,font:'compact',hover:'ink',transition:90},midnight:{radius:8,hover:'shimmer',transition:220},obsidian:{radius:2,font:'mono',shadowBlur:4,shadowOpacity:35},
-    'neon-haze':{pattern:'grid',radius:5,font:'mono',hover:'ribbon',opacity:88,blur:10,motion:'drift',shadowColor:'#30ddca',shadowBlur:26,shadowOpacity:15,textShadowColor:'#68f8e7',textShadowBlur:12,textShadowOpacity:40},
-    aurora:{pattern:'diagonal',radius:18,font:'humanist',hover:'haze',hoverLag:160,hoverSoftness:26,hoverStrength:9,opacity:88,blur:12,motion:'drift',transition:280,shadowColor:'#54cda4',shadowOpacity:12},
-    amethyst:{pattern:'stars',radius:22,font:'serif',hover:'haze',hoverLag:180,hoverSoftness:30,hoverStrength:9,transition:360,opacity:90,blur:8,motion:'breathe',textShadowColor:'#d8adff',textShadowBlur:8,textShadowOpacity:28,shadowColor:'#a767d8',shadowOpacity:16},
-    ember:{pattern:'diagonal',radius:3,font:'compact',hover:'ink',motion:'breathe',shadowColor:'#ff843a',shadowBlur:24,shadowOpacity:12},
-    blueprint:{radius:2,font:'mono',hover:'ink',pattern:'grid'},botanical:{radius:18,font:'humanist',hover:'lift',opacity:94,pattern:'dots',transition:240},rosewater:{radius:22,font:'serif',hover:'shimmer',pattern:'weave',shadowColor:'#a34f77',shadowOpacity:8},
-    sunprint:{radius:14,font:'rounded',hover:'spotlight',opacity:94,pattern:'diagonal',motion:'drift',shadowColor:'#a86d23',shadowOpacity:10},
+    garden:{radius:10},porcelain:{radius:4,font:'humanist',transition:100},sandstone:{radius:14,font:'serif',shadowColor:'#795a38',shadowOpacity:9},pearl:{radius:20,font:'rounded',transition:240},
+    evergreen:{radius:10},graphite:{radius:3,font:'compact',transition:90},midnight:{radius:8,transition:220},obsidian:{radius:2,font:'mono',shadowBlur:4,shadowOpacity:35},
+    'neon-haze':{pattern:'grid',radius:5,font:'mono',opacity:88,blur:10,motion:'drift',shadowColor:'#30ddca',shadowBlur:26,shadowOpacity:15,textShadowColor:'#68f8e7',textShadowBlur:12,textShadowOpacity:40},
+    aurora:{pattern:'diagonal',radius:18,font:'humanist',opacity:88,blur:12,motion:'drift',transition:280,shadowColor:'#54cda4',shadowOpacity:12},
+    amethyst:{pattern:'stars',radius:22,font:'serif',transition:360,opacity:90,blur:8,motion:'breathe',textShadowColor:'#d8adff',textShadowBlur:8,textShadowOpacity:28,shadowColor:'#a767d8',shadowOpacity:16},
+    ember:{pattern:'diagonal',opacity:88,blur:10,radius:3,font:'compact',motion:'breathe',shadowColor:'#ff843a',shadowBlur:24,shadowOpacity:12},
+    blueprint:{radius:2,font:'mono',pattern:'grid'},botanical:{radius:18,font:'humanist',opacity:94,pattern:'dots',transition:240},rosewater:{radius:22,font:'serif',pattern:'weave',shadowColor:'#a34f77',shadowOpacity:8},
+    sunprint:{radius:14,font:'rounded',opacity:94,pattern:'diagonal',motion:'drift',shadowColor:'#a86d23',shadowOpacity:10},
   };
   const theme = (id, name, mode, group, detail, colors) => {
     const [paper,surface,well,ink,muted,line,accent,sidebar,accentInk] = colors;
@@ -89,12 +89,11 @@ window.SlurmyThemes = (() => {
   stored = stored === 'light' ? 'porcelain' : stored === 'dark' ? 'evergreen' : stored;
   let selected = find(stored)?.id || (matchMedia('(prefers-color-scheme: dark)').matches ? 'evergreen' : 'porcelain');
 
-  let revision = 0, hoverTuning = {...defaults};
+  let revision = 0;
   function paint(item) {
-    hoverTuning = item.settings;
     for (const [key,value] of Object.entries(item.tokens)) root.style.setProperty(key,String(value));
     root.dataset.theme = item.mode; root.dataset.colorTheme = item.id;
-    root.dataset.themeHover = item.settings.hover; root.dataset.themeMotion = item.settings.motion;
+    root.dataset.themeMotion = item.settings.motion;
     root.dataset.themePattern = item.id === 'custom' ? item.settings.pattern : 'preset';
     root.dataset.themeImageFit = item.settings.imageFit;
     root.dataset.themeRevision = String(++revision);
@@ -200,42 +199,6 @@ window.SlurmyThemes = (() => {
     window.addEventListener('slurmy:theme-saved',refreshSelection);
     refreshSelection(); restore();
   }
-  function initPointerEffects() {
-    let current = null, frame = null, x = 0, y = 0, smoothX = 0, smoothY = 0, lastTime = 0, angle = 0, desiredAngle = 0;
-    const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-    const glow=document.createElement('div');glow.className='theme-cursor-glow';glow.setAttribute('aria-hidden','true');document.body.append(glow);
-    const clear = () => {
-      if(current)current.classList.remove('theme-hover-target');current = null;lastTime = 0;
-      glow.style.setProperty('--glow-opacity','0');
-      if(frame !== null){cancelAnimationFrame(frame);frame=null;}
-    };
-    const animate = time => {
-      frame = null;
-      if(!current || reduced.matches)return;
-      const delta=lastTime?Math.min(40,time-lastTime):16;lastTime=time;
-      const blend=hoverTuning.hoverLag===0?1:1-Math.exp(-delta/hoverTuning.hoverLag);
-      smoothX+=(x-smoothX)*blend;smoothY+=(y-smoothY)*blend;
-      const turn=((desiredAngle-angle+180)%360+360)%360-180;angle=(angle+turn*Math.min(1,blend*.65)+360)%360;
-      glow.style.setProperty('--glow-angle',angle+'deg');
-      glow.style.setProperty('--glow-x',smoothX+'px');glow.style.setProperty('--glow-y',smoothY+'px');
-      if(Math.abs(x-smoothX)+Math.abs(y-smoothY)>.1 || Math.abs(turn)>.2)frame=requestAnimationFrame(animate);
-    };
-    document.addEventListener('pointermove',event => {
-      if(reduced.matches || event.pointerType === 'touch' || !['spotlight','ribbon','haze','shimmer'].includes(root.dataset.themeHover)){clear();return;}
-      if(event.target.closest?.('#theme-picker,#custom-theme-editor')){clear();return;}
-      const target=event.target.closest?.('.experiment-card,.stats article,.solver-card-section,.problem-card-section,.limiter-card-section,.panel,.topbar,.sidebar') || event.target.closest?.('button,.button') || event.target.closest?.('main') || document.body;
-      if(!target){clear();return;}
-      if(root.dataset.themeHover==='ribbon'&&Math.hypot(event.clientX-x,event.clientY-y)>2)desiredAngle=Math.atan2(event.clientY-y,event.clientX-x)*180/Math.PI;else if(root.dataset.themeHover!=='ribbon')desiredAngle=angle;
-      x=event.clientX;y=event.clientY;
-      if(current !== target){
-        if(current)current.classList.remove('theme-hover-target');else{smoothX=x;smoothY=y;lastTime=0;}
-        current=target;current.classList.add('theme-hover-target');glow.style.setProperty('--glow-opacity','1');
-      }
-      if(frame === null)frame=requestAnimationFrame(animate);
-    },{passive:true});
-    document.addEventListener('pointerleave',clear);
-    window.addEventListener('blur',clear);window.addEventListener('scroll',clear,true);
-  }
-  document.addEventListener('DOMContentLoaded',()=>{initPicker();initPointerEffects();});
+  document.addEventListener('DOMContentLoaded',initPicker);
   return {themes,fonts,normalize,cleanName,get library(){return library.map(x=>({name:x.name,settings:{...x.settings}}));},get hasCustom(){return hasCustom;},apply,select,previewCustom,saveCustom,restore:()=>apply(selected),get custom(){return {...custom};},get currentSettings(){return {...find(selected).settings};},get selected(){return selected;}};
 })();
