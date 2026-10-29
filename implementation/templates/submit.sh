@@ -10,7 +10,8 @@ source "$ASSETS/workflow_name.sh"
 source "$ASSETS/submission_settings.sh"
 HOST=${SLURMY_HOST:-datalab}
 MAX_OUTSTANDING=${SLURMY_MAX_OUTSTANDING:-$MAX_OUTSTANDING_DEFAULT}
-SSH_OPTIONS=(-T -o BatchMode=yes -o ConnectTimeout=10)
+mapfile -t SSH_REUSE < <(python "$ASSETS/ssh_transport.py")
+SSH_OPTIONS=(-T -o BatchMode=yes -o ConnectTimeout=10 "${SSH_REUSE[@]}")
 ssh_stage() {
     local script=$1 label=$2 attempt
     for attempt in 1 2 3; do
@@ -39,7 +40,11 @@ python "$ASSETS/check_threads.py" "$ASSETS/manifest.jsonl" --host "$HOST" --part
 [[ -z ${SLURMY_RESERVATION:-} || ${SLURMY_RESERVATION} =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo 'Invalid reservation' >&2; exit 1; }
 
 # 1. Build each non-empty building.txt recipe remotely and fetch its outputs.
-echo 'Submission phase: Building dependencies on cluster compute nodes'
+if (( ${BUILD_COUNT_DEFAULT:-1} > 0 )); then
+    echo 'Submission phase: Building dependencies on cluster compute nodes'
+else
+    echo 'Submission phase: Using prebuilt solver and resource limiter binaries'
+fi
 bash "$ASSETS/builds/run.sh"
 
 # 2. Package declared resources and problems with their local path layout.
@@ -59,7 +64,7 @@ if ! ssh_stage remote_prepare.sh 'Preparing upload'; then
 fi
 upload_ok=false
 for attempt in 1 2 3; do
-    if scp -o BatchMode=yes -o ConnectTimeout=10 -- "$TEMP_DIR/inputs.tar.gz" "$TEMP_DIR/job-files.tar.gz" "$HOST:slurmy/jobs/.staging-$JOB_ID/incoming/"; then
+    if scp "${SSH_REUSE[@]}" -o BatchMode=yes -o ConnectTimeout=10 -- "$TEMP_DIR/inputs.tar.gz" "$TEMP_DIR/job-files.tar.gz" "$HOST:slurmy/jobs/.staging-$JOB_ID/incoming/"; then
         upload_ok=true; break
     fi
     echo "Uploading inputs: SSH attempt $attempt/3 failed." >&2
@@ -68,13 +73,12 @@ done
 if [[ "$upload_ok" != true ]]; then
     echo 'Upload failed; the incomplete staging directory was not published or submitted.' >&2; exit 1
 fi
-if ! ssh_stage remote_finish_upload.sh 'Committing upload'; then
-    echo 'SSH failed while committing the upload. Check the cluster before retrying; no SLURM batch was submitted by this command.' >&2; exit 1
-fi
-
 # 4. Calculate allocations using cluster topology, then submit each batch.
-echo 'Submission phase: Submitting SLURM batches'
-if ! ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" "$AUTO_JOB_NAME" < "$ASSETS/remote_submit.sh"; then
+echo 'Submission phase: Committing upload and submitting SLURM batches'
+# Commit and dispatch in the same authenticated channel. The subshell keeps an
+# idempotent upload acknowledgment's exit from skipping dispatch.
+if ! { printf 'set -euo pipefail\n(\n'; cat "$ASSETS/remote_finish_upload.sh"; printf '\n)\n'; cat "$ASSETS/remote_submit.sh"; } | \
+    ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" "$AUTO_JOB_NAME"; then
     echo "Submission connection failed. Some batches may already be accepted; inspect job $JOB_ID before retrying." >&2
     echo "To resume only unaccepted batches: SLURMY_RESUME_JOB_ID=$JOB_ID bash ./submit.sh" >&2
     exit 1

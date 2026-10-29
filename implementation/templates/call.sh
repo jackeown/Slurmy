@@ -2,7 +2,7 @@
 # Per-call limiter, output capture and atomic result publication.
 set -euo pipefail
 export LC_ALL=C
-export CALL_DIR="$JOB_DIR/calls/$1"
+export CALL_DIR="${CALLS_DIR:-$JOB_DIR/calls}/$1"
 source "$CALL_DIR/config.sh"
 if [[ -n ${TPTP_ROOT_REL:-} ]]; then
     export TPTP="$JOB_DIR/rootfs/$TPTP_ROOT_REL"

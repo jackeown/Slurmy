@@ -29,7 +29,7 @@ prepare:
 	@python '$(REPO_ROOT)/implementation/check_threads.py' '$(JOBPAIRS)' --host '$(SLURMY_HOST)' --partition '$(SLURMY_PARTITION)'
 	@$(MAKE) --no-print-directory submit.sh
 
-submit.sh: Makefile $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES) $(REPO_ROOT)/implementation/slurmy.py $(REPO_ROOT)/implementation/job_names.py $(REPO_ROOT)/implementation/check_threads.py $(REPO_ROOT)/implementation/package_inputs.py $(REPO_ROOT)/implementation/submit_coordinator.py $(REPO_ROOT)/implementation/build/slurmy-build.py $(REPO_ROOT)/implementation/templates/workflow.mk $(wildcard $(REPO_ROOT)/implementation/templates/*.sh)
+submit.sh: Makefile $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES) $(REPO_ROOT)/implementation/slurmy.py $(REPO_ROOT)/implementation/job_names.py $(REPO_ROOT)/implementation/check_threads.py $(REPO_ROOT)/implementation/ssh_transport.py $(REPO_ROOT)/implementation/package_inputs.py $(REPO_ROOT)/implementation/submit_coordinator.py $(REPO_ROOT)/implementation/build/slurmy-build.py $(REPO_ROOT)/implementation/templates/workflow.mk $(wildcard $(REPO_ROOT)/implementation/templates/*.sh)
 	@if [ -e submit.sh ] || [ -d submit.sh.files ]; then \
 		printf '♻️  Inputs changed; refreshing generated submission files.\n'; \
 		rm -f -- submit.sh; rm -rf -- submit.sh.files; \

@@ -2,6 +2,8 @@
 """Select and cancel an active SLURM job over SSH."""
 
 from __future__ import annotations
+from ssh_transport import connection_options
+
 
 import argparse
 from dataclasses import dataclass, field
@@ -55,7 +57,7 @@ def run_remote(
     if shutil.which("ssh") is None:
         raise CancelError("ssh is not installed or not on PATH")
     command = [
-        "ssh",
+        "ssh", *connection_options(),
         "-T",
         "-o",
         "BatchMode=yes",

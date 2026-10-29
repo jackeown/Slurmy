@@ -1,4 +1,6 @@
 """Live CPU-capacity estimate for the workflow builder's batch-size default."""
+from ssh_transport import connection_options
+
 import subprocess
 
 from slurmy import boolean, positive
@@ -9,7 +11,7 @@ def partition_nodes(host, partition):
     host, partition = workflows.alias(host), workflows.alias(partition)
     try:
         result = subprocess.run(
-            ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host,
+            ['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host,
              f"sinfo -p {partition} -N -h -o '%N|%X|%Y|%Z'"],
             text=True, capture_output=True, timeout=25, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:

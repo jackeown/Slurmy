@@ -1,5 +1,6 @@
 """Expand problem paths and archives into safe, packageable local files."""
 from __future__ import annotations
+from ssh_transport import connection_options
 
 import glob
 import base64
@@ -34,7 +35,7 @@ def tptp_relative(pattern: str) -> str:
     return relative
 
 
-def remote_tptp(host: str, relative: str, browse: bool = False):
+def remote_tptp(host: str, relative: str, browse: bool = False, grouped: bool = False):
     script = r'''import base64, glob, json, os, sys
 root = sys.argv[1]
 relative = '' if sys.argv[2] == '-' else base64.b64decode(sys.argv[2]).decode()
@@ -56,15 +57,23 @@ if mode == 'browse':
     parent = 'tptp://' + (os.path.dirname(relative) if relative else '')
     print(json.dumps(dict(directory=current, parent=parent, items=entries[:1000], truncated=len(entries)>1000)))
 else:
-    for path in sorted(glob.iglob(os.path.join(root, relative), recursive=True)):
-        rel = os.path.relpath(path, root).split(os.sep)
-        if len(rel) >= 3 and rel[1] == 'Problems' and os.path.isfile(path) and path.endswith(('.p', '.tptp')) and contained(path):
-            sys.stdout.buffer.write(path.encode() + b'\0')
+    patterns = json.loads(relative) if mode == 'globs' else [relative]
+    matches = {}
+    for pattern in patterns:
+        files = []
+        for path in sorted(glob.iglob(os.path.join(root, pattern), recursive=True)):
+            rel = os.path.relpath(path, root).split(os.sep)
+            if len(rel) >= 3 and rel[1] == 'Problems' and os.path.isfile(path) and path.endswith(('.p', '.tptp')) and contained(path):
+                files.append(path)
+        matches[pattern] = files
+        if mode != 'globs':
+            for path in files: sys.stdout.buffer.write(path.encode() + b'\0')
+    if mode == 'globs': print(json.dumps(matches))
 '''
     try:
-        result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host,
+        result = subprocess.run(['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host,
                                  'python3', '-', TPTP_ROOT, base64.b64encode(relative.encode()).decode() or '-',
-                                 'browse' if browse else 'glob'],
+                                 'browse' if browse else 'globs' if grouped else 'glob'],
                                 input=script.encode(), capture_output=True, timeout=120, check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise ValueError(f'Could not access cluster TPTP collection: {error}') from error
@@ -88,6 +97,22 @@ def expand_cluster_tptp(pattern: str, host: str) -> list[str]:
     if not files:
         raise ValueError(f'No TPTP problems matched {pattern} on {host}.')
     return files
+
+
+def expand_cluster_tptp_many(patterns: list[str], host: str) -> dict[str, list[str]]:
+    """Resolve all selected cluster globs in one SSH request, with no stale cache."""
+    unique=list(dict.fromkeys(patterns))
+    if not unique:return {}
+    if len(unique)==1:return {unique[0]:expand_cluster_tptp(unique[0],host)}
+    relative=[tptp_relative(pattern) for pattern in unique]
+    if any(not item for item in relative):raise ValueError('Select a TPTP version and Problems glob.')
+    matches=json.loads(remote_tptp(host,json.dumps(relative),grouped=True))
+    result={}
+    for pattern,key in zip(unique,relative):
+        files=['tptp:'+name for name in matches.get(key,[])]
+        if not files:raise ValueError(f'No TPTP problems matched {pattern} on {host}.')
+        result[pattern]=files
+    return result
 
 
 def is_archive(path: Path) -> bool:

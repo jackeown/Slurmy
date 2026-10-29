@@ -10,14 +10,15 @@ import sys
 import tempfile
 
 from slurmy import COLUMNS, PAIR_ORDERS, SlurmyError, order_jobpairs, path_at, read_pairs
-from slurmy_archives import expand_problem_pattern, expand_cluster_tptp
+from slurmy_archives import expand_problem_pattern, expand_cluster_tptp_many
 
 
 def expand(configurations: list[Path], patterns: list[str], output: Path,
            order: str = "solver-major") -> int:
     problems: set[str] = set()
+    cluster_matches=expand_cluster_tptp_many([p for p in patterns if p.startswith('tptp://')],os.environ.get('SLURMY_HOST','datalab'))
     for pattern in patterns:
-        matches = (expand_cluster_tptp(pattern, os.environ.get('SLURMY_HOST', 'datalab'))
+        matches = (cluster_matches[pattern]
                    if pattern.startswith('tptp://') else expand_problem_pattern(pattern))
         problems.update(map(str, matches))
     rows = []

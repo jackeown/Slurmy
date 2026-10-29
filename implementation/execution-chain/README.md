@@ -477,3 +477,19 @@ Files under `implementation/templates/` are source templates. Preparation copies
 the relevant scripts into a workflow's `submit.sh.files/`; submission transfers
 them into the remote job directory. The execution diagram describes those
 generated and uploaded copies.
+
+### Submission Latency and Batch Script Bundles
+
+Readable `calls/<pair-id>/{config,solver,limiter}.sh` files remain in the local
+prepared workflow. The uploaded job-files archive excludes that directory and
+contains `call-bundles/batch_<id>.tar.gz` instead. At batch startup, `batch.sh`
+extracts its bundle into `$SLURM_TMPDIR` (or local temporary storage) and exports
+`CALLS_DIR`. `call.sh` reads from that directory, falling back to the legacy
+`$JOB_DIR/calls` layout for older jobs. Batch exit removes the temporary scripts.
+Results, progress and logs continue to be published atomically in the job directory.
+This avoids creating several shared-filesystem files per pair before dispatch.
+
+All SSH-based UI queries and submission/build/download tools reuse authenticated
+connections through private control sockets with a 60-second idle expiry. Cluster
+problem globs are grouped into one fresh query. Upload commit and submission run
+in one channel; retries still preserve the accepted-batch records.

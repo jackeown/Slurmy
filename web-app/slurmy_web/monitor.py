@@ -2,6 +2,8 @@
 """Read-only cluster monitoring shared by the local web interface."""
 
 from __future__ import annotations
+from ssh_transport import connection_options
+
 
 import base64
 import csv
@@ -38,8 +40,8 @@ def slurm_state_code(state: str) -> str:
     return state.upper().split()[0].rstrip("+") if state else ""
 
 # This script is sent to `ssh HOST bash -s`. It reads only the small monitoring
-# files under $HOME/slurmy/jobs and emits NUL-delimited records. Python is not needed on
-# the cluster. Large solver inputs and result archives are never transferred.
+# files under $HOME/slurmy/jobs and emits NUL-delimited records. Compact overview
+# records are cached under $HOME/.cache/slurmy; job files are never modified.
 REMOTE_SNAPSHOT_SCRIPT = r"""
 set -u
 
@@ -75,246 +77,281 @@ if [[ -z "$DETAIL" ]]; then
 fi
 printf 'DETAIL\0%s\0' "$DETAIL"
 
+# Atomic cache records include their invalidation signature and protocol payload.
+# Result/progress publishers rename files atomically, changing directory mtimes.
+# An hourly safety refresh also catches external edits made in place.
+CACHE="$HOME/.cache/slurmy/history-v2"
+mkdir -p -- "$CACHE" 2>/dev/null || true
+now=$(date +%s)
 oldest=
 for directory in "${job_dirs[@]}"; do
     [[ -d "$directory" ]] || continue
     job=${directory##*/}
     created=$(stat -c %Y "$directory" 2>/dev/null || printf '0')
-    printf 'JOB\0%s\0%s\0' "$job" "$created"
+    if [[ "$created" =~ ^[0-9]+$ ]] && { [[ -z "$oldest" ]] || (( created < oldest )); }; then oldest=$created; fi
+    emit_job() {
+        printf 'JOB\0%s\0%s\0' "$job" "$created"
 
-    if [[ -f "$directory/metadata.json" ]]; then
-        printf 'METADATA\0%s\0' "$job"
-        cat "$directory/metadata.json"
-        printf '\0'
-    fi
-
-    # New jobs keep one compact index per sequential batch. Opening every
-    # per-call CSV on NFS makes a large job's refresh time out.
-    indexed_results=("$directory"/results/index-legacy/batch_*.csv "$directory"/results/index/batch_*.csv)
-    if [[ -f "$directory/results/index/.ready" ]]; then
-        csv_results=("${indexed_results[@]}")
-    else
-        csv_results=("$directory"/results/batch_*.csv)
-    fi
-    # Keep TSV and pre-batch JSONL jobs readable in the historical dashboard.
-    tsv_results=("$directory"/results/batch_*.tsv "$directory"/results/chunk_*.tsv)
-    if (( ${#csv_results[@]} )); then
-        printf 'SUMMARY\0%s\0' "$job"
-        # Slurmy quotes every CSV field. The summary uses only numeric and enum
-        # columns, which cannot themselves contain commas.
-        summary_payload=$(awk -F, '
-            function value(field) {
-                if (field ~ /^".*"$/) {
-                    sub(/^"/, "", field); sub(/"$/, "", field)
-                    gsub(/""/, "\"", field)
-                }
-                return field
-            }
-            NF >= 3 && value($1) ~ /^[0-9]+$/ {
-                id = value($1)
-                complete[id] = value($2)
-                result_status[id] = value($3)
-                if (result_status[id] == "solver-error" && value($4) == "143" && value($16) == "")
-                    suspect_archive[id] = value($15)
-                if (result_status[id] == "solver-error" && value($16) == "Timeout")
-                    result_status[id] = "time-limit"
-                if (result_status[id] == "solver-error" && value($16) == "CounterSatisfiable")
-                    result_status[id] = "counter-satisfiable"
-                if (result_status[id] == "solver-error" && value($16) != "" && value($4) + 0 < 128 &&
-                    tolower(value($16)) !~ /^(error|oserror|inputerror|syntaxerror|semanticerror|typeerror|usageerror)$/ &&
-                    tolower(value($16)) != "timeout" && tolower(value($16)) != "countersatisfiable")
-                    result_status[id] = "ok"
-                szs[id] = value($16)
-                wall[id] = value($5)
-            }
-            END {
-                for (id in result_status) {
-                    if (complete[id] == "true") {
-                        completed++
-                        count[result_status[id]]++
-                        outcomes[result_status[id] "\t" szs[id]]++
-                        if (wall[id] ~ /^[0-9]+([.][0-9]+)?$/) {
-                            wall_sum += wall[id]
-                            if (wall[id] > wall_max) wall_max = wall[id]
-                        }
-                    } else {
-                        unresolved[result_status[id]]++
-                    }
-                }
-                printf "completed\t%d\nwall_sum\t%.9f\nwall_max\t%.9f\n", completed, wall_sum, wall_max
-                for (outcome in outcomes) printf "outcome\t%s\t%d\n", outcome, outcomes[outcome]
-                for (status in count) printf "status\t%s\t%d\n", status, count[status]
-                for (status in unresolved) printf "unresolved\t%s\t%d\n", status, unresolved[status]
-                for (id in suspect_archive) printf "candidate\t%s\t%s\n", id, suspect_archive[id]
-            }
-        ' "${csv_results[@]}")
-        printf '%s\n' "$summary_payload"
-        printf '\0'
-    elif (( ${#tsv_results[@]} )); then
-        printf 'SUMMARY\0%s\0' "$job"
-        awk -F '\t' '
-            NF >= 3 && $1 ~ /^[0-9]+$/ {
-                complete[$1] = $2
-                result_status[$1] = $3
-                szs[$1] = $16
-                wall[$1] = $5
-            }
-            END {
-                for (id in result_status) {
-                    if (complete[id] == "true") {
-                        completed++
-                        count[result_status[id]]++
-                        outcomes[result_status[id] "\t" szs[id]]++
-                        if (wall[id] ~ /^[0-9]+([.][0-9]+)?$/) {
-                            wall_sum += wall[id]
-                            if (wall[id] > wall_max) wall_max = wall[id]
-                        }
-                    } else {
-                        unresolved[result_status[id]]++
-                    }
-                }
-                printf "completed\t%d\nwall_sum\t%.9f\nwall_max\t%.9f\n", completed, wall_sum, wall_max
-                for (outcome in outcomes) printf "outcome\t%s\t%d\n", outcome, outcomes[outcome]
-                for (status in count) printf "status\t%s\t%d\n", status, count[status]
-                for (status in unresolved) printf "unresolved\t%s\t%d\n", status, unresolved[status]
-            }
-        ' "${tsv_results[@]}"
-        printf '\0'
-    else
-        legacy_results=("$directory"/results/chunk_*.jsonl)
-        if (( ${#legacy_results[@]} )); then
-            printf 'LEGACY_RESULTS\0%s\0' "$job"
-            cat "${legacy_results[@]}"
+        if [[ -f "$directory/metadata.json" ]]; then
+            printf 'METADATA\0%s\0' "$job"
+            cat "$directory/metadata.json"
             printf '\0'
         fi
-    fi
 
-    if [[ ! -f "$directory/results/index/.ready" ]]; then
-        for progress_file in "$directory"/progress/task_*.csv; do
-            printf 'CALL_PROGRESS\0%s\0' "$job"
-            emit_file "$progress_file"
-            printf '\0'
-        done
-    fi
-    csv_progress=("$directory"/progress/batch_*.csv)
-    tsv_progress=("$directory"/progress/batch_*.tsv "$directory"/progress/chunk_*.tsv)
-    if (( ${#csv_progress[@]} )); then
-        printf 'PROGRESS_CSV\0%s\0' "$job"
-        for progress_file in "${csv_progress[@]}"; do
-            printf '"%s",' "${progress_file##*/}"
-            emit_file "$progress_file"
-        done
-        printf '\0'
-    elif (( ${#tsv_progress[@]} )); then
-        printf 'PROGRESS_TSV\0%s\0' "$job"
-        for progress_file in "${tsv_progress[@]}"; do
-            printf '%s\t' "${progress_file##*/}"
-            emit_file "$progress_file"
-        done
-        printf '\0'
-    fi
-
-    if [[ -f "$directory/submission.csv" ]]; then
-        printf 'SUBMISSION_CSV\0%s\0' "$job"
-        cat "$directory/submission.csv"
-        printf '\0'
-    elif [[ -f "$directory/submission.tsv" ]]; then
-        printf 'SUBMISSION_TSV\0%s\0' "$job"
-        cat "$directory/submission.tsv"
-        printf '\0'
-    fi
-    if [[ -f "$directory/submission.state" ]]; then
-        printf 'SUBMISSION_STATE\0%s\0' "$job"
-        cat "$directory/submission.state"
-        printf '\0'
-    fi
-
-    # Older runsolver result rows may say solver-error/143 and MEMOUT=false even
-    # though their archived watcher explicitly records a memory-limit kill.
-    # Inspect only those exceptional rows; never infer a limit from exit 143.
-    if (( ${#csv_results[@]} )); then
-        while IFS=$'\t' read -r kind task_id archive; do
-            [[ "$kind" == candidate ]] || continue
-            [[ "$task_id" =~ ^[0-9]+$ && "$archive" =~ ^[A-Za-z0-9._-]+[.]tar[.]gz$ ]] || continue
-            archive_path="$directory/results/$archive"
-            [[ -f "$archive_path" ]] || continue
-            if tar -xOzf "$archive_path" --wildcards '*watcher.log' 2>/dev/null | grep -Fq 'Maximum memory exceeded:'; then
-                printf 'RESULT_OVERRIDE\0%s\0%s\0memory-limit\0' "$job" "$task_id"
-            fi
-        done <<< "$summary_payload"
-    fi
-
-    if [[ "$created" =~ ^[0-9]+$ ]] && { [[ -z "$oldest" ]] || (( created < oldest )); }; then
-        oldest=$created
-    fi
-
-    if [[ "$job" == "$DETAIL" ]]; then
-        detail_csv_results=("${csv_results[@]}")
-        if [[ -n "$SINCE" && -f "$directory/results/index/.ready" ]]; then
-            mapfile -d '' -t detail_csv_results < <(
-                find "$directory/results/index" -maxdepth 1 -type f -name 'batch_*.csv' \
-                    -newermt "@$SINCE" -print0
-            )
+        # New jobs keep one compact index per sequential batch. Opening every
+        # per-call CSV on NFS makes a large job's refresh time out.
+        indexed_results=("$directory"/results/index-legacy/batch_*.csv "$directory"/results/index/batch_*.csv)
+        if [[ -f "$directory/results/index/.ready" ]]; then
+            csv_results=("${indexed_results[@]}")
+        else
+            csv_results=("$directory"/results/batch_*.csv)
         fi
+        # Keep TSV and pre-batch JSONL jobs readable in the historical dashboard.
+        tsv_results=("$directory"/results/batch_*.tsv "$directory"/results/chunk_*.tsv)
         if (( ${#csv_results[@]} )); then
-            printf 'RESULTS_CSV\0%s\0' "$job"
-            if (( ${#detail_csv_results[@]} )); then cat "${detail_csv_results[@]}"; fi
+            printf 'SUMMARY\0%s\0' "$job"
+            # Slurmy quotes every CSV field. The summary uses only numeric and enum
+            # columns, which cannot themselves contain commas.
+            summary_payload=$(awk -F, '
+                function value(field) {
+                    if (field ~ /^".*"$/) {
+                        sub(/^"/, "", field); sub(/"$/, "", field)
+                        gsub(/""/, "\"", field)
+                    }
+                    return field
+                }
+                NF >= 3 && value($1) ~ /^[0-9]+$/ {
+                    id = value($1)
+                    complete[id] = value($2)
+                    result_status[id] = value($3)
+                    if (result_status[id] == "solver-error" && value($4) == "143" && value($16) == "")
+                        suspect_archive[id] = value($15)
+                    if (result_status[id] == "solver-error" && value($16) == "Timeout")
+                        result_status[id] = "time-limit"
+                    if (result_status[id] == "solver-error" && value($16) == "CounterSatisfiable")
+                        result_status[id] = "counter-satisfiable"
+                    if (result_status[id] == "solver-error" && value($16) != "" && value($4) + 0 < 128 &&
+                        tolower(value($16)) !~ /^(error|oserror|inputerror|syntaxerror|semanticerror|typeerror|usageerror)$/ &&
+                        tolower(value($16)) != "timeout" && tolower(value($16)) != "countersatisfiable")
+                        result_status[id] = "ok"
+                    szs[id] = value($16)
+                    wall[id] = value($5)
+                }
+                END {
+                    for (id in result_status) {
+                        if (complete[id] == "true") {
+                            completed++
+                            count[result_status[id]]++
+                            outcomes[result_status[id] "\t" szs[id]]++
+                            if (wall[id] ~ /^[0-9]+([.][0-9]+)?$/) {
+                                wall_sum += wall[id]
+                                if (wall[id] > wall_max) wall_max = wall[id]
+                            }
+                        } else {
+                            unresolved[result_status[id]]++
+                        }
+                    }
+                    printf "completed\t%d\nwall_sum\t%.9f\nwall_max\t%.9f\n", completed, wall_sum, wall_max
+                    for (outcome in outcomes) printf "outcome\t%s\t%d\n", outcome, outcomes[outcome]
+                    for (status in count) printf "status\t%s\t%d\n", status, count[status]
+                    for (status in unresolved) printf "unresolved\t%s\t%d\n", status, unresolved[status]
+                    for (id in suspect_archive) printf "candidate\t%s\t%s\n", id, suspect_archive[id]
+                }
+            ' "${csv_results[@]}")
+            printf '%s\n' "$summary_payload"
             printf '\0'
         elif (( ${#tsv_results[@]} )); then
-            printf 'RESULTS_TSV\0%s\0' "$job"
-            cat "${tsv_results[@]}"
+            printf 'SUMMARY\0%s\0' "$job"
+            awk -F '\t' '
+                NF >= 3 && $1 ~ /^[0-9]+$/ {
+                    complete[$1] = $2
+                    result_status[$1] = $3
+                    szs[$1] = $16
+                    wall[$1] = $5
+                }
+                END {
+                    for (id in result_status) {
+                        if (complete[id] == "true") {
+                            completed++
+                            count[result_status[id]]++
+                            outcomes[result_status[id] "\t" szs[id]]++
+                            if (wall[id] ~ /^[0-9]+([.][0-9]+)?$/) {
+                                wall_sum += wall[id]
+                                if (wall[id] > wall_max) wall_max = wall[id]
+                            }
+                        } else {
+                            unresolved[result_status[id]]++
+                        }
+                    }
+                    printf "completed\t%d\nwall_sum\t%.9f\nwall_max\t%.9f\n", completed, wall_sum, wall_max
+                    for (outcome in outcomes) printf "outcome\t%s\t%d\n", outcome, outcomes[outcome]
+                    for (status in count) printf "status\t%s\t%d\n", status, count[status]
+                    for (status in unresolved) printf "unresolved\t%s\t%d\n", status, unresolved[status]
+                }
+            ' "${tsv_results[@]}"
+            printf '\0'
+        else
+            legacy_results=("$directory"/results/chunk_*.jsonl)
+            if (( ${#legacy_results[@]} )); then
+                printf 'LEGACY_RESULTS\0%s\0' "$job"
+                cat "${legacy_results[@]}"
+                printf '\0'
+            fi
+        fi
+
+        if [[ "$job" == "$DETAIL" && ! -f "$directory/results/index/.ready" ]]; then
+            for progress_file in "$directory"/progress/task_*.csv; do
+                printf 'CALL_PROGRESS\0%s\0' "$job"
+                emit_file "$progress_file"
+                printf '\0'
+            done
+        fi
+        if [[ "$job" == "$DETAIL" ]]; then
+        csv_progress=("$directory"/progress/batch_*.csv)
+        tsv_progress=("$directory"/progress/batch_*.tsv "$directory"/progress/chunk_*.tsv)
+        if (( ${#csv_progress[@]} )); then
+            printf 'PROGRESS_CSV\0%s\0' "$job"
+            for progress_file in "${csv_progress[@]}"; do
+                printf '"%s",' "${progress_file##*/}"
+                emit_file "$progress_file"
+            done
+            printf '\0'
+        elif (( ${#tsv_progress[@]} )); then
+            printf 'PROGRESS_TSV\0%s\0' "$job"
+            for progress_file in "${tsv_progress[@]}"; do
+                printf '%s\t' "${progress_file##*/}"
+                emit_file "$progress_file"
+            done
             printf '\0'
         fi
-        legacy_results=("$directory"/results/chunk_*.jsonl)
-        if (( ${#legacy_results[@]} )); then
-            printf 'RESULTS_JSONL\0%s\0' "$job"
-            cat "${legacy_results[@]}"
+        fi
+
+        if [[ -f "$directory/submission.csv" ]]; then
+            printf 'SUBMISSION_CSV\0%s\0' "$job"
+            cat "$directory/submission.csv"
+            printf '\0'
+        elif [[ -f "$directory/submission.tsv" ]]; then
+            printf 'SUBMISSION_TSV\0%s\0' "$job"
+            cat "$directory/submission.tsv"
             printf '\0'
         fi
-        if [[ -f "$directory/manifest.jsonl" && ( -z "$SINCE" || ! -f "$directory/results/index/.ready" ) ]]; then
-            printf 'MANIFEST\0%s\0' "$job"
-            cat "$directory/manifest.jsonl"
+        if [[ -f "$directory/submission.state" ]]; then
+            printf 'SUBMISSION_STATE\0%s\0' "$job"
+            cat "$directory/submission.state"
             printf '\0'
         fi
 
-        # Modern metadata already lists every task's batch. Legacy jobs need
-        # their batch scripts scanned to reconstruct that mapping.
-        if [[ ! -f "$directory/metadata.json" ]] || ! grep -q '"planned_batch_tasks"' "$directory/metadata.json"; then
-          batch_files=("$directory"/batches/batch_*.sh "$directory"/chunks/chunk_*.sh)
-          for batch_file in "${batch_files[@]}"; do
-            (
-                set +u
-                source "$batch_file"
-                if [[ "$batch_file" =~ (batch|chunk)_([0-9]+)[.]sh$ ]] && declare -p TASK_IDS >/dev/null 2>&1; then
-                    batch_id=$((10#${BASH_REMATCH[2]}))
-                    for task_id in "${TASK_IDS[@]}"; do
-                        printf 'BATCH_TASK\0%s\0%s\0%s\0' "$job" "$batch_id" "$task_id"
-                    done
+        # Older runsolver result rows may say solver-error/143 and MEMOUT=false even
+        # though their archived watcher explicitly records a memory-limit kill.
+        # Inspect only those exceptional rows; never infer a limit from exit 143.
+        if (( ${#csv_results[@]} )); then
+            while IFS=$'\t' read -r kind task_id archive; do
+                [[ "$kind" == candidate ]] || continue
+                [[ "$task_id" =~ ^[0-9]+$ && "$archive" =~ ^[A-Za-z0-9._-]+[.]tar[.]gz$ ]] || continue
+                archive_path="$directory/results/$archive"
+                [[ -f "$archive_path" ]] || continue
+                if tar -xOzf "$archive_path" --wildcards '*watcher.log' 2>/dev/null | grep -Fq 'Maximum memory exceeded:'; then
+                    printf 'RESULT_OVERRIDE\0%s\0%s\0memory-limit\0' "$job" "$task_id"
                 fi
-                declare -p TASK_IDS TASK_KEYS TASK_PROBLEM_RELS TASK_COMMANDS TASK_SOLVER_ROOT_RELS >/dev/null 2>&1 || exit 0
-                for index in "${!TASK_IDS[@]}"; do
-                    solver=
-                    if declare -p TASK_SYSTEMS >/dev/null 2>&1; then
-                        solver=${TASK_SYSTEMS[$index]}
-                    fi
-                    printf 'TASKDEF\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
-                        "$job" "${TASK_IDS[$index]}" "${TASK_KEYS[$index]}" \
-                        "$solver" "${TASK_PROBLEM_RELS[$index]}" "${TASK_COMMANDS[$index]}" \
-                        "${TASK_SOLVER_ROOT_RELS[$index]}"
-                done
-            )
-          done
+            done <<< "$summary_payload"
         fi
 
-        log_count=0
-        log_files=("$directory"/logs/*.out)
-        for log_file in "${log_files[@]}"; do
-            (( log_count >= 100 )) && break
-            printf 'LOG\0%s\0%s\0' "$job" "${log_file##*/}"
-            tail -n 160 "$log_file" 2>/dev/null || true
-            printf '\0'
-            log_count=$((log_count + 1))
-        done
+
+        if [[ "$job" == "$DETAIL" ]]; then
+            detail_csv_results=("${csv_results[@]}")
+            if [[ -n "$SINCE" && -f "$directory/results/index/.ready" ]]; then
+                mapfile -d '' -t detail_csv_results < <(
+                    find "$directory/results/index" -maxdepth 1 -type f -name 'batch_*.csv' \
+                        -newermt "@$SINCE" -print0
+                )
+            fi
+            if (( ${#csv_results[@]} )); then
+                printf 'RESULTS_CSV\0%s\0' "$job"
+                if (( ${#detail_csv_results[@]} )); then cat "${detail_csv_results[@]}"; fi
+                printf '\0'
+            elif (( ${#tsv_results[@]} )); then
+                printf 'RESULTS_TSV\0%s\0' "$job"
+                cat "${tsv_results[@]}"
+                printf '\0'
+            fi
+            legacy_results=("$directory"/results/chunk_*.jsonl)
+            if (( ${#legacy_results[@]} )); then
+                printf 'RESULTS_JSONL\0%s\0' "$job"
+                cat "${legacy_results[@]}"
+                printf '\0'
+            fi
+            if [[ -f "$directory/manifest.jsonl" && ( -z "$SINCE" || ! -f "$directory/results/index/.ready" ) ]]; then
+                printf 'MANIFEST\0%s\0' "$job"
+                cat "$directory/manifest.jsonl"
+                printf '\0'
+            fi
+
+            # Modern metadata already lists every task's batch. Legacy jobs need
+            # their batch scripts scanned to reconstruct that mapping.
+            if [[ ! -f "$directory/metadata.json" ]] || ! grep -q '"planned_batch_tasks"' "$directory/metadata.json"; then
+              batch_files=("$directory"/batches/batch_*.sh "$directory"/chunks/chunk_*.sh)
+              for batch_file in "${batch_files[@]}"; do
+                (
+                    set +u
+                    source "$batch_file"
+                    if [[ "$batch_file" =~ (batch|chunk)_([0-9]+)[.]sh$ ]] && declare -p TASK_IDS >/dev/null 2>&1; then
+                        batch_id=$((10#${BASH_REMATCH[2]}))
+                        for task_id in "${TASK_IDS[@]}"; do
+                            printf 'BATCH_TASK\0%s\0%s\0%s\0' "$job" "$batch_id" "$task_id"
+                        done
+                    fi
+                    declare -p TASK_IDS TASK_KEYS TASK_PROBLEM_RELS TASK_COMMANDS TASK_SOLVER_ROOT_RELS >/dev/null 2>&1 || exit 0
+                    for index in "${!TASK_IDS[@]}"; do
+                        solver=
+                        if declare -p TASK_SYSTEMS >/dev/null 2>&1; then
+                            solver=${TASK_SYSTEMS[$index]}
+                        fi
+                        printf 'TASKDEF\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+                            "$job" "${TASK_IDS[$index]}" "${TASK_KEYS[$index]}" \
+                            "$solver" "${TASK_PROBLEM_RELS[$index]}" "${TASK_COMMANDS[$index]}" \
+                            "${TASK_SOLVER_ROOT_RELS[$index]}"
+                    done
+                )
+              done
+            fi
+
+            log_count=0
+            log_files=("$directory"/logs/*.out)
+            for log_file in "${log_files[@]}"; do
+                (( log_count >= 100 )) && break
+                printf 'LOG\0%s\0%s\0' "$job" "${log_file##*/}"
+                tail -n 160 "$log_file" 2>/dev/null || true
+                printf '\0'
+                log_count=$((log_count + 1))
+            done
+        fi
+    }
+    if [[ "$job" != "$DETAIL" ]]; then
+        now=$(date +%s)
+        signature=$(stat -c '%n:%y:%z:%s' -- "$directory" "$directory/results" \
+            "$directory/results/index" "$directory/results/index-legacy" \
+            "$directory/metadata.json" "$directory/submission.csv" "$directory/submission.tsv" \
+            "$directory/submission.state" 2>/dev/null | cksum)
+        record="$CACHE/$job"
+        header=
+        if [[ -f "$record" ]]; then IFS= read -r header < "$record" || true; fi
+        cached_time=${header%% *}
+        if [[ "$cached_time" =~ ^[0-9]+$ && "$header" == "$cached_time $signature" ]] && (( now-cached_time < 3600 && now >= cached_time )); then
+            tail -n +2 -- "$record"
+        else
+            temporary=$(mktemp "$CACHE/.overview.XXXXXXXX" 2>/dev/null) || temporary=
+            if [[ -n "$temporary" ]]; then
+                printf '%s %s\n' "$now" "$signature" > "$temporary"
+                emit_job >> "$temporary"
+                tail -n +2 -- "$temporary"
+                # A publication during this read changes the next signature.
+                mv -f -- "$temporary" "$record" 2>/dev/null || rm -f -- "$temporary"
+            else
+                emit_job
+            fi
+        fi
+    else
+        emit_job
     fi
 done
 
@@ -1091,18 +1128,20 @@ class RemoteCollector:
         if shutil.which("ssh") is None:
             raise RuntimeError("ssh is not installed or not on PATH")
         command = [
-            "ssh",
+            "ssh", *connection_options(),
             "-T",
             "-o",
             "BatchMode=yes",
             "-o",
             f"ConnectTimeout={max(1, int(self.timeout))}",
+            "-o", "ServerAliveInterval=10",
+            "-o", "ServerAliveCountMax=2",
             "--",
             self.host,
             "bash",
             "-s",
             "--",
-            detail_job or "",
+            detail_job or "-",
             str(max(0, int(since_epoch))) if since_epoch is not None else "",
         ]
         try:
@@ -1111,11 +1150,11 @@ class RemoteCollector:
                 input=REMOTE_SNAPSHOT_SCRIPT.encode(),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=self.timeout + 20,
+                timeout=self.timeout + (180 if detail_job is None else 20),
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(f"SSH refresh timed out after {self.timeout + 20:g}s") from exc
+            raise RuntimeError("Job history collection timed out while reading remote results" if detail_job is None else f"SSH refresh timed out after {self.timeout + 20:g}s") from exc
         except OSError as exc:
             raise RuntimeError(f"Could not start SSH refresh: {exc}") from exc
         if process.returncode != 0:
@@ -1144,7 +1183,7 @@ fi
 [[ "$file" == "$root/"* && -f "$file" ]] || exit 2
 head -c 1048577 -- "$file"
 '''
-        command = ['ssh', '-T', '-o', 'BatchMode=yes', '-o',
+        command = ['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o',
                    f'ConnectTimeout={max(1, int(self.timeout))}', '--', self.host,
                    'bash', '-s', '--', job_id, problem.lstrip('/')]
         try:
@@ -1161,7 +1200,7 @@ head -c 1048577 -- "$file"
         if not result.archive or not result.task_key:
             raise RuntimeError("this task has no saved result output yet")
         command = [
-            "ssh",
+            "ssh", *connection_options(),
             "-T",
             "-o",
             "BatchMode=yes",

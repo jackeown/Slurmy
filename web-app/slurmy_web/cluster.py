@@ -1,5 +1,7 @@
 """Small, read-only SLURM overview for the selected SSH host and partition."""
 
+from ssh_transport import connection_options
+
 import re
 import json
 import math
@@ -247,7 +249,7 @@ def fetch_status(host, partition, timeout=12, node=None):
         raise ValueError('Invalid SLURM node name.')
     if shutil.which('ssh') is None:
         raise RuntimeError('ssh is not installed or not on PATH')
-    command = ['ssh', '-T', '-o', 'BatchMode=yes', '-o', f'ConnectTimeout={timeout}',
+    command = ['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o', f'ConnectTimeout={timeout}',
                '--', host, 'bash', '-s', '--', partition, node or '']
     try:
         process = subprocess.run(command, input=REMOTE_STATUS_SCRIPT, text=True,

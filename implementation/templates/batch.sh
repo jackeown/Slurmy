@@ -8,6 +8,13 @@ cd "$JOB_DIR"
 source ./csv.sh
 BATCH_ID=${SLURMY_BATCH_ID:-${SLURM_ARRAY_TASK_ID:?}}
 source "$(printf 'batches/batch_%06d.sh' "$BATCH_ID")"
+bundle=$(printf '%s/call-bundles/batch_%06d.tar.gz' "$JOB_DIR" "$BATCH_ID")
+if [[ -f "$bundle" ]]; then
+    export CALLS_DIR
+    CALLS_DIR=$(mktemp -d "${SLURM_TMPDIR:-${TMPDIR:-/tmp}}/slurmy-batch.XXXXXXXX")
+    trap 'rm -rf -- "$CALLS_DIR"' EXIT
+    tar -xzf "$bundle" -C "$CALLS_DIR"
+fi
 (( PARALLEL == 1 )) || { echo 'Slurmy batches must run one call at a time.' >&2; exit 1; }
 declare -A ALLOWED=() CORE_CPU=() CORE_SOCKET=() SOCKET_TOTAL=() SOCKET_ALLOWED=() USED=()
 if ! declare -p TASK_THREADS_PER_CORE &>/dev/null; then

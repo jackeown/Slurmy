@@ -293,3 +293,28 @@ opacity. Large images are resized/compressed locally before preview and saving. 
 settings and image in this browser; **Discard Changes** or Escape restores the
 saved theme. A storage-quota error keeps the editor open so the image can be
 removed. Reduced-motion preferences disable CSS motion effects.
+
+Job History loads compact per-job summaries rather than individual progress,
+manifest, and log files. Summaries are cached on the cluster in
+`~/.cache/slurmy/history-v2` and reused across local app restarts. Atomic result
+publications, index updates, metadata changes, and stop/resume submission records
+invalidate the affected job's cache. An hourly safety refresh catches external
+in-place edits. SLURM queue/accounting status is queried fresh on each collection.
+The first scan of an older job may take longer while its cache is populated;
+SSH keepalives detect lost connections during that scan. Cache files are disposable
+and do not modify results or workflow files.
+
+SSH requests throughout the app, submission scripts, build driver and downloads
+reuse private OpenSSH control sockets. Idle connections expire after 60 seconds;
+keepalives detect broken transports. Socket directories must belong to the current
+user and have mode 0700; otherwise connection sharing is disabled. No changes to
+`~/.ssh/config` are required. Multiple TPTP globs are resolved in one remote query,
+with fresh matches on each preparation.
+
+Prepared workflows retain readable per-pair scripts locally. Uploads contain one
+compressed script bundle per batch, rather than thousands of small script files.
+Each compute node unpacks its batch into node-local temporary storage, removed at
+batch exit. Upload commit and SLURM dispatch share one SSH channel. Prebuilt-only
+jobs perform no cluster builds, and `/share/TPTP` problems are never uploaded.
+SLURM queue waits, solver runtime and genuinely large resource transfers still
+contribute to time to first result.

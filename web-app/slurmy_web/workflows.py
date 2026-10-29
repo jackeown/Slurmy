@@ -1,6 +1,8 @@
 """Validate browser input and write the same portable specifications as the CLI."""
 from __future__ import annotations
 
+from slurmy_archives import expand_cluster_tptp_many
+
 import csv
 import io
 import json
@@ -142,8 +144,10 @@ def specification(data, destination_override=None, progress=None):
         problems = set()
         if progress:
             progress('phase', 'Finding selected problems and inspecting archives', 0, 0)
-        for value in data.get('globs', []):
-            pattern, matches = problem_glob(value, progress=progress, host=host)
+        selected_globs=data.get('globs', [])
+        cluster_matches=expand_cluster_tptp_many([value for value in selected_globs if isinstance(value,str) and value.startswith('tptp://')],host) if sum(isinstance(value,str) and value.startswith('tptp://') for value in selected_globs)>1 else {}
+        for value in selected_globs:
+            pattern, matches = ((value,cluster_matches[value]) if isinstance(value,str) and value in cluster_matches else problem_glob(value, progress=progress, host=host))
             patterns.append(pattern)
             problems.update(matches)
         if not problems:

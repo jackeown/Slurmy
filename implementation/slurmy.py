@@ -15,6 +15,7 @@ import re
 import shlex
 import shutil
 import sys
+import tarfile
 from typing import Sequence
 from slurmy_archives import expand_axiom_pattern
 
@@ -360,6 +361,17 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             (call / "config.sh").write_text(config)
             if progress and (index % 100 == 0 or index == len(tasks)):
                 progress('calls', 'Generating solver-problem pair scripts', index, len(tasks))
+        # Publish O(batches) archive files on NFS, not three files and a
+        # directory per pair. Compute nodes expand only their own batch locally.
+        (assets / "call-bundles").mkdir()
+        for batch_id, batch in enumerate(batches):
+            with tarfile.open(assets / 'call-bundles' / f'batch_{batch_id:06d}.tar.gz',
+                              'w:gz', compresslevel=1) as bundle:
+                for task in batch:
+                    name=str(task['task_id'])
+                    bundle.add(assets / 'calls' / name,arcname=name)
+            if progress and ((batch_id+1)%100==0 or batch_id+1==len(batches)):
+                progress('batches','Bundling solver-problem pair scripts',batch_id+1,len(batches))
         for i, batch in enumerate(batches):
             config = shell_array("TASK_IDS", [t["task_id"] for t in batch])
             for name, key in (("TASK_CORES", "cores"), ("TASK_CPUS", "cpus"), ("TASK_WALL", "wc_limit")):
@@ -383,13 +395,15 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             # template's old mtime, which made make immediately call it stale.
             shutil.copyfile(source, destination)
             shutil.copymode(source, destination)
-        (assets / "submission_settings.sh").write_text(f'MAX_OUTSTANDING_DEFAULT={max_outstanding}\n', encoding='utf-8')
+        (assets / "submission_settings.sh").write_text(f'MAX_OUTSTANDING_DEFAULT={max_outstanding}\nBUILD_COUNT_DEFAULT={sum(build.recipe is not None for build in builds)}\n', encoding='utf-8')
         shutil.copyfile(REPO / "implementation/job_names.py", assets / "job_names.py")
         # Reuse the local build driver. Remote recipes build in a disposable
         # copy of the declared root; downloaded files preserve that layout.
         shutil.copy2(REPO / "implementation/build/slurmy-build.py", assets / "builds/driver.py")
         shutil.copy2(REPO / "implementation/submit_coordinator.py", assets / "submit_coordinator.py")
         shutil.copyfile(REPO / "implementation/check_threads.py", assets / "check_threads.py")
+        shutil.copyfile(REPO / "implementation/ssh_transport.py", assets / "ssh_transport.py")
+        shutil.copyfile(REPO / "implementation/ssh_transport.py", assets / "builds/ssh_transport.py")
         shutil.copyfile(REPO / "implementation/package_inputs.py", assets / "package_inputs.py")
         if axioms:
             axiom_lines = ['#!/usr/bin/env bash', 'set -euo pipefail',

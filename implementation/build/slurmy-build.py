@@ -2,18 +2,23 @@
 """Build portable job artifacts on a SLURM compute node and download them."""
 
 from __future__ import annotations
+# Support direct invocation and copied build drivers.
+import sys
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
+from ssh_transport import connection_options
+
 
 import argparse
 import hashlib
 import json
 import fcntl
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 import re
 import shlex
 import shutil
 import subprocess
-import sys
 import tarfile
 import tempfile
 import time
@@ -241,10 +246,10 @@ def execute_build(args: argparse.Namespace) -> None:
         job_script.write_text(build_job_script(args, has_context=has_context), encoding="utf-8")
         job_script.chmod(0o755)
 
-        run(["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", args.host, "bash", "-s", "--", build_id], input_text=REMOTE_PREPARE)
-        run(["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", *(str(path) for path in staging.iterdir()), f"{args.host}:slurmy/builds/.staging-{build_id}/"])
+        run(["ssh", *connection_options(), "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", args.host, "bash", "-s", "--", build_id], input_text=REMOTE_PREPARE)
+        run(["scp", *connection_options(), "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", *(str(path) for path in staging.iterdir()), f"{args.host}:slurmy/builds/.staging-{build_id}/"])
         submitted = run(
-            ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", args.host, "bash", "-s", "--", build_id],
+            ["ssh", *connection_options(), "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", args.host, "bash", "-s", "--", build_id],
             input_text=REMOTE_SUBMIT,
             capture=True,
         )
@@ -259,7 +264,7 @@ def execute_build(args: argparse.Namespace) -> None:
     while True:
         try:
             state_result = run(
-                ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", args.host, "bash", "-s", "--", job_id],
+                ["ssh", *connection_options(), "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", args.host, "bash", "-s", "--", job_id],
                 input_text=REMOTE_STATE,
                 capture=True,
             )
@@ -281,7 +286,7 @@ def execute_build(args: argparse.Namespace) -> None:
 
     if state != "COMPLETED":
         log = run(
-            ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", args.host, "bash", "-s", "--", build_id],
+            ["ssh", *connection_options(), "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", args.host, "bash", "-s", "--", build_id],
             input_text=REMOTE_LOG,
             capture=True,
         ).stdout.rstrip()
@@ -295,7 +300,7 @@ def execute_build(args: argparse.Namespace) -> None:
         args._inputs_unchanged = input_fingerprint(args) == getattr(args, '_initial_fingerprint', None)
     except (BuildError, OSError):
         args._inputs_unchanged = False
-    run(["rsync", "-a", "--delay-updates", "--partial-dir=.rsync-partial", "-e", "ssh -o BatchMode=yes -o ConnectTimeout=10", "--", f"{args.host}:slurmy/builds/{build_id}/output/", f"{output}/"])
+    run(["rsync", "-a", "--delay-updates", "--partial-dir=.rsync-partial", "-e", shlex.join(["ssh", *connection_options(), "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]), "--", f"{args.host}:slurmy/builds/{build_id}/output/", f"{output}/"])
     for artifact in args.artifact:
         if not (output / artifact).exists():
             raise BuildError(f"downloaded output is missing required artifact: {artifact}")

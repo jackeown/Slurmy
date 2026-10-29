@@ -2,6 +2,8 @@
 """Incrementally download a Slurmy job and publish a watchable summary."""
 
 from __future__ import annotations
+from ssh_transport import connection_options
+
 
 import argparse
 from collections import Counter
@@ -12,6 +14,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -99,7 +102,7 @@ def resolve_job_id(host: str, requested: str | None, timeout: float) -> str:
     if shutil.which("ssh") is None:
         raise SyncError("ssh is not installed or not on PATH")
     command = [
-        "ssh",
+        "ssh", *connection_options(),
         "-T",
         "-o",
         "BatchMode=yes",
@@ -139,7 +142,7 @@ def rsync_job(host: str, job_id: str, destination: Path, timeout: float) -> int:
         raise SyncError("rsync is not installed or not on PATH")
     destination.mkdir(parents=True, exist_ok=True)
     remote_shell = (
-        f"ssh -o BatchMode=yes -o ConnectTimeout={max(1, int(timeout))}"
+        shlex.join(["ssh", *connection_options(), "-o", "BatchMode=yes", "-o", f"ConnectTimeout={max(1, int(timeout))}"])
     )
     command = [
         "rsync",
@@ -710,7 +713,7 @@ def compact_sync_loop(args: argparse.Namespace) -> int:
     while True:
         print(f'Preparing three-file export for {job_id} on {args.host}…', flush=True)
         expected = None
-        command = ['ssh', '-T', '-o', 'BatchMode=yes', '-o',
+        command = ['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o',
                    f'ConnectTimeout={max(1, int(args.ssh_timeout))}', '-o',
                    'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
                    '--', args.host, 'python3', '-u', '-', job_id]
@@ -755,7 +758,7 @@ def compact_sync_loop(args: argparse.Namespace) -> int:
         remote = f'{args.host}:slurmy/jobs/{job_id}/exports/'
         transfer = ['rsync', '--archive', '--compress', '--delay-updates',
                     '--partial-dir=.rsync-partial', '--timeout=120', '--rsh',
-                    f'ssh -o BatchMode=yes -o ConnectTimeout={max(1, int(args.ssh_timeout))}',
+                    shlex.join(['ssh', *connection_options(), '-o', 'BatchMode=yes', '-o', f'ConnectTimeout={max(1, int(args.ssh_timeout))}']),
                     '--', *(remote + name for name in sorted(expected)), str(destination) + '/']
         try:
             result = subprocess.run(transfer, capture_output=True, text=True, timeout=3600, check=False)

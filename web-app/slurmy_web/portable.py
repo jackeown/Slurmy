@@ -1,5 +1,7 @@
 """Self-contained workflow archives. Import never executes bundled commands."""
 from __future__ import annotations
+from ssh_transport import connection_options
+
 
 from dataclasses import asdict
 import base64
@@ -162,7 +164,7 @@ with tarfile.open(fileobj=sys.stdout.buffer,mode='w|',dereference=True) as archi
 '''
             if remote or local_includes:
                 with remote_archive.open('wb') as target:
-                    result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
+                    result = subprocess.run(['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
                                              '--', host, 'python3', '-', request], input=script.encode(),
                                             stdout=target, stderr=subprocess.PIPE, timeout=1800)
                 if result.returncode:

@@ -28,6 +28,8 @@ def main() -> int:
     parser.add_argument('--paths', type=Path, help='NUL-separated paths relative to --base; omit to archive the entire base')
     args = parser.parse_args()
     command = ['tar', '-chf', '-', '-C', str(args.base)]
+    if not args.paths and (args.base/'call-bundles').is_dir():
+        command += ['--exclude=./calls']
     command += ['--null', '-T', str(args.paths)] if args.paths else ['.']
     environment = {**os.environ, 'COPYFILE_DISABLE': '1'}
     started = time.monotonic()
@@ -36,7 +38,7 @@ def main() -> int:
     process = subprocess.Popen(command, stdout=subprocess.PIPE, env=environment)
     print(f'Packaging progress: {args.label}: starting', flush=True)
     try:
-        with args.output.open('wb') as output, gzip.GzipFile(fileobj=output, mode='wb') as compressor:
+        with args.output.open('wb') as output, gzip.GzipFile(fileobj=output, mode='wb', compresslevel=1) as compressor:
             assert process.stdout is not None
             while chunk := process.stdout.read(1024 * 1024):
                 compressor.write(chunk)

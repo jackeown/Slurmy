@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Stop or resume one Slurmy job on the configured cluster."""
+from ssh_transport import connection_options
+
 import argparse
 import os
 from pathlib import Path
@@ -35,7 +37,7 @@ def main():
                'delete': 'All tasks stopped. Deleting cluster job files…'}[action], flush=True)
         try:
             with (templates / f'remote_{action}.sh').open('rb') as stream:
-                result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--',
+                result = subprocess.run(['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--',
                                          args.host, 'bash', '-s', '--', args.job_id], stdin=stream, check=False)
         except OSError as error:
             print(f'Could not {action} job over SSH: {error}', file=sys.stderr)

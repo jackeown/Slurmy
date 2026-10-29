@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check requested hardware threads against a SLURM partition before preparing."""
 from __future__ import annotations
+from ssh_transport import connection_options
 
 import argparse
 import csv
@@ -15,7 +16,7 @@ def check_requested(host: str, partition: str, maximum: int) -> int:
         raise ValueError("Invalid SLURM partition name.")
     try:
         process = subprocess.run(
-            ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", host,
+            ["ssh", *connection_options(), "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", host,
              "sinfo", "-p", partition, "-N", "-h", "-o", "%Z"],
             capture_output=True, text=True, timeout=20, check=False,
         )
@@ -43,7 +44,7 @@ def check_cores(host: str, partition: str, requested: int) -> int:
         raise ValueError("Invalid SLURM partition name.")
     try:
         process = subprocess.run(
-            ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", host,
+            ["ssh", *connection_options(), "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", host,
              f"sinfo -p {partition} -N -h -o '%X %Y'"],
             capture_output=True, text=True, timeout=20, check=False,
         )

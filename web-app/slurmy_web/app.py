@@ -1,5 +1,7 @@
 """Flask routes for the single-user, loopback-only web application."""
 from __future__ import annotations
+from ssh_transport import connection_options
+
 
 from dataclasses import asdict
 from collections import Counter
@@ -615,7 +617,7 @@ def create_app():
         script = (REPO / 'implementation/templates/remote_rename_job.sh').read_text(encoding='utf-8')
         encoded = base64.b64encode(name.encode('utf-8')).decode('ascii')
         try:
-            result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host(),
+            result = subprocess.run(['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host(),
                                      'bash', '-s', '--', job_id, new_id, encoded],
                                     input=script, text=True, capture_output=True, timeout=90, check=False)
         except (OSError, subprocess.TimeoutExpired) as exc:
