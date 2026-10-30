@@ -525,6 +525,6 @@ details[data-section-state="closing"] > summary::before { transform: rotate(0deg
 .job-attention {border-inline-start:3px solid var(--orange);padding:12px 16px}
 
 .eta-help-wrap {display:inline-block;position:relative;vertical-align:middle}
-.eta-help {display:inline-flex;align-items:center;justify-content:center;width:1.25rem;height:1.25rem;padding:0;border:1px solid currentColor;border-radius:50%;background:transparent;color:var(--muted);font-size:.8rem;line-height:1;cursor:help}
+.eta-help,html[data-color-theme] .eta-help {display:inline-flex;align-items:center;justify-content:center;width:1.25rem;height:1.25rem;padding:0;border:1px solid currentColor;border-radius:50%;background:var(--surface-2,var(--white));color:var(--ink);font-size:.8rem;font-weight:700;line-height:1;cursor:help}
 .eta-explanation {display:none;position:absolute;z-index:30;right:0;top:calc(100% + 8px);width:min(320px,70vw);padding:10px 12px;border-radius:var(--radius,7px);background:var(--dark);color:var(--sidebar-ink,#fff);box-shadow:0 4px 16px #0003;font-size:12px;font-weight:400;line-height:1.5;text-align:left;white-space:normal}
 .eta-help-wrap:hover .eta-explanation,.eta-help-wrap:focus-within .eta-explanation {display:block}

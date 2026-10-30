@@ -245,10 +245,8 @@ for directory in "${job_dirs[@]}"; do
             fi
             if (( ${#csv_progress[@]} )); then
                 printf 'PROGRESS_CSV\0%s\0' "$job"
-                for progress_file in "${csv_progress[@]}"; do
-                    printf '"%s",' "${progress_file##*/}"
-                    emit_file "$progress_file"
-                done
+                # One buffered reader replaces Bash's per-file, per-line reads.
+                awk 'FNR == 1 {name=FILENAME; sub(/^.*\//, "", name); printf "\"%s\",", name} {print}' "${csv_progress[@]}"
                 printf '\0'
             elif (( ${#tsv_progress[@]} )); then
                 printf 'PROGRESS_TSV\0%s\0' "$job"
