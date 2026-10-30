@@ -274,6 +274,24 @@ function jobCompletionLabel(job){
  if(!total)return `${state} · Awaiting solver-problem pair count`;
  return `${state} · ${completed.toLocaleString()} / ${total.toLocaleString()} solver-problem pairs finished (${job.percent.toFixed(1)}%)`;
 }
+function etaDuration(seconds){
+ const minutes=Math.max(1,Math.ceil(seconds/60)),days=Math.floor(minutes/1440),hours=Math.floor(minutes%1440/60),remaining=minutes%60;
+ return [days?`${days}d`:'',hours?`${hours}h`:'',remaining?`${remaining}m`:''].filter(Boolean).join(' ');
+}
+function renderJobCompletion(data){
+ const node=$('#job-completion');
+ node.replaceChildren(document.createTextNode(`${data.refresh?.stale?'Saved status: ':''}${jobCompletionLabel(data)}`));
+ if(data.state!=='RUNNING'||data.completed>=data.total)return;
+ const saved=data.refresh?.stale?'Saved ETA':'ETA';
+ const estimate=Number.isFinite(data.eta_seconds)&&data.eta_seconds>=0?`${saved} ~${etaDuration(data.eta_seconds)} remaining`:`${saved} estimating…`;
+ node.append(document.createTextNode(` · ${estimate} `));
+ const help=el('span',undefined,'eta-help-wrap');
+ const control=el('button','?','eta-help');control.type='button';control.setAttribute('aria-label','About the ETA');control.setAttribute('aria-describedby','eta-explanation');
+ const explanation=el('span','This is a naive estimate based on the average wall time of finished solver-problem pairs and the number of currently running batches. It assumes solver-problem pairs are uniformly distributed in difficulty, so finished pairs represent those remaining, and that current parallelism stays the same.','eta-explanation');
+ explanation.id='eta-explanation';explanation.setAttribute('role','tooltip');
+ control.addEventListener('keydown',event=>{if(event.key==='Escape')control.blur();});
+ help.append(control,explanation);node.append(help);
+}
 function jobStatusBar(job){
  const container=el('div',undefined,'job-status-summary');
  const total=job.total||0, completed=job.completed||0;
@@ -389,7 +407,7 @@ async function fetchJob(fresh=false){
  text('#job-display-name',data.name);document.title=`${data.name} · Slurmy`;
   jobActionControls();
  text('#connection',refreshLabel(data));
- text('#job-completion',`${data.refresh?.stale?'Saved status: ':''}${jobCompletionLabel(data)}`);
+ renderJobCompletion(data);
  renderOutcomes(data.outcomes);
  const tasks=$('#tasks-body');if(jobStatusTooltip)jobStatusTooltip.hidden=true;tasks.replaceChildren();
  for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):(task.diagnostic||task.diagnostic_available)?button('Inspect log →',()=>openDiagnostic(task)):'—';const placement=task.node?link(`${task.node} · ${task.slurm_id}`,`/cluster?`+params({partition:'all',nodes:'job',job:jobId})):task.slurm_id?`Queued · ${task.slurm_id}`:'—';tasks.append(tableRow([String(task.id),task.solver||'—',problem,taskStatus(task),placement,duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}

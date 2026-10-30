@@ -8,6 +8,7 @@ from collections import Counter
 import base64
 import csv
 import json
+import math
 import os
 from pathlib import Path
 import queue
@@ -62,6 +63,17 @@ def renamed_job_id(old_id, name):
     return safe_job(prefix + (suffix.group(1) if suffix else '_' + old_id))
 
 
+def naive_eta_seconds(job):
+    """Project average finished-pair wall time at the current batch parallelism."""
+    running = {(record.array_job_id, record.array_task_id)
+               for record in job.active_records if record.state.upper() == 'RUNNING'}
+    remaining = job.task_count - job.effective_completed
+    if not running or not job.completed or remaining <= 0 or not math.isfinite(job.wall_sum) or job.wall_sum <= 0:
+        return None
+    estimate = remaining * (job.wall_sum / job.completed) / len(running)
+    return estimate if math.isfinite(estimate) else None
+
+
 def summary(job):
     workflow_directory = current_workflow_directory(job.metadata.get('workflow_directory', ''))
     workflow_name = Path(workflow_directory).name if workflow_directory else ''
@@ -74,7 +86,7 @@ def summary(job):
                 directory=workflow_directory, workflow_name=workflow_name,
                 outcomes=history_outcomes(job), attention=job.attention, can_resume=job.can_resume,
                 submission_state=job.submission_state, submitted_batches=job.submission_count,
-                batch_count=job.batch_count,
+                batch_count=job.batch_count, eta_seconds=naive_eta_seconds(job),
                 statuses=job.status_counts)
 
 
