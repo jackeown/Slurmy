@@ -10,8 +10,15 @@ source "$ASSETS/workflow_name.sh"
 source "$ASSETS/submission_settings.sh"
 HOST=${SLURMY_HOST:-datalab}
 MAX_OUTSTANDING=${SLURMY_MAX_OUTSTANDING:-$MAX_OUTSTANDING_DEFAULT}
-mapfile -t SSH_REUSE < <(python "$ASSETS/ssh_transport.py")
-SSH_OPTIONS=(-T -o BatchMode=yes -o ConnectTimeout=10 "${SSH_REUSE[@]}")
+# Local submission also supports macOS's Bash 3.2 (no mapfile). Capture the
+# helper first so its failure propagates, and keep the array nonempty for nounset
+# compatibility on older Bash even when connection sharing is unavailable.
+SSH_REUSE=(-o BatchMode=yes -o ConnectTimeout=10)
+SSH_REUSE_TEXT=$(python "$ASSETS/ssh_transport.py")
+while IFS= read -r option; do
+    [[ -z "$option" ]] || SSH_REUSE+=("$option")
+done <<< "$SSH_REUSE_TEXT"
+SSH_OPTIONS=(-T "${SSH_REUSE[@]}")
 ssh_stage() {
     local script=$1 label=$2 attempt
     for attempt in 1 2 3; do
@@ -68,7 +75,7 @@ if ! ssh_stage remote_prepare.sh 'Preparing upload'; then
 fi
 upload_ok=false
 for attempt in 1 2 3; do
-    if scp "${SSH_REUSE[@]}" -o BatchMode=yes -o ConnectTimeout=10 -- "$TEMP_DIR/inputs.tar.gz" "$TEMP_DIR/job-files.tar.gz" "$HOST:slurmy/jobs/.staging-$JOB_ID/incoming/"; then
+    if scp "${SSH_REUSE[@]}" -- "$TEMP_DIR/inputs.tar.gz" "$TEMP_DIR/job-files.tar.gz" "$HOST:slurmy/jobs/.staging-$JOB_ID/incoming/"; then
         upload_ok=true; break
     fi
     echo "Uploading inputs: SSH attempt $attempt/3 failed." >&2
