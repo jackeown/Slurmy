@@ -167,11 +167,11 @@ if(page==='workflow'){
  api('/api/workflow/active-operation?'+params({directory:document.body.dataset.directory})).then(data=>{const id=data.operation;if(id){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===id;watchOperation(id);}}).catch(()=>{if(runningOperation){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===runningOperation;watchOperation(runningOperation);}});
 }else if(runningOperation){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===runningOperation;watchOperation(runningOperation);}
 
-let jobs=[], taskPage=0, problemPage=0, jobsPage=0, jobData=null, selectedOutput=null, hasLoadedRemote=false, refreshInFlight=false, refreshTimer=null, refreshPending=false, lastRefreshStarted=0, staleTimer=null, lastLoadedAt=null, autoRefreshTotal=0, autoRefreshPercent=0, lastRefreshMeta={};
+let jobs=[], taskPage=0, problemPage=0, jobsPage=0, jobData=null, selectedOutput=null, hasLoadedRemote=false, refreshInFlight=false, refreshTimer=null, refreshPending=false, lastForcedRefreshStarted=0, staleTimer=null, lastLoadedAt=null, autoRefreshTotal=0, autoRefreshPercent=0, lastRefreshMeta={}, loadingSnapshot=false;
 function scheduleRefresh(fresh=false){
  if(refreshInFlight){refreshPending=true;return;}
  if(refreshTimer)return;
- const delay=Math.max(0,10000-(Date.now()-lastRefreshStarted));
+ const delay=fresh&&hasLoadedRemote?Math.max(0,10000-(Date.now()-lastForcedRefreshStarted)):150;
  refreshTimer=setTimeout(()=>{refreshTimer=null;refresh(fresh);},delay);
 }
 restoreTableUrl();
@@ -446,12 +446,12 @@ async function fetchProblem(fresh=false){
 }
 async function refresh(fresh=false){
  if(refreshInFlight)return;
- if((page==='job'||page==='problem')&&Date.now()-lastRefreshStarted<10000){scheduleRefresh(fresh);return;}
+ if(fresh&&hasLoadedRemote&&(page==='job'||page==='problem')&&Date.now()-lastForcedRefreshStarted<10000){scheduleRefresh(fresh);return;}
  if(refreshTimer){clearTimeout(refreshTimer);refreshTimer=null;}
- if(page==='job'||page==='problem')lastRefreshStarted=Date.now();
+ if(fresh&&(page==='job'||page==='problem'))lastForcedRefreshStarted=Date.now();
  refreshInFlight=true;beginRefresh();
- try{if(page==='jobs'||page==='workflow')await fetchJobs();else if(page==='job')await fetchJob(fresh);else if(page==='problem')await fetchProblem(fresh);hasLoadedRemote=true;finishRefresh();scheduleStaleWarning();}
- catch(error){if(error.message.startsWith('Cluster refresh is running in the background')){remoteState(hasLoadedRemote?'refreshing':'loading');text('#connection','Loading cluster data in the background…');return;}remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check the reported error; SSH failures may require reconnecting your VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),9,'Solver-problem pairs could not be loaded. Use Refresh to try again.',true);else if(page==='problem')loadingRow($('#problem-tasks-body'),7,'Solver-problem pairs could not be loaded. Use Refresh to try again.',true);else if(page==='jobs'||page==='workflow')loadingRow($('#jobs-body'),6,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
+ try{if(page==='jobs'||page==='workflow')await fetchJobs();else if(page==='job')await fetchJob(fresh);else if(page==='problem')await fetchProblem(fresh);hasLoadedRemote=true;loadingSnapshot=false;finishRefresh();scheduleStaleWarning();}
+ catch(error){if(error.message.startsWith('Cluster refresh is running in the background')){loadingSnapshot=true;remoteState(hasLoadedRemote?'refreshing':'loading');text('#connection','Loading cluster data in the background…');return;}loadingSnapshot=false;remoteState('stale');const retained=hasLoadedRemote?'Previously loaded data is still shown.':'No server data has been loaded.';text('#connection',`Data is stale: ${error.message}. ${retained} Check the reported error; SSH failures may require reconnecting your VPN.`);if(!hasLoadedRemote){if(page==='job')loadingRow($('#tasks-body'),9,'Solver-problem pairs could not be loaded. Use Refresh to try again.',true);else if(page==='problem')loadingRow($('#problem-tasks-body'),7,'Solver-problem pairs could not be loaded. Use Refresh to try again.',true);else if(page==='jobs'||page==='workflow')loadingRow($('#jobs-body'),6,'Jobs could not be loaded. Use Refresh to try again.',true);}const refresh=$('#refresh');if(refresh){refresh.disabled=false;refresh.textContent='↻ Try again';}}
  finally{refreshInFlight=false;if(refreshPending){refreshPending=false;scheduleRefresh();}}
 }
 $('#refresh')?.addEventListener('click',()=>refresh(true));
@@ -540,7 +540,7 @@ document.querySelectorAll('.delete-workflow-card').forEach(control=>control.addE
 async function poll(){
  await refresh();
  if((page==='job'||page==='problem')&&autoRefreshPercent>=100&&!lastRefreshMeta.stale)return;
- const interval=(page==='job'||page==='problem')&&autoRefreshTotal>10000?30000:10000;
+ const interval=loadingSnapshot?1000:(page==='job'||page==='problem')&&autoRefreshTotal>10000?30000:10000;
  setTimeout(poll,interval);
 }if(['jobs','job','workflow','problem'].includes(page))poll();
 
