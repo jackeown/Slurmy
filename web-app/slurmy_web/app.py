@@ -29,6 +29,7 @@ from .monitor import RemoteCollector, summarize_results, ResultRecord
 from .cluster import fetch_status
 from .launcher import web_version
 from . import workflows
+from .local_runtime import python_environment
 
 REPO = workflows.REPO
 STATE = REPO / 'web-app/.state'
@@ -1119,7 +1120,8 @@ def create_app():
                             if time.monotonic() >= deadline:
                                 raise RuntimeError('The previous operation has not finished; job was kept. Retry Delete when it completes.')
                             time.sleep(0.2)
-                    code = subprocess.run(argv, cwd=cwd, env=environment, stdout=stream, stderr=subprocess.STDOUT).returncode
+                    with python_environment(environment) as child_environment:
+                        code = subprocess.run(argv, cwd=cwd, env=child_environment, stdout=stream, stderr=subprocess.STDOUT).returncode
                 operations[key].update(state='done' if code == 0 else 'failed', code=code)
                 if label == 'delete' and code == 0:
                     with guard:
@@ -1147,8 +1149,13 @@ def create_app():
         action = data.get('action')
         if action not in {'all', 'prepare', 'prepare-submit', 'submit'}:
             raise ValueError('Unknown workflow action.')
-        environment = {**os.environ, 'SLURMY_HOST': host(),
+        environment = {**os.environ, 'SLURMY_HOST': host(), 'SLURMY_PYTHON': sys.executable,
                        'PATH': str(Path(sys.executable).parent) + os.pathsep + os.environ.get('PATH', '')}
+        missing = [tool for tool in ('make', 'bash', 'ssh', 'scp', 'tar')
+                   if shutil.which(tool) is None]
+        if missing:
+            raise ValueError('Missing local tools: ' + ', '.join(missing) +
+                             '. Install them and retry; macOS provides make through its command-line tools.')
         # Makefiles are trusted user workflows; only this explicit click executes them.
         target = 'prepare' if action == 'all' else action
         label = {'prepare': 'prepare SLURM submission',

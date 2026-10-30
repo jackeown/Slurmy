@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Select and cancel an active SLURM job over SSH."""
 
 from __future__ import annotations

@@ -153,7 +153,7 @@ class ExportTests(unittest.TestCase):
                 def transfer(*args, **kwargs):
                     if not fail:
                         for name in expected:
-                            shutil.copyfile(source / name, destination / name)
+                            shutil.copyfile(source / name, Path(args[0][-1]) / name)
                     return SimpleNamespace(returncode=int(fail), stderr='transfer failed' if fail else '')
 
                 args = SimpleNamespace(host='test-host', job_id='study', ssh_timeout=10,
@@ -172,6 +172,43 @@ class ExportTests(unittest.TestCase):
                         self.assertEqual(sync.compact_sync_loop(args), 0)
                         self.assertEqual({path.name for path in destination.iterdir()}, set(expected))
                         self.assert_archives(destination)
+
+    def test_scp_fallback_stages_download_and_preserves_existing_files_on_failure(self):
+        remote_export.export(self.root)
+        source = self.root / 'exports'
+        expected = tuple(sorted(p.name for p in source.iterdir() if not p.name.startswith('.')))
+        for fail in (True, False):
+            with self.subTest(fail=fail):
+                destination = self.root / ('scp-fail' if fail else 'scp-ok')
+                destination.mkdir()
+                for name in expected:
+                    (destination / name).write_bytes(b'previous export')
+                process = Mock(stdout=io.StringIO('EXPORT_FILES|' + '|'.join(
+                    ['study_results-summary.csv', 'study_solver-stdout.tgz', 'study_solver-stderr.tgz']) + '\n'))
+                process.wait.return_value = 0
+
+                def transfer(command, **kwargs):
+                    self.assertEqual(command[0], 'scp')
+                    stage = Path(command[-1])
+                    self.assertNotEqual(stage, destination)
+                    for name in expected:
+                        shutil.copyfile(source / name, stage / name)
+                    return SimpleNamespace(returncode=int(fail), stderr='interrupted' if fail else '')
+
+                args = SimpleNamespace(host='test-host', job_id='study', ssh_timeout=10,
+                                       output=str(destination), follow=False)
+                with patch.object(sync, 'resolve_job_id', return_value='study'), \
+                     patch.object(sync.shutil, 'which', side_effect=lambda tool: None if tool == 'rsync' else '/test/' + tool), \
+                     patch.object(sync.subprocess, 'Popen', return_value=process), \
+                     patch.object(sync.subprocess, 'run', side_effect=transfer):
+                    if fail:
+                        with self.assertRaisesRegex(sync.SyncError, 'interrupted'):
+                            sync.compact_sync_loop(args)
+                        self.assertTrue(all((destination / name).read_bytes() == b'previous export' for name in expected))
+                    else:
+                        self.assertEqual(sync.compact_sync_loop(args), 0)
+                        self.assert_archives(destination)
+                self.assertFalse(list(destination.parent.glob('.slurmy-download-*')))
 
 
 if __name__ == '__main__':

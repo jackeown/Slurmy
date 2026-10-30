@@ -8,13 +8,23 @@ HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ASSETS="$HERE/submit.sh.files"
 source "$ASSETS/workflow_name.sh"
 source "$ASSETS/submission_settings.sh"
+# Use the app's interpreter, or discover Python on standalone CLI installs.
+if [[ -z ${SLURMY_PYTHON:-} ]]; then
+    SLURMY_PYTHON=$(command -v python3 || command -v python) || {
+        echo 'Python 3.9+ is required. Install Python 3 and retry.' >&2; exit 1;
+    }
+fi
+export SLURMY_PYTHON
+for tool in ssh scp tar; do
+    command -v "$tool" >/dev/null || { echo "Missing required tool: $tool. Install it and retry." >&2; exit 1; }
+done
 HOST=${SLURMY_HOST:-datalab}
 MAX_OUTSTANDING=${SLURMY_MAX_OUTSTANDING:-$MAX_OUTSTANDING_DEFAULT}
 # Local submission also supports macOS's Bash 3.2 (no mapfile). Capture the
 # helper first so its failure propagates, and keep the array nonempty for nounset
 # compatibility on older Bash even when connection sharing is unavailable.
 SSH_REUSE=(-o BatchMode=yes -o ConnectTimeout=10)
-SSH_REUSE_TEXT=$(python "$ASSETS/ssh_transport.py")
+SSH_REUSE_TEXT=$("$SLURMY_PYTHON" "$ASSETS/ssh_transport.py")
 while IFS= read -r option; do
     [[ -z "$option" ]] || SSH_REUSE+=("$option")
 done <<< "$SSH_REUSE_TEXT"
@@ -42,7 +52,7 @@ if [[ -n ${SLURMY_RESUME_JOB_ID:-} ]]; then
 fi
 
 # Catch topology mismatches before building, packaging, or uploading anything.
-python "$ASSETS/check_threads.py" "$ASSETS/manifest.jsonl" --host "$HOST" --partition "$SLURMY_PARTITION"
+"$SLURMY_PYTHON" "$ASSETS/check_threads.py" "$ASSETS/manifest.jsonl" --host "$HOST" --partition "$SLURMY_PARTITION"
 
 [[ -z ${SLURMY_RESERVATION:-} || ${SLURMY_RESERVATION} =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo 'Invalid reservation' >&2; exit 1; }
 
@@ -59,8 +69,8 @@ echo 'Submission phase: Packaging inputs'
 # The local helper streams tar through gzip and reports bytes as they are packed.
 TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/slurmy-submit.XXXXXXXX")
 trap 'rm -rf -- "$TEMP_DIR"' EXIT
-python "$ASSETS/package_inputs.py" --label inputs --output "$TEMP_DIR/inputs.tar.gz" --base / --paths "$ASSETS/archive-paths.txt"
-python "$ASSETS/package_inputs.py" --label job-files --output "$TEMP_DIR/job-files.tar.gz" --base "$ASSETS"
+"$SLURMY_PYTHON" "$ASSETS/package_inputs.py" --label inputs --output "$TEMP_DIR/inputs.tar.gz" --base / --paths "$ASSETS/archive-paths.txt"
+"$SLURMY_PYTHON" "$ASSETS/package_inputs.py" --label job-files --output "$TEMP_DIR/job-files.tar.gz" --base "$ASSETS"
 JOB_ID="${JOB_PREFIX}_$(date +%s)_$$"
 
 

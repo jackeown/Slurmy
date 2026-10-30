@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Package local inputs with portable tar while reporting live byte counts."""
 from __future__ import annotations
 

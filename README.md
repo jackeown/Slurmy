@@ -32,11 +32,27 @@ file.
 <summary><strong>🚀 Install and start</strong></summary>
 <blockquote>
   
-Your computer needs to have `python` (3.9+), `bash`, `ssh`, `rsync`, `tar`, and 
-`make`, plus SSH access to a cluster that offers SLURM. Linux and macOS are supported; 
-on Windows, use WSL. On macOS, `brew install python rsync` if they are missing.
-Install macOS's command-line tools if `make` is missing. 
-The macOS `bash` and `tar` are sufficient (no GNU tar replacement is required).
+Your computer needs Python **3.9+**, Bash **3.2+**, OpenSSH (`ssh` and
+`scp`), `tar`, and `make`, plus SSH access to a SLURM cluster. Linux and
+macOS are supported; on Windows, use WSL. A command named `python` is not
+required: use `python3` to start the app. Child processes reuse the app's Python,
+including its virtual environment. The web app installs only Flask and Waitress;
+no Node.js, npm, or local compiler is needed to run it.
+
+On macOS, the built-in Bash, OpenSSH, and tar are sufficient; install Python 3
+if needed, and run `xcode-select --install` if `make` is missing. On Debian/Ubuntu,
+install `python3 python3-venv python3-pip bash openssh-client tar make`.
+**`rsync` is additionally required for downloading cluster build outputs and for
+verbose incremental result downloads.** Standard result downloads use `rsync`
+when available and otherwise fall back to `scp`; prebuilt solvers do not require
+local build tools. Install `rsync` only if you need those additional operations
+(`brew install rsync` on macOS, or your Linux package manager).
+
+The cluster needs Python 3.9+, Bash 4+, SLURM commands, tar/gzip, and standard
+Linux tools (`lscpu`, `taskset`, `flock`, `setsid`, and `timeout`); remote builds and verbose downloads also need rsync.
+Solver build recipes may require additional **cluster-side** build tools.
+Missing local submission/build tools are reported before the corresponding work
+starts. SSH authentication and any required VPN access must already be configured.
 
 Solvers can be provided as binary executables, or Slurmy can build them on the cluster, i.e.,
 the user's computer does not need to have the same CPU architecture as the cluster, but the
@@ -80,19 +96,19 @@ if your alias differs.
 
 Install Slurmy like this:
 ```bash
-python -m venv .venv          # Optional: keep dependencies separate from other projects.
+python3 -m venv .venv          # Optional: keep dependencies separate from other projects.
 source .venv/bin/activate     # Skip this line if you skipped the venv.
-python -m pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
 Run Slurmy like this:
 ```
-python web-app/main.py        # Opens the local app; Ctrl-C stops its server.
+python3 web-app/main.py        # Opens the local app; Ctrl-C stops its server.
 ```
 or like this:
 ```
-python web-app/main.py        # Opens the local app; leaves the app running in the background
-python web-app/main.py --stop # Stops the background app
+python3 web-app/main.py        # Opens the local app; leaves the app running in the background
+python3 web-app/main.py --stop # Stops the background app
 ```
 
 The app runs in a web browser at `127.0.0.1:7569`.

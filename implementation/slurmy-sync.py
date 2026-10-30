@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Incrementally download a Slurmy job and publish a watchable summary."""
 
 from __future__ import annotations
@@ -139,7 +139,7 @@ def resolve_job_id(host: str, requested: str | None, timeout: float) -> str:
 
 def rsync_job(host: str, job_id: str, destination: Path, timeout: float) -> int:
     if shutil.which("rsync") is None:
-        raise SyncError("rsync is not installed or not on PATH")
+        raise SyncError("Verbose incremental downloads require rsync. Install rsync, or use the standard download instead.")
     destination.mkdir(parents=True, exist_ok=True)
     remote_shell = (
         shlex.join(["ssh", *connection_options(), "-o", "BatchMode=yes", "-o", f"ConnectTimeout={max(1, int(timeout))}"])
@@ -708,8 +708,10 @@ def compact_sync_loop(args: argparse.Namespace) -> int:
     if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
         raise SyncError(f'output path is not a normal directory: {destination}')
     exporter = Path(__file__).with_name('remote_export.py')
-    if shutil.which('ssh') is None or shutil.which('rsync') is None:
-        raise SyncError('Both ssh and rsync must be installed and on PATH.')
+    if shutil.which('ssh') is None:
+        raise SyncError('SSH is required to download results. Install OpenSSH and retry.')
+    if shutil.which('rsync') is None and shutil.which('scp') is None:
+        raise SyncError('Downloads require rsync or scp. Install OpenSSH (which includes scp) and retry.')
     while True:
         print(f'Preparing three-file export for {job_id} on {args.host}…', flush=True)
         expected = None
@@ -756,18 +758,30 @@ def compact_sync_loop(args: argparse.Namespace) -> int:
             print(f'Moved older detailed results to {legacy}; no files were deleted.', flush=True)
         destination.mkdir(parents=True, exist_ok=True)
         remote = f'{args.host}:slurmy/jobs/{job_id}/exports/'
-        transfer = ['rsync', '--archive', '--compress', '--delay-updates',
-                    '--partial-dir=.rsync-partial', '--timeout=120', '--rsh',
-                    shlex.join(['ssh', *connection_options(), '-o', 'BatchMode=yes', '-o', f'ConnectTimeout={max(1, int(args.ssh_timeout))}']),
-                    '--', *(remote + name for name in sorted(expected)), str(destination) + '/']
-        try:
-            result = subprocess.run(transfer, capture_output=True, text=True, timeout=3600, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise SyncError(f'Could not transfer the three export files: {exc}') from exc
-        if result.returncode:
-            raise SyncError(result.stderr.strip() or f'rsync exited with status {result.returncode}')
-        if not all((destination / name).is_file() for name in expected):
-            raise SyncError('The cluster export was incomplete; no successful download was reported.')
+        # Stage all files first: failed transfers must keep the previous export.
+        with tempfile.TemporaryDirectory(prefix='.slurmy-download-', dir=destination.parent) as temporary:
+            stage = Path(temporary)
+            if shutil.which('rsync'):
+                transfer = ['rsync', '--archive', '--compress', '--delay-updates',
+                            '--copy-dest=' + str(destination.resolve()),
+                            '--partial-dir=.rsync-partial', '--timeout=120', '--rsh',
+                            shlex.join(['ssh', *connection_options(), '-o', 'BatchMode=yes', '-o', f'ConnectTimeout={max(1, int(args.ssh_timeout))}']),
+                            '--', *(remote + name for name in sorted(expected)), str(stage) + '/']
+            else:
+                print('Downloading with SCP (rsync is optional for standard downloads).', flush=True)
+                transfer = ['scp', *connection_options(), '-o', 'BatchMode=yes', '-o',
+                            f'ConnectTimeout={max(1, int(args.ssh_timeout))}', '--',
+                            *(remote + name for name in sorted(expected)), str(stage) + '/']
+            try:
+                result = subprocess.run(transfer, capture_output=True, text=True, timeout=3600, check=False)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise SyncError(f'Could not transfer the three export files: {exc}') from exc
+            if result.returncode:
+                raise SyncError(result.stderr.strip() or f'{transfer[0]} exited with status {result.returncode}')
+            if not all((stage / name).is_file() and not (stage / name).is_symlink() for name in expected):
+                raise SyncError('The cluster export was incomplete; previous downloads were kept.')
+            for name in expected:
+                os.replace(stage / name, destination / name)
         with (destination / expected[0]).open(newline='', encoding='utf-8') as source:
             completed = total = 0
             for row in csv.DictReader(source):

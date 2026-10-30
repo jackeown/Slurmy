@@ -127,7 +127,7 @@ class ClusterSettingsTests(unittest.TestCase):
             (fakebin/'python').chmod(0o755)
             for reservation in ('', 'E192-04'):
                 output = subprocess.check_output(['bash', str(assets/'builds/run.sh')], text=True,
-                    env={**os.environ, 'PATH':str(fakebin)+':'+os.environ['PATH'],
+                    env={**os.environ, 'SLURMY_PYTHON':str(fakebin/'python'), 'PATH':str(fakebin)+':'+os.environ['PATH'],
                          'SLURMY_PARTITION':'CPU-amd', 'SLURMY_RESERVATION':reservation})
                 self.assertEqual('--sbatch-option=--reservation=E192-04' in output, bool(reservation))
             data['reservation'] = 'bad;value'

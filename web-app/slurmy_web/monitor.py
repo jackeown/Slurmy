@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Read-only cluster monitoring shared by the local web interface."""
 
 from __future__ import annotations

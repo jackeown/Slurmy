@@ -1,5 +1,6 @@
 """Local submission must work with the Bash shipped by macOS."""
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -33,7 +34,7 @@ class LocalSubmissionShellTests(unittest.TestCase):
                     target.chmod(0o755)
                 (root / 'options').write_text(options)
                 env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
-                           SLURMY_PARTITION='CPU-amd', CAPTURE=str(root / 'capture'),
+                           SLURMY_PYTHON=str(bin_dir / 'python'), SLURMY_PARTITION='CPU-amd', CAPTURE=str(root / 'capture'),
                            OPTIONS_FILE=str(root / 'options'))
                 env.pop('SLURMY_RESUME_JOB_ID', None)
                 # Disabling the newer builtins reproduces the original failure on
@@ -55,4 +56,19 @@ class LocalSubmissionShellTests(unittest.TestCase):
                 result = subprocess.run(command, env=dict(env, HELPER_EXIT='23'),
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 23, result.stderr)
+                self.assertFalse((root / 'capture').exists())
+                # A minimal machine can have only python3, and no rsync.
+                (bin_dir / 'python').rename(bin_dir / 'python3')
+                for name in ('bash', 'dirname', 'cat', 'mktemp', 'rm', 'date', 'base64', 'tr', 'tar'):
+                    (bin_dir / name).symlink_to(shutil.which(name))
+                discovery_env = dict(env, PATH=str(bin_dir))
+                discovery_env.pop('SLURMY_PYTHON')
+                result = subprocess.run(command, env=discovery_env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                # Missing prerequisites fail clearly before any SSH side effects.
+                (root / 'capture').unlink()
+                (bin_dir / 'tar').unlink()
+                result = subprocess.run(command, env=discovery_env, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Missing required tool: tar', result.stderr)
                 self.assertFalse((root / 'capture').exists())

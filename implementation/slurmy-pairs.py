@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Expand solver configurations over problem files, globs, and archives."""
 from __future__ import annotations
 

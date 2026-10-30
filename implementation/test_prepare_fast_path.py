@@ -32,7 +32,7 @@ class FastPreparationTests(unittest.TestCase):
     def test_make_prepare_expands_phony_problem_sources_once(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);tools=root/'tools';tools.mkdir()
-            python=tools/'python';python.write_text('''#!/bin/sh
+            python=tools/'python3';python.write_text('''#!/bin/sh
 case "$1" in
  *check_threads.py) echo validate >> stages;;
  *slurmy.py) echo compile >> stages; mkdir -p submit.sh.files; touch submit.sh;;

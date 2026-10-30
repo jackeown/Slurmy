@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Build portable job artifacts on a SLURM compute node and download them."""
 
 from __future__ import annotations
@@ -224,6 +224,9 @@ def normalize_state(value: str) -> str:
 
 
 def execute_build(args: argparse.Namespace) -> None:
+    missing = [tool for tool in ('ssh', 'scp', 'rsync') if shutil.which(tool) is None]
+    if missing:
+        raise BuildError('Cluster builds require local tools: ' + ', '.join(missing) + '. Install them and retry.')
     recipe = Path(args.recipe).expanduser().resolve()
     output = Path(args.output).expanduser().resolve()
     if not recipe.is_file():

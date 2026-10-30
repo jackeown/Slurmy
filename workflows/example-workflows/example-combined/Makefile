@@ -4,7 +4,7 @@ BUILD_RECIPES := ../example-vampire/build.sh ../example-e/build.sh ../example-dr
 include $(REPO_ROOT)/implementation/templates/workflow.mk
 
 jobpairs.csv: Makefile configurations.csv $(REPO_ROOT)/implementation/slurmy-pairs.py $(wildcard ../../example-problems/combined/easy/*.p ../../example-problems/combined/hard/*.p)
-	python '$(REPO_ROOT)/implementation/slurmy-pairs.py' --configurations configurations.csv --problems '../../example-problems/combined/easy/*.p' '../../example-problems/combined/hard/*.p' --order '$(PAIR_ORDER)' --output $@
+	"$(SLURMY_PYTHON)" '$(REPO_ROOT)/implementation/slurmy-pairs.py' --configurations configurations.csv --problems '../../example-problems/combined/easy/*.p' '../../example-problems/combined/hard/*.p' --order '$(PAIR_ORDER)' --output $@
 
 .PHONY: pairs-clean
 pairs-clean: clean

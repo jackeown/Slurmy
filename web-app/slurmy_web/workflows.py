@@ -273,7 +273,7 @@ def specification(data, destination_override=None, progress=None):
         files['problem-globs.txt'] = '\n'.join(patterns) + '\n'
         files['Makefile'] += ('\n.PHONY: pairs refresh-problems\npairs: jobpairs.csv\n\n'
                              'jobpairs.csv: configurations.csv problem-globs.txt refresh-problems\n'
-                             '\tpython "$(REPO_ROOT)/implementation/slurmy-pairs.py" --configurations configurations.csv '
+                             '\t"$(SLURMY_PYTHON)" "$(REPO_ROOT)/implementation/slurmy-pairs.py" --configurations configurations.csv '
                              '--problem-globs-file problem-globs.txt --order "$(PAIR_ORDER)" --output $@\n')
     files['.slurmy-workflow.json'] = json.dumps(data, indent=2, sort_keys=True) + '\n'
     return destination, files, len(rows)

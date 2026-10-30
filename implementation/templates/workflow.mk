@@ -1,6 +1,8 @@
 # Shared targets for explicit solver-problem pair experiments. No solver limits live here.
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := all
+SLURMY_PYTHON ?= $(shell command -v python3 2>/dev/null || command -v python 2>/dev/null)
+export SLURMY_PYTHON
 BATCH_SIZE ?= 1
 PAIR_ORDER ?= solver-major
 SLURMY_HOST ?= datalab
@@ -32,8 +34,8 @@ submit.sh: Makefile $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES
 		printf '♻️  Inputs changed; refreshing generated submission files.\n'; \
 		rm -f -- submit.sh; rm -rf -- submit.sh.files; \
 	fi
-	@python '$(REPO_ROOT)/implementation/check_threads.py' '$(JOBPAIRS)' --host '$(SLURMY_HOST)' --partition '$(SLURMY_PARTITION)'
-	python '$(REPO_ROOT)/implementation/slurmy.py' '$(JOBPAIRS)' '$(BUILDING)' '$(LIMITER)' --batch-size '$(BATCH_SIZE)' --pair-order '$(PAIR_ORDER)' --max-outstanding '$(SLURMY_MAX_OUTSTANDING)' $(if $(AXIOMS),--axioms-file '$(AXIOMS)')
+	@"$(SLURMY_PYTHON)" '$(REPO_ROOT)/implementation/check_threads.py' '$(JOBPAIRS)' --host '$(SLURMY_HOST)' --partition '$(SLURMY_PARTITION)'
+	"$(SLURMY_PYTHON)" '$(REPO_ROOT)/implementation/slurmy.py' '$(JOBPAIRS)' '$(BUILDING)' '$(LIMITER)' --batch-size '$(BATCH_SIZE)' --pair-order '$(PAIR_ORDER)' --max-outstanding '$(SLURMY_MAX_OUTSTANDING)' $(if $(AXIOMS),--axioms-file '$(AXIOMS)')
 	@printf '\n✅ Prepared the explicit jobpairs. Inspect submit.sh.files/.\n👉 make prepare-submit prepares again and dispatches; make submit dispatches these prepared files as-is.\n'
 
 build: prepare
@@ -50,15 +52,15 @@ submit:
 	@printf '✅ Submitted. Next: make monitor, make sync, or make stop.\n'
 
 monitor:
-	python '$(REPO_ROOT)/web-app/main.py' --background --host '$(SLURMY_HOST)' --directory '$(CURDIR)'
+	"$(SLURMY_PYTHON)" '$(REPO_ROOT)/web-app/main.py' --background --host '$(SLURMY_HOST)' --directory '$(CURDIR)'
 sync:
-	cd '$(REPO_ROOT)' && python ./implementation/slurmy-sync.py $(SLURMY_ID) --host '$(SLURMY_HOST)' --follow --interval 2
+	cd '$(REPO_ROOT)' && "$(SLURMY_PYTHON)" ./implementation/slurmy-sync.py $(SLURMY_ID) --host '$(SLURMY_HOST)' --follow --interval 2
 stop:
 	@test -n '$(SLURMY_ID)' || { printf 'Set SLURMY_ID to the Slurmy job ID to stop.\n' >&2; exit 1; }
-	python '$(REPO_ROOT)/implementation/slurmy-job.py' stop '$(SLURMY_ID)' --host '$(SLURMY_HOST)'
+	"$(SLURMY_PYTHON)" '$(REPO_ROOT)/implementation/slurmy-job.py' stop '$(SLURMY_ID)' --host '$(SLURMY_HOST)'
 resume:
 	@test -n '$(SLURMY_ID)' || { printf 'Set SLURMY_ID to the stopped Slurmy job ID to resume.\n' >&2; exit 1; }
-	python '$(REPO_ROOT)/implementation/slurmy-job.py' resume '$(SLURMY_ID)' --host '$(SLURMY_HOST)'
+	"$(SLURMY_PYTHON)" '$(REPO_ROOT)/implementation/slurmy-job.py' resume '$(SLURMY_ID)' --host '$(SLURMY_HOST)'
 clean:
 	rm -f -- submit.sh
 	rm -rf -- submit.sh.files

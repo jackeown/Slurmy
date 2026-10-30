@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Prepare an explicit table of solver-problem pairs for SLURM; Python runs locally only."""
 from __future__ import annotations
 
@@ -455,7 +455,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
                 body = build.recipe.read_text(encoding="utf-8")
                 write_script(wrapper, '#!/usr/bin/env bash\nset -euo pipefail\nOUTPUT_DEST=$SLURMY_BUILD_OUTPUT\nexport SLURMY_BUILD_OUTPUT=$SLURMY_BUILD_WORK\n(\n' + body + '\n)\ncp -a "$SLURMY_BUILD_WORK/." "$OUTPUT_DEST/"\ntouch "$OUTPUT_DEST/.slurmy-built"\n')
                 recipe_arg = f'"$HERE/recipe_{i}.sh"'
-            command = ('python "$HERE/driver.py" --host "${SLURMY_HOST:-datalab}" '
+            command = ('"${SLURMY_PYTHON:-python3}" "$HERE/driver.py" --host "${SLURMY_HOST:-datalab}" '
                        f'--name "$WORKFLOW_NAME-build-{i}" --recipe {recipe_arg} '
                        + (f'--context {shlex.quote(str(build.source))} ' if build.source else '')
                        + ('--in-place ' if build.source == build.root else '')

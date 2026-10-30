@@ -66,3 +66,10 @@ class BuildCacheTests(unittest.TestCase):
             with self.assertRaises(driver.BuildError):
                 driver.cached_build(self.args)
         self.assertFalse((self.output/'.slurmy-build-cache.json').exists())
+
+    def test_missing_build_download_tool_is_reported_before_remote_work(self):
+        with patch.object(driver.shutil, 'which', side_effect=lambda tool: None if tool == 'rsync' else '/tool/' + tool), \
+             patch.object(driver, 'run') as remote:
+            with self.assertRaisesRegex(driver.BuildError, 'local tools: rsync'):
+                driver.execute_build(None)
+            remote.assert_not_called()
