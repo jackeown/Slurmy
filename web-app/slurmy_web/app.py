@@ -21,7 +21,7 @@ import time
 import tarfile
 from datetime import datetime
 
-from flask import Flask, Response, abort, jsonify, redirect, render_template, request, session, send_file, url_for
+from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, session, send_file, url_for
 from werkzeug.exceptions import HTTPException
 from slurmy_archives import is_archive
 
@@ -31,6 +31,7 @@ from .launcher import web_version
 from . import workflows
 from .local_runtime import python_environment
 from .recovery_watch import RecoveryWatch
+from .snapshot_cache import SnapshotCache
 
 REPO = workflows.REPO
 STATE = REPO / 'web-app/.state'
@@ -293,6 +294,7 @@ def task_rows(job,task_ids=None):
                    szs_status=result.szs_status if result else '',
                    szs_output=result.szs_output if result else '',
                    will_run=will_run, reason=reason, diagnostic=diagnostic,
+                   diagnostic_available=bool(not result and allocation),
                    node=(allocation.location if allocation and allocation.state.upper().startswith(('RUNNING', 'COMPLETING')) else ''),
                    slurm_id=allocation.display_id if allocation else '',
                    output=bool(result and result.archive))
@@ -366,7 +368,8 @@ def create_app():
     app.config.update(SECRET_KEY=secrets.token_hex(32), MAX_CONTENT_LENGTH=2 * 1024 * 1024,
                       SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
                       TRUSTED_HOSTS=['127.0.0.1', 'localhost'])
-    cache, locks, operations, announced_jobs = {}, {}, {}, {}
+    cache = SnapshotCache()
+    operations, announced_jobs = {}, {}
     recovery_watch = RecoveryWatch()
     recovery_operations = {}
     app.config['RECOVERY_WATCH'] = recovery_watch
@@ -449,29 +452,35 @@ def create_app():
         return result
 
     def snapshot(detail=None, force=False):
-        key = (host(), detail)
-        with guard:
-            lock = locks.setdefault(key, threading.Lock())
-        with lock:
-            cached = cache.get(key)
-            previous = cached[1].find_job(detail) if cached and detail else None
-            cache_seconds = 30 if previous and previous.task_count > 10000 else 5
-            if cached and not force and time.monotonic() - cached[0] < cache_seconds:
-                return cached[1]
-            since = (max(0, cached[1].fetched_epoch - 60)
-                     if previous and previous.task_count > 10000 and previous.tasks else None)
-            value = app.config.get('COLLECTOR', RemoteCollector)(key[0], 10).fetch(detail, since)
-            if since is not None:
-                current = value.find_job(detail)
-                if current:
-                    current.tasks = previous.tasks
-                    current.results = {**previous.results, **current.results}
-                    summarize_results(current, current.results)
-            cache[key] = (time.monotonic(), value)
-            if len(cache) > 32:
-                cache.pop(next(iter(cache)))
-            consider_recovery(value, key[0])
-            return value
+        selected_host = host()
+        key = (selected_host, detail)
+        previous_value = cache.peek(key)
+        previous = previous_value.find_job(detail) if previous_value and detail else None
+        ttl = 30 if detail is None or (previous and previous.task_count > 10000) else 10
+        def load():
+            # Background workers need their own request context for host selection
+            # and automatic-recovery operations; no browser request is kept open.
+            with app.test_request_context('/api/jobs', query_string={'host': selected_host}):
+                prior = cache.peek(key)
+                old = prior.find_job(detail) if prior and detail else None
+                since = (max(0, prior.fetched_epoch - 60)
+                         if old and old.task_count > 10000 and old.tasks else None)
+                value = app.config.get('COLLECTOR', RemoteCollector)(selected_host, 10).fetch(detail, since)
+                if since is not None:
+                    current = value.find_job(detail)
+                    if current:
+                        if not current.metadata:
+                            current.metadata = old.metadata
+                            current.task_batches = old.task_batches
+                        current.tasks = old.tasks
+                        current.logs = {**old.logs, **current.logs}
+                        current.results = {**old.results, **current.results}
+                        summarize_results(current, current.results)
+                consider_recovery(value, selected_host)
+                return value
+        value = cache.get(key, ttl, load, force)
+        g.snapshot_refresh = cache.status(key, value)
+        return value
 
     def check_idle_jobs():
         # The local server keeps watching known jobs even with no browser tab.
@@ -665,7 +674,7 @@ def create_app():
             if manifest.is_file():
                 linked.update(json.loads(manifest.read_text(encoding='utf-8')).get('_previous_directories', []))
             items = [job for job in items if job['directory'] in linked]
-        return jsonify(jobs=items, updated=updated)
+        return jsonify(jobs=items, updated=updated, refresh=g.snapshot_refresh)
 
     @app.get('/api/jobs/<job_id>')
     def job_data(job_id):
@@ -684,7 +693,7 @@ def create_app():
         page_number,per_page,sort,direction=call_page_args()
         rows,matched=task_page(job,page_number,per_page,sort,direction,query,selected_outcomes)
         if not hasattr(job,'_view_outcomes'):job._view_outcomes=outcome_breakdown(job)
-        return jsonify(**{**monitored_summary(job),"outcomes":job._view_outcomes},tasks=rows,matched=matched)
+        return jsonify(**{**monitored_summary(job),"outcomes":job._view_outcomes},tasks=rows,matched=matched, refresh=g.snapshot_refresh)
 
     @app.post('/api/jobs/<job_id>/name')
     def rename_job(job_id):
@@ -748,8 +757,21 @@ def create_app():
             if announced:
                 announced.update(id=new_id, name=name)
                 announced_jobs[(host(), new_id)] = announced
-            cache.clear()
+            cache.invalidate()
         return jsonify(id=new_id, name=name, warning=warning)
+
+    @app.get('/api/jobs/<job_id>/diagnostic/<int:task_id>')
+    def batch_diagnostic(job_id, task_id):
+        job = job_snapshot(job_id)
+        if not 0 <= task_id < job.task_count:
+            abort(404, 'Solver-problem pair not found.')
+        batch_id = job.task_batches.get(task_id, task_id // job.batch_size)
+        allocation = batch_allocations(job).get(batch_id)
+        if not allocation:
+            return jsonify(text='No SLURM allocation is recorded for this batch.')
+        slurm_id = allocation.array_job_id + '_' + (allocation.array_task_id or '0')
+        content = app.config.get('COLLECTOR', RemoteCollector)(host(), 10).fetch_batch_log(job_id, slurm_id)
+        return jsonify(text=content or 'No SLURM log is available for this batch yet.')
 
     @app.get('/api/jobs/<job_id>/output/<int:task_id>')
     def output(job_id, task_id):
@@ -799,7 +821,7 @@ def create_app():
             content,truncated=app.config.get('COLLECTOR',RemoteCollector)(host(),10).fetch_problem_text(job_id,path)
             problem_text_cache[key]=(time.monotonic(),content,truncated)
             if len(problem_text_cache)>32:problem_text_cache.pop(next(iter(problem_text_cache)))
-        return jsonify(problem=path,text=content,truncated=truncated,total=job.task_count,percent=job.percent,tasks=rows,matched=matched)
+        return jsonify(problem=path,text=content,truncated=truncated,total=job.task_count,percent=job.percent,tasks=rows,matched=matched, refresh=g.snapshot_refresh)
 
     @app.post('/api/validate-path')
     def validate_path():
@@ -1183,7 +1205,7 @@ def create_app():
                 operations[key].update(state='failed', code=-1)
                 clear_dispatching(operations[key])
             with guard:
-                cache.clear()
+                cache.invalidate()
         threading.Thread(target=run, daemon=True).start()
         return jsonify(operations[key]), 202
 

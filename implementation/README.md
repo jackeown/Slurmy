@@ -210,3 +210,27 @@ unless you need a scripted workflow or lower-level diagnostics.
 
 </blockquote>
 </details>
+
+### Monitoring Load and Refreshes
+
+Monitoring reuses OpenSSH connections and serializes status collections per host.
+Automatic browser polling respects the local cache: history and large jobs are
+refreshed at most about once every 30 seconds. Previously loaded data remains
+available while a refresh runs in the background, with its actual collection
+time shown. Expired, invalidated, refreshing, or failed snapshots are explicitly
+marked as saved data that may be out of date; their previous status is not a
+claim about the current cluster state. Freshness metadata is tied to the exact
+snapshot returned, even if a background refresh finishes during the response.
+Polling does not stop at 100% while that snapshot still needs revalidation.
+Failed collections retain that data and back off for a minute;
+opening more tabs or repeatedly clicking Refresh does not bypass an in-flight
+collection or the failure backoff. A first visit can show a loading message while
+the same background collection continues.
+
+Modern job detail refreshes read each result index once, reuse unchanged workflow
+metadata and problem definitions, and fetch SLURM logs only when Inspect Log is
+selected. Incremental updates still transfer changed metadata, including renamed
+jobs. Accounting requests for a job are restricted to its recorded SLURM IDs.
+Collectors also have a remote time budget, so local request timeouts do not leave
+unbounded collectors running on the head node. Automatic recovery acts only on
+newly collected observations, never on stale cached data.

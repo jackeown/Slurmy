@@ -97,7 +97,12 @@ for directory in "${job_dirs[@]}"; do
     emit_job() {
         printf 'JOB\0%s\0%s\0' "$job" "$created"
 
-        if [[ -f "$directory/metadata.json" ]]; then
+        metadata_changed=1
+        if [[ -n "$SINCE" && -f "$directory/results/index/.ready" ]]; then
+            metadata_epoch=$(stat -c %Y "$directory/metadata.json" 2>/dev/null || printf 0)
+            (( metadata_epoch >= SINCE )) || metadata_changed=0
+        fi
+        if [[ -f "$directory/metadata.json" ]] && (( metadata_changed )); then
             printf 'METADATA\0%s\0' "$job"
             cat "$directory/metadata.json"
             printf '\0'
@@ -117,6 +122,11 @@ for directory in "${job_dirs[@]}"; do
         if [[ ! -f "$directory/results/index/.ready" ]]; then
             tsv_results=("$directory"/results/batch_*.tsv "$directory"/results/chunk_*.tsv)
         fi
+        modern_results=0
+        if [[ -f "$directory/call.sh" ]] && grep -Fq 'The watcher is authoritative.' "$directory/call.sh"; then modern_results=1; fi
+        # Detailed rows are summarized locally, including incremental merges.
+        # Only legacy jobs need the extra scan for historical corrections.
+        if [[ "$job" != "$DETAIL" ]] || (( ! modern_results )); then
         if (( ${#csv_results[@]} )); then
             printf 'SUMMARY\0%s\0' "$job"
             # Slurmy quotes every CSV field. The summary uses only numeric and enum
@@ -211,6 +221,8 @@ for directory in "${job_dirs[@]}"; do
             fi
         fi
 
+        fi
+
         if [[ "$job" == "$DETAIL" && ! -f "$directory/results/index/.ready" ]]; then
             for progress_file in "$directory"/progress/task_*.csv; do
                 printf 'CALL_PROGRESS\0%s\0' "$job"
@@ -266,10 +278,6 @@ for directory in "${job_dirs[@]}"; do
         # Older runsolver result rows may say solver-error/143 and MEMOUT=false even
         # though their archived watcher explicitly records a memory-limit kill.
         # Inspect only those exceptional rows; never infer a limit from exit 143.
-        modern_results=0
-        if [[ -f "$directory/call.sh" ]] && grep -Fq 'The watcher is authoritative.' "$directory/call.sh"; then
-            modern_results=1
-        fi
         if (( ${#csv_results[@]} && ! modern_results )); then
             while IFS=$'\t' read -r kind task_id archive; do
                 [[ "$kind" == candidate ]] || continue
@@ -317,7 +325,8 @@ for directory in "${job_dirs[@]}"; do
 
             # Modern metadata already lists every task's batch. Legacy jobs need
             # their batch scripts scanned to reconstruct that mapping.
-            if [[ ! -f "$directory/metadata.json" ]] || ! grep -q '"planned_batch_tasks"' "$directory/metadata.json"; then
+            if [[ -z "$SINCE" || ! -f "$directory/results/index/.ready" ]]; then
+             if [[ ! -f "$directory/metadata.json" ]] || ! grep -q '"planned_batch_tasks"' "$directory/metadata.json"; then
               batch_files=("$directory"/batches/batch_*.sh "$directory"/chunks/chunk_*.sh)
               for batch_file in "${batch_files[@]}"; do
                 (
@@ -342,17 +351,24 @@ for directory in "${job_dirs[@]}"; do
                     done
                 )
               done
+             fi
             fi
 
+            if (( ! modern_results )); then
             log_count=0
             log_files=("$directory"/logs/*.out)
             for log_file in "${log_files[@]}"; do
                 (( log_count >= 100 )) && break
+                if [[ -n "$SINCE" ]]; then
+                    log_epoch=$(stat -c %Y "$log_file" 2>/dev/null || printf 0)
+                    (( log_epoch >= SINCE )) || continue
+                fi
                 printf 'LOG\0%s\0%s\0' "$job" "${log_file##*/}"
                 tail -n 160 "$log_file" 2>/dev/null || true
                 printf '\0'
                 log_count=$((log_count + 1))
             done
+            fi
         fi
     }
     if [[ "$job" != "$DETAIL" ]]; then
@@ -410,8 +426,24 @@ if [[ -n "$oldest" ]]; then
 else
     start=$(date +%F)
 fi
+accounting_options=()
+accounting_files=(); accounting_complete=1
+for accounting_directory in "${job_dirs[@]}"; do
+    [[ -d "$accounting_directory" ]] || continue
+    if [[ -f "$accounting_directory/submission.csv" ]]; then
+        accounting_files+=("$accounting_directory/submission.csv")
+    elif [[ -f "$accounting_directory/submission.tsv" ]]; then
+        accounting_files+=("$accounting_directory/submission.tsv")
+    else
+        accounting_complete=0
+    fi
+done
+if (( accounting_complete && ${#accounting_files[@]} )); then
+    accounting_ids=$(awk -F '[,\t]' '{id=$1; gsub(/"/, "", id); if (id ~ /^[0-9]+$/ && !seen[id]++) ids=ids (ids ? "," : "") id} END {print ids}' "${accounting_files[@]}")
+    if [[ -n "$accounting_ids" && ${#accounting_ids} -lt 110000 ]]; then accounting_options+=(--jobs="$accounting_ids"); fi
+fi
 printf 'SACCT\0'
-sacct -X -S "$start" -n -P \
+sacct "${accounting_options[@]}" -X -S "$start" -n -P \
     -o JobIDRaw,JobID,JobName,State,Elapsed,Start,End,Submit,WorkDir,NodeList \
     2>/dev/null | awk -F '|' -v prefix="$BASE/" 'index($9, prefix) == 1'
 printf '\0'
@@ -1209,6 +1241,7 @@ class RemoteCollector:
     def fetch(self, detail_job: str | None, since_epoch: float | None = None) -> ClusterSnapshot:
         if shutil.which("ssh") is None:
             raise RuntimeError("ssh is not installed or not on PATH")
+        budget = 90 if detail_job is None else 45
         command = [
             "ssh", *connection_options(),
             "-T",
@@ -1220,7 +1253,7 @@ class RemoteCollector:
             "-o", "ServerAliveCountMax=2",
             "--",
             self.host,
-            shlex.join(['bash','-c','set -o pipefail; bash -s -- "$@" | gzip -1',
+            shlex.join(['bash','-c',f'set -o pipefail; timeout --signal=TERM --kill-after=5 {budget} bash -s -- "$@" | gzip -1',
                         'slurmy-monitor',detail_job or '-',
                         str(max(0,int(since_epoch))) if since_epoch is not None else '']),
         ]
@@ -1230,14 +1263,16 @@ class RemoteCollector:
                 input=REMOTE_SNAPSHOT_SCRIPT.encode(),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=self.timeout + (180 if detail_job is None else 20),
+                timeout=budget + 10,
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError("Job history collection timed out while reading remote results" if detail_job is None else f"SSH refresh timed out after {self.timeout + 20:g}s") from exc
+            raise RuntimeError("Job history collection timed out while reading remote results" if detail_job is None else "Cluster status collection exceeded its time budget") from exc
         except OSError as exc:
             raise RuntimeError(f"Could not start SSH refresh: {exc}") from exc
         if process.returncode != 0:
+            if process.returncode in {124, 137}:
+                raise RuntimeError('Cluster status collection reached its remote time budget; retrying is delayed to reduce cluster load.')
             message = process.stderr.decode("utf-8", "replace").strip()
             raise RuntimeError(message or f"ssh exited with status {process.returncode}")
         try:
@@ -1245,6 +1280,24 @@ class RemoteCollector:
         except (OSError,EOFError) as exc:
             raise RuntimeError('Incomplete compressed monitoring response; retry the refresh.') from exc
         return parse_snapshot(self.host,payload)
+
+    def fetch_batch_log(self, job_id: str, slurm_id: str) -> str:
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', job_id) or not re.fullmatch(r'[0-9]+_[0-9]+', slurm_id):
+            raise ValueError('Invalid job or SLURM task ID.')
+        script = r'''set -euo pipefail
+log="$HOME/slurmy/jobs/$1/logs/slurm_$2.out"
+if [[ -f "$log" && ! -L "$log" ]]; then tail -c 262144 -- "$log"; fi
+'''
+        try:
+            result = subprocess.run(['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes',
+                                     '-o', f'ConnectTimeout={max(1, int(self.timeout))}', '--', self.host,
+                                     shlex.join(['bash', '-s', '--', job_id, slurm_id])],
+                                    input=script.encode(), capture_output=True, timeout=self.timeout + 10)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f'Could not read batch log: {exc}') from exc
+        if result.returncode:
+            raise RuntimeError(result.stderr.decode(errors='replace').strip() or 'Could not read batch log.')
+        return result.stdout.decode(errors='replace')
 
     def fetch_problem_text(self, job_id: str, problem: str) -> tuple[str, bool]:
         """Read a packaged problem, never an arbitrary path on the SSH host."""
