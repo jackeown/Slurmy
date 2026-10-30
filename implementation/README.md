@@ -140,6 +140,23 @@ are reported without dispatching a batch. Once `sbatch` begins accepting
 batches, submission is checkpointed per batch rather than globally atomic:
 SLURM cannot roll back allocations already accepted before a connection loss.
 Inspect the reported job ID before attempting a retry.
+The cluster submission controller runs independently of the local app and SSH
+connection. Its output is kept in `submission-controller.log` in the job directory;
+closing the browser, stopping the app, or losing the network does not stop
+submission. Monitoring probes its kernel lock on each refresh, including when
+history data is cached. An abandoned submission with no active SLURM tasks is
+shown as **Incomplete**, with a reason and a **Resume** action. While monitoring,
+the local server checks known jobs every 30 seconds, even without an open
+browser tab, and automatically resumes jobs it observed active (or with an
+abandoned submission) after at least 15 seconds with no active SLURM tasks or
+controller. Recovery appears in the progress toast. Explicitly stopped jobs and
+old historical failures stay stopped. Automatic retries are spaced at least a
+minute apart and stop after three attempts without new completed results.
+Resume preserves
+completed results and retries unfinished solver-problem pairs. A live solver or
+a queued SLURM task can legitimately leave completion counts unchanged while it
+runs or waits; unchanged counts alone are not grounds for killing or retrying it.
+
 If the prepared submit script reports a connection loss during batch submission,
 `SLURMY_RESUME_JOB_ID=JOB_ID bash ./submit.sh` resumes its checkpointed batch
 list without rebuilding or re-uploading inputs.

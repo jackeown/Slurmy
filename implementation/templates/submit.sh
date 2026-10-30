@@ -47,7 +47,7 @@ if [[ -n ${SLURMY_RESUME_JOB_ID:-} ]]; then
     JOB_ID=$SLURMY_RESUME_JOB_ID
     [[ "$JOB_ID" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Invalid SLURMY_RESUME_JOB_ID.' >&2; exit 1; }
     echo "Resuming accepted batches for $JOB_ID; no inputs are rebuilt or uploaded."
-    ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" "$AUTO_JOB_NAME" < "$ASSETS/remote_submit.sh"
+    ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" "$AUTO_JOB_NAME" < "$ASSETS/remote_dispatch.sh"
     exit $?
 fi
 
@@ -98,7 +98,7 @@ fi
 echo 'Submission phase: Committing upload and submitting SLURM batches'
 # Commit and dispatch in the same authenticated channel. The subshell keeps an
 # idempotent upload acknowledgment's exit from skipping dispatch.
-if ! { printf 'set -euo pipefail\n(\n'; cat "$ASSETS/remote_finish_upload.sh"; printf '\n)\n'; cat "$ASSETS/remote_submit.sh"; } | \
+if ! { printf 'set -euo pipefail\n(\n'; cat "$ASSETS/remote_finish_upload.sh"; printf '\n)\n'; cat "$ASSETS/remote_dispatch.sh"; } | \
     ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" "$AUTO_JOB_NAME"; then
     echo "Submission connection failed. Some batches may already be accepted; inspect job $JOB_ID before retrying." >&2
     echo "To resume only unaccepted batches: SLURMY_RESUME_JOB_ID=$JOB_ID bash ./submit.sh" >&2

@@ -521,3 +521,5 @@ details[data-section-state="closing"] > summary::before { transform: rotate(0deg
 
 .task-status { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
 .task-status:focus-visible { outline: 2px solid var(--green); outline-offset: 3px; }
+
+.job-attention {border-inline-start:3px solid var(--orange);padding:12px 16px}

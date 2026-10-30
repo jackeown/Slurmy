@@ -8,6 +8,13 @@ export JOB_DIR
 [[ -d "$JOB_DIR" && ! -L "$JOB_DIR" ]] || { echo 'Committed Slurmy job directory is missing.' >&2; exit 1; }
 exec 9> "$JOB_DIR/.submit-controller.lock"
 flock -n 9 || { echo 'Another controller is already submitting this Slurmy job.' >&2; exit 1; }
+finish_submit() {
+    local rc=$?
+    if [[ -f "$JOB_DIR/submit_coordinator.py" ]]; then python3 "$JOB_DIR/submit_coordinator.py" release "$SLURMY_JOB_ID" || true; fi
+    if (( rc != 0 )); then printf "failed %s %s\n" "${submitted:-0}" "${next_batch:-0}" > "$JOB_DIR/submission.state"; fi
+}
+trap finish_submit EXIT
+trap 'exit 1' HUP INT TERM
 PARTITION=$2
 JOB_PREFIX=$4
 [[ "$JOB_PREFIX" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || {
@@ -220,33 +227,31 @@ MAX_OUTSTANDING=${3:-32}
     echo 'SLURMY_MAX_OUTSTANDING must be a positive integer.' >&2; exit 1;
 }
 printf 'submitting %s %s\n' "$submitted" "$next_batch" > submission.state
-finish_submit() {
-    local rc=$?
-    python3 "$JOB_DIR/submit_coordinator.py" release "$SLURMY_JOB_ID" || true
-    if (( rc != 0 )); then printf "failed %s %s\n" "$submitted" "$next_batch" > submission.state; fi
-}
-trap finish_submit EXIT
-trap 'exit 1' HUP INT TERM
 declare -A RESUME_WANTED=()
 if (( RESUME_INCOMPLETE )); then
-    mapfile -t RESUME_BATCHES < <(python3 - <<'PY'
+    resume_batches=$(python3 - <<'PY'
 import csv, json
 from pathlib import Path
 metadata = json.loads(Path('metadata.json').read_text())
 done = set()
-for path in Path('results').glob('batch_*_task_*.csv'):
-    try:
-        with path.open(newline='') as stream:
-            row = next(csv.DictReader(stream))
-        if row.get('complete', '').lower() == 'true':
-            done.add(int(row['task_id']))
-    except (OSError, ValueError, StopIteration):
-        pass
+results = Path('results')
+# The compact indexes contain the same rows, including interrupted results.
+# Reopening one NFS file per completed pair makes large resumes look stalled.
+paths = (list((results / 'index-legacy').glob('batch_*.csv')) +
+         list((results / 'index').glob('batch_*.csv')) if (results / 'index/.ready').is_file()
+         else results.glob('batch_*_task_*.csv'))
+for path in paths:
+    with path.open(newline='') as stream:
+        for row in csv.DictReader(stream):
+            if row.get('complete', '').lower() == 'true':
+                done.add(int(row['task_id']))
 for batch, tasks in enumerate(metadata['planned_batch_tasks']):
     if any(task not in done for task in tasks):
         print(batch)
 PY
     )
+    RESUME_BATCHES=()
+    if [[ -n "$resume_batches" ]]; then mapfile -t RESUME_BATCHES <<< "$resume_batches"; fi
     for batch_id in "${RESUME_BATCHES[@]}"; do RESUME_WANTED[$batch_id]=1; done
 fi
 echo "Slurmy job ID: $1"

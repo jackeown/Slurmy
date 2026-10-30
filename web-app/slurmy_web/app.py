@@ -30,6 +30,7 @@ from .cluster import fetch_status
 from .launcher import web_version
 from . import workflows
 from .local_runtime import python_environment
+from .recovery_watch import RecoveryWatch
 
 REPO = workflows.REPO
 STATE = REPO / 'web-app/.state'
@@ -70,7 +71,7 @@ def summary(job):
                 total=job.task_count, completed=job.effective_completed,
                 percent=job.percent, issues=job.issue_count, created=job.created_epoch,
                 directory=workflow_directory, workflow_name=workflow_name,
-                outcomes=history_outcomes(job),
+                outcomes=history_outcomes(job), attention=job.attention, can_resume=job.can_resume,
                 submission_state=job.submission_state, submitted_batches=job.submission_count,
                 batch_count=job.batch_count,
                 statuses=job.status_counts)
@@ -192,7 +193,7 @@ def submission_phase(log):
 def unfinished_call(job, task_id, progress, batch_records=None):
     """Explain a missing result using this solver-problem pair's actual SLURM batch."""
     if job.submission_state == 'stopped':
-        return 'stopped', 'After resume', 'This job was stopped. Resume it to run this unfinished call.', ''
+        return 'stopped', 'After resume', 'This job was stopped. Resume it to run this unfinished solver-problem pair.', ''
     batch_id = job.task_batches.get(task_id)
     if batch_id is None and progress:
         batch_id = progress.batch_id
@@ -230,7 +231,7 @@ def unfinished_call(job, task_id, progress, batch_records=None):
     if progress and progress.state != 'running':
         return 'result missing', 'No', f'Solver-problem pair recorded {progress.state}, but no result was saved. SLURM no longer reports batch {batch_id}.', log
     if batch_id not in job.submitted_batches and job.submitted_batches:
-        if job.submission_state == 'submitting':
+        if job.submission_state == 'submitting' and job.controller_state != 'inactive':
             return 'awaiting submission', 'Yes', f'Batch {batch_id} is waiting for a free SLURM submission slot.', log
         return 'not submitted', 'No', f'Batch {batch_id} was planned but has no SLURM submission. Submission may have stopped partway through.', log
     if not job.submission_offsets and not job.slurm:
@@ -366,6 +367,9 @@ def create_app():
                       SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
                       TRUSTED_HOSTS=['127.0.0.1', 'localhost'])
     cache, locks, operations, announced_jobs = {}, {}, {}, {}
+    recovery_watch = RecoveryWatch()
+    recovery_operations = {}
+    app.config['RECOVERY_WATCH'] = recovery_watch
     cluster_cache = {}
     problem_text_cache = {}
     guard = threading.Lock()
@@ -417,6 +421,33 @@ def create_app():
     def host():
         return workflows.alias(request.args.get('host') or os.environ.get('SLURMY_HOST', 'datalab'))
 
+    def consider_recovery(value, selected_host):
+        if request.method != 'GET' or app.config.get('SHUTTING_DOWN'):
+            return
+        with guard:
+            busy = {op['scope'] for op in operations.values() if op['state'] == 'running'}
+        candidates = recovery_watch.observe(selected_host, getattr(value, 'jobs', []), busy)
+        for job in candidates:
+            try:
+                response, _ = operation(
+                    [sys.executable, str(REPO/'implementation/slurmy-job.py'), 'resume', job.job_id, '--host', selected_host, '--if-idle'],
+                    REPO, {**os.environ, 'SLURMY_HOST': selected_host}, 'resume', selected_host + ':' + job.job_id)
+                key = response.get_json()['id']
+                operations[key]['automatic'] = True
+                recovery_operations[(selected_host, job.job_id)] = key
+            except HTTPException as exc:
+                if exc.code != 409:
+                    raise
+
+    def monitored_summary(job):
+        result = summary(job)
+        key = recovery_operations.get((host(), job.job_id))
+        op = operations.get(key, {})
+        result['recovery_operation'] = key if (op.get('state') == 'running' or
+                                               time.time() - op.get('started', 0) < 120) else None
+        result['recovery_started'] = op.get('started', 0)
+        return result
+
     def snapshot(detail=None, force=False):
         key = (host(), detail)
         with guard:
@@ -439,7 +470,20 @@ def create_app():
             cache[key] = (time.monotonic(), value)
             if len(cache) > 32:
                 cache.pop(next(iter(cache)))
+            consider_recovery(value, key[0])
             return value
+
+    def check_idle_jobs():
+        # The local server keeps watching known jobs even with no browser tab.
+        # Reuse the same cached collector and per-host locks as normal requests.
+        for selected_host in recovery_watch.hosts():
+            with app.test_request_context('/api/jobs', query_string={'host': selected_host}):
+                try:
+                    snapshot()
+                except (OSError, RuntimeError, ValueError):
+                    app.logger.info('Automatic recovery deferred: cluster status unavailable', exc_info=True)
+
+    app.config['CHECK_IDLE_JOBS'] = check_idle_jobs
 
     def job_snapshot(job_id, force=False):
         job = snapshot(safe_job(job_id), force=force).find_job(job_id)
@@ -610,7 +654,7 @@ def create_app():
         with guard:
             local = [item.copy() for (item_host, _), item in announced_jobs.items() if item_host == host()]
         value = snapshot()
-        items = [summary(job) for job in value.jobs]
+        items = [monitored_summary(job) for job in value.jobs]
         updated = value.fetched_epoch
         remote_ids = {item['id'] for item in items}
         items.extend(item for item in local if item['id'] not in remote_ids)
@@ -640,14 +684,14 @@ def create_app():
         page_number,per_page,sort,direction=call_page_args()
         rows,matched=task_page(job,page_number,per_page,sort,direction,query,selected_outcomes)
         if not hasattr(job,'_view_outcomes'):job._view_outcomes=outcome_breakdown(job)
-        return jsonify(**{**summary(job),"outcomes":job._view_outcomes},tasks=rows,matched=matched)
+        return jsonify(**{**monitored_summary(job),"outcomes":job._view_outcomes},tasks=rows,matched=matched)
 
     @app.post('/api/jobs/<job_id>/name')
     def rename_job(job_id):
         job_id = safe_job(job_id)
         name = display_name((request.get_json() or {}).get('name', ''))
         job = job_snapshot(job_id)
-        if job.active_records or job.submission_state == 'submitting':
+        if job.active_records or (job.submission_state == 'submitting' and job.controller_state != 'inactive'):
             abort(409, 'Wait until every SLURM allocation for this job has finished before renaming its directory.')
         with guard:
             if any(op['state'] == 'running' and
@@ -1041,6 +1085,8 @@ def create_app():
         later poll.  Keeping this short-lived local record makes the submission
         visible immediately in both Job history and the originating workflow.
         """
+        if operation.get('job_id') != job_id:
+            recovery_watch.resume(environment['SLURMY_HOST'], job_id)
         operation['preparation_complete'] = True
         details = dispatch_metadata(operation, cwd)
         directory = str(details.get('workflow_directory', cwd))
@@ -1173,8 +1219,12 @@ def create_app():
 
     @app.post('/api/jobs/<job_id>/action')
     def job_action(job_id):
-        job = job_snapshot(job_id)
         data = request.get_json()
+        if data.get('action') in {'stop', 'cancel'}:
+            recovery_watch.stop(host(), safe_job(job_id))
+        elif data.get('action') == 'resume':
+            recovery_watch.resume(host(), safe_job(job_id))
+        job = job_snapshot(job_id)
         if data.get('action') in ('sync', 'sync_verbose'):
             argv = [sys.executable, str(REPO/'implementation/slurmy-sync.py'), job_id, '--host', host()]
             if data['action'] == 'sync_verbose':
@@ -1195,6 +1245,7 @@ def create_app():
     @app.post('/api/jobs/<job_id>/delete')
     def delete_job(job_id):
         job_id = safe_job(job_id)
+        recovery_watch.stop(host(), job_id)
         # Deletion is an observable background operation: stop, wait, then remove.
         delete_local = bool((request.get_json() or {}).get('delete_local'))
         argv = [sys.executable, str(REPO/'implementation/slurmy-job.py'),
@@ -1259,7 +1310,7 @@ def create_app():
                   'stop': 'Stop job', 'resume': 'Resume unfinished solver-problem pairs',
                   'delete': 'Stop and delete job', 'cancel': 'Cancel SLURM task'}.get(op['label'])
                  or submission_phase(content))
-        return jsonify(**op, log=content, phase=phase)
+        return jsonify(**op, log=content, phase='Automatically resuming idle job' if op.get('automatic') else phase)
 
     @app.get('/api/workflow/active-operation')
     def active_workflow_operation():

@@ -400,7 +400,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
                 progress('batches', 'Generating SLURM batch plans', i + 1, len(batches))
         if progress:
             progress('phase', 'Finalizing submission files', 0, 0)
-        for name in ("submit.sh", "remote_prepare.sh", "remote_finish_upload.sh", "remote_submit.sh", "batch.sh", "call.sh", "timed_call.sh", "csv.sh", "workflow_name.sh"):
+        for name in ("submit.sh", "remote_dispatch.sh", "remote_prepare.sh", "remote_finish_upload.sh", "remote_submit.sh", "batch.sh", "call.sh", "timed_call.sh", "csv.sh", "workflow_name.sh"):
             source = REPO / "implementation/templates" / name
             destination = output if name == "submit.sh" else assets / name
             # A generated file should look newly generated. copy2() preserved the

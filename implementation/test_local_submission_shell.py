@@ -18,7 +18,7 @@ class LocalSubmissionShellTests(unittest.TestCase):
                 (assets / 'workflow_name.sh').write_text('JOB_PREFIX=test\nJOB_DISPLAY_NAME=Test\n')
                 (assets / 'submission_settings.sh').write_text(
                     'MAX_OUTSTANDING_DEFAULT=32\nBUILD_COUNT_DEFAULT=0\nLOCAL_PROBLEM_FILES_DEFAULT=0\n')
-                for name in ('builds/run.sh', 'remote_prepare.sh', 'remote_finish_upload.sh', 'remote_submit.sh'):
+                for name in ('builds/run.sh', 'remote_prepare.sh', 'remote_finish_upload.sh', 'remote_submit.sh', 'remote_dispatch.sh'):
                     (assets / name).write_text(':\n')
                 (root / 'submit.sh').write_bytes(template.read_bytes())
                 bin_dir = root / 'bin'

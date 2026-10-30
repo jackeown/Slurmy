@@ -382,11 +382,27 @@ for directory in "${job_dirs[@]}"; do
     else
         emit_job
     fi
+    # Probe the kernel lock on every poll, outside the overview cache. A stale
+    # "submitting" file cannot prove a controller still exists after SSH loss.
+    controller=unknown
+    if [[ -f "$directory/.submit-controller.lock" ]]; then
+        if flock -s -n -E 75 "$directory/.submit-controller.lock" true; then
+            controller=inactive
+        else
+            lock_status=$?
+            controller=unknown
+            if (( lock_status == 75 )); then controller=active; fi
+        fi
+    fi
+    printf 'CONTROLLER_STATE\0%s\0%s\0' "$job" "$controller"
 done
 
-printf 'SQUEUE\0'
-squeue -r -h -u "$USER" -o '%i|%F|%K|%T|%M|%L|%j|%Z|%R' 2>/dev/null \
-    | awk -F '|' -v prefix="$BASE/" 'index($8, prefix) == 1'
+if queue_snapshot=$(squeue -r -h -u "$USER" -o '%i|%F|%K|%T|%M|%L|%j|%Z|%R' 2>/dev/null); then
+    printf 'QUEUE_AVAILABLE\0true\0SQUEUE\0'
+    printf '%s\n' "$queue_snapshot" | awk -F '|' -v prefix="$BASE/" 'index($8, prefix) == 1'
+else
+    printf 'QUEUE_AVAILABLE\0false\0SQUEUE\0'
+fi
 printf '\0'
 
 if [[ -n "$oldest" ]]; then
@@ -564,6 +580,8 @@ class JobSnapshot:
     submission_offsets: dict[str, int] = field(default_factory=dict)
     submitted_batches: set[int] = field(default_factory=set)
     submission_state: str = ""
+    controller_state: str = ""
+    queue_available: bool = False
     submission_count: int = 0
     slurm: list[SlurmRecord] = field(default_factory=list)
     logs: dict[str, str] = field(default_factory=dict)
@@ -611,12 +629,33 @@ class JobSnapshot:
             )
         )
         setup_incomplete = not self.metadata and not self.submission_offsets and not self.slurm
-        submission_incomplete = (self.submission_state == 'failed' or
+        submission_incomplete = self.completed < self.task_count and (self.submission_state == 'failed' or
+                                 (self.submission_state == 'submitting' and self.controller_state == 'inactive') or
                                  (self.submission_state not in {'submitting', 'stopped'} and
                                   bool(self.submitted_batches) and
                                   self.batch_count > len(self.submitted_batches) and
                                   not self.active_records))
         return task_issues + int(unresolved_slurm_failure) + int(setup_incomplete) + int(submission_incomplete)
+
+    @property
+    def attention(self) -> str:
+        if self.completed >= self.task_count or self.submission_state == 'stopped':
+            return ''
+        if self.submission_state == 'failed' or (self.submission_state == 'submitting' and self.controller_state == 'inactive'):
+            pending = max(0, self.batch_count - len(self.submitted_batches))
+            suffix = f' {pending} batches have not been submitted.' if pending else ''
+            if self.active_records:
+                return 'Submission controller stopped; accepted SLURM tasks are still active.' + suffix
+            return 'Job is not running: its submission controller stopped and no SLURM tasks are active.' + suffix + ' Resume to retry unfinished solver-problem pairs; completed results are kept.'
+        if not self.active_records and self.state == 'INCOMPLETE':
+            return 'Job is not running: SLURM tasks ended with unfinished solver-problem pairs. Resume to retry them; completed results are kept.'
+        return ''
+
+    @property
+    def can_resume(self) -> bool:
+        return bool(self.task_count > self.completed and not self.active_records and
+                    self.controller_state != 'active' and
+                    self.state in {'STOPPED', 'INCOMPLETE'})
 
     @property
     def percent(self) -> float:
@@ -659,10 +698,14 @@ class JobSnapshot:
             return "PENDING"
         if self.task_count and self.completed >= self.task_count:
             return "DONE" if not self.issue_count else "DONE · ERRORS"
+        if self.controller_state == 'active':
+            return 'SUBMITTING'
         if self.submission_state == 'stopped':
             return 'STOPPED'
-        if self.submission_state == 'submitting':
+        if self.submission_state == 'submitting' and self.controller_state != 'inactive':
             return 'SUBMITTING'
+        if self.submission_state == 'failed' or self.controller_state == 'inactive':
+            return 'INCOMPLETE'
         historical_states = {slurm_state_code(record.state) for record in self.slurm}
         if historical_states & SLURM_INCOMPLETE_STATES:
             return "INCOMPLETE"
@@ -696,6 +739,8 @@ PROTOCOL_ARITY = {
     "PROGRESS_TSV": 2,
     "SUBMISSION_CSV": 2,
     "SUBMISSION_STATE": 2,
+    "CONTROLLER_STATE": 2,
+    "QUEUE_AVAILABLE": 1,
     "RESULT_OVERRIDE": 3,
     "SUBMISSION_TSV": 2,
     "RESULTS_CSV": 2,
@@ -908,9 +953,11 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
     batch_tasks: dict[str, list[tuple[str, str]]] = {}
     submissions: dict[str, tuple[str, str]] = {}
     submission_states: dict[str, str] = {}
+    controller_states: dict[str, str] = {}
     result_overrides: dict[str, dict[int, str]] = {}
     logs: dict[str, dict[str, str]] = {}
     queue_payload = ""
+    queue_available = False
     accounting_payload = ""
 
     for kind, fields in protocol:
@@ -939,6 +986,8 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
             progress_payloads[fields[0]] = (kind, fields[1])
         elif kind in {"SUBMISSION_CSV", "SUBMISSION_TSV"}:
             submissions[fields[0]] = (kind, fields[1])
+        elif kind == "CONTROLLER_STATE":
+            controller_states[fields[0]] = fields[1]
         elif kind == "SUBMISSION_STATE":
             submission_states[fields[0]] = fields[1]
         elif kind == "RESULT_OVERRIDE" and fields[1].isdigit():
@@ -955,12 +1004,16 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
             taskdefs.setdefault(fields[0], []).append(fields[1:])
         elif kind == "LOG":
             logs.setdefault(fields[0], {})[fields[1]] = fields[2]
+        elif kind == "QUEUE_AVAILABLE":
+            queue_available = fields[0] == "true"
         elif kind == "SQUEUE":
             queue_payload = fields[0]
         elif kind == "SACCT":
             accounting_payload = fields[0]
 
     for job_id, job in jobs.items():
+        job.controller_state = controller_states.get(job_id, "unknown")
+        job.queue_available = queue_available
         state_fields = submission_states.get(job_id, '').split()
         if len(state_fields) >= 2 and state_fields[0] in {'submitting', 'complete', 'failed', 'stopped'}:
             job.submission_state = state_fields[0]

@@ -31,3 +31,15 @@ class LifecycleTests(unittest.TestCase):
         with patch('sys.argv', ['slurmy-job.py', 'delete', 'test-job', '--delete-local']), patch.object(cli.subprocess, 'run', side_effect=[SimpleNamespace(returncode=0), SimpleNamespace(returncode=1)]), patch.object(cli.shutil, 'rmtree') as remove:
             self.assertEqual(cli.main(), 1)
         remove.assert_not_called()
+
+    def test_automatic_resume_rechecks_idle_state_without_cancelling_tasks(self):
+        scripts = []
+        def run(*args, stdin, **kwargs):
+            scripts.append(stdin.read().decode())
+            return SimpleNamespace(returncode=0)
+        with patch('sys.argv', ['slurmy-job.py', 'resume', 'test-job', '--if-idle']), patch.object(cli.subprocess, 'run', side_effect=run):
+            self.assertEqual(cli.main(), 0)
+        self.assertEqual(len(scripts), 1)
+        self.assertIn('SLURM tasks are active; no recovery needed.', scripts[0])
+        self.assertIn('keeping it stopped', scripts[0])
+        self.assertNotIn('scancel', scripts[0])

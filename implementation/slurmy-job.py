@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import shutil
+import tempfile
 
 
 def main():
@@ -17,11 +18,14 @@ def main():
     parser.add_argument('job_id')
     parser.add_argument('--host', default=os.environ.get('SLURMY_HOST', 'datalab'))
     parser.add_argument('--delete-local', action='store_true')
+    parser.add_argument('--if-idle', action='store_true', help='resume only if no controller or SLURM tasks remain')
     args = parser.parse_args()
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', args.job_id):
         parser.error('Invalid Slurmy job ID.')
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', args.host):
         parser.error('Invalid SSH host alias.')
+    if args.if_idle and args.action != 'resume':
+        parser.error('--if-idle is only valid with resume')
     templates = Path(__file__).with_name('templates')
     local_paths = [Path(__file__).resolve().parent.parent / 'job-results' / args.job_id,
                    Path(__file__).resolve().parent.parent / 'job-results' / 'verbose' / args.job_id]
@@ -30,13 +34,18 @@ def main():
         return 1
     # Always finish stopping before resume or deletion, including lingering
     # allocations from an earlier Stop request or a concurrent submission.
-    actions = ['stop'] + ([args.action] if args.action != 'stop' else [])
+    actions = ['resume'] if args.if_idle else ['stop'] + ([args.action] if args.action != 'stop' else [])
     for action in actions:
         print({'stop': 'Stopping submission and cancelling running and queued SLURM tasks; completed results are kept…',
                'resume': 'Resuming unfinished solver-problem pairs; completed results are kept…',
                'delete': 'All tasks stopped. Deleting cluster job files…'}[action], flush=True)
         try:
-            with (templates / f'remote_{action}.sh').open('rb') as stream:
+            with (tempfile.TemporaryFile() if args.if_idle else (templates / f'remote_{action}.sh').open('rb')) as stream:
+                if args.if_idle:
+                    stream.write((templates / 'remote_recover.sh').read_bytes())
+                    stream.write(b'\n')
+                    stream.write((templates / f'remote_{action}.sh').read_bytes())
+                    stream.seek(0)
                 result = subprocess.run(['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--',
                                          args.host, 'bash', '-s', '--', args.job_id], stdin=stream, check=False)
         except OSError as error:

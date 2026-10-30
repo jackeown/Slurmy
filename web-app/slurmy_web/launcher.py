@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import time
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -101,7 +102,14 @@ def main(argv=None):
         from . import create_app
         app = create_app()
         server = create_server(app, host='127.0.0.1', port=args.port, threads=8)
+        recovery_stop = threading.Event()
+        def monitor_idle_jobs():
+            while not recovery_stop.wait(30):
+                if not app.config.get('SHUTTING_DOWN'):
+                    app.config['CHECK_IDLE_JOBS']()
+        threading.Thread(target=monitor_idle_jobs, name='slurmy-idle-recovery', daemon=True).start()
         def shutdown():
+            recovery_stop.set()
             server.close()
             server.task_dispatcher.shutdown()
             # Close persistent browser connections as well as the listening socket.

@@ -4,6 +4,7 @@
 {% block data %}data-page="job" data-job="{{ job_id }}"{% endblock %}
 {% block scripts %}<script type="module" src="{{ url_for('static', filename='outcome-3d.js') }}"></script>{% endblock %}
 {% block content %}
+<p id="job-attention" class="panel job-attention" role="status" hidden></p>
 <a class="back" href="{{ url_for('index', host=host) }}">← All jobs</a>
 <div class="heading"><div><p id="connection" class="muted" role="status">Loading live and historical records…</p></div><div class="tools"><div class="split-action"><button id="sync" type="button" title="Download the named CSV and two solver-output archives">↓ Download</button><button id="sync-menu-toggle" type="button" aria-label="More download options" aria-haspopup="true" aria-expanded="false" aria-controls="sync-menu">▾</button><div id="sync-menu" class="split-menu" hidden><button id="sync-verbose" type="button">Complete/verbose download</button></div></div>
 <button id="stop-job" class="secondary" type="button" title="Cancel running and queued tasks, keeping completed results for Resume">Stop job</button><button id="resume-job" class="secondary" type="button" title="Keep completed results and retry unfinished solver-problem pairs">Resume job</button><button id="refresh" class="secondary">↻ Refresh</button><button id="delete-job" class="danger" title="Stop the job, wait for SLURM tasks to exit, then delete it. Deleted jobs cannot be resumed.">Delete job</button></div></div>

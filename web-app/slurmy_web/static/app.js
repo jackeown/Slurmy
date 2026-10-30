@@ -142,7 +142,7 @@ function jobActionControls(){
  const stopped=jobData?.state==='STOPPED', complete=jobData?.percent>=100;
  $('#stop-job').disabled=(stopped&&jobAction!=='resume')||complete||jobAction==='stop';
  $('#stop-job').textContent=jobAction==='stop'?'Stopping…':'Stop job';
- $('#resume-job').disabled=Boolean(jobAction)||!stopped||complete;
+ $('#resume-job').disabled=Boolean(jobAction)||!(jobData?.can_resume??stopped)||complete;
  for(const id of ['delete-job','sync','sync-verbose','sync-menu-toggle'])$('#'+id).disabled=Boolean(jobAction);
 }
 function lockWorkflowActions(locked){if(page!=='workflow')return;for(const id of ['prepare','submit','submit-only','submit-menu-toggle']){const control=$('#'+id);if(control)control.disabled=locked;}}
@@ -325,6 +325,7 @@ function renderJobs(){
   const title=job.provisional?el('div',job.name,'job-link'):link(job.name,'/jobs/'+encodeURIComponent(job.id)+'?'+params({}));title.className='job-link';
   const progress=jobStatusBar(job);
   if(job.phase)progress.append(el('small',job.phase,'submission-phase'));
+  else if(job.attention)progress.append(el('small',job.attention,'submission-phase'));
   else if(job.submission_state==='submitting')progress.append(el('small',`Submitting batches: ${job.submitted_batches} / ${job.batch_count} accepted`,'submission-phase'));
   const cells=[title,progress,new Date(job.created*1000).toLocaleString()];
   const actions=el('div',undefined,'job-row-actions');
@@ -338,7 +339,11 @@ function renderJobs(){
  $('#jobs-previous').disabled=jobsPage===0;$('#jobs-next').disabled=(jobsPage+1)*perPage>=filtered.length;
  text('#stat-total',visible.length);text('#stat-active',visible.filter(j=>['RUNNING','PENDING','SUBMITTED','SUBMITTING','DISPATCHING'].includes(j.state)).length);text('#stat-done',visible.reduce((a,j)=>a+j.completed,0).toLocaleString());
 }
-async function fetchJobs(){const directory=document.body.dataset.directory;const data=await api('/api/jobs?'+params(directory?{directory}:{}));jobs=data.jobs;renderJobs();text('#connection',`Connected to ${host} · refreshed ${new Date(data.updated*1000).toLocaleTimeString()} · refreshes every 10 seconds`);}
+function watchRecovery(data){
+ const id=data?.recovery_operation;
+ if(id&&id!==currentOperationId){operationHidden=false;sessionStorage.removeItem('slurmy-operation-hidden');watchOperation(id);}
+}
+async function fetchJobs(){const directory=document.body.dataset.directory;const data=await api('/api/jobs?'+params(directory?{directory}:{}));jobs=data.jobs;renderJobs();const recovering=jobs.reduce((latest,job)=>job.recovery_operation&&(!latest||job.recovery_started>latest.recovery_started)?job:latest,null);if(recovering)watchRecovery(recovering);text('#connection',`Connected to ${host} · refreshed ${new Date(data.updated*1000).toLocaleTimeString()} · refreshes every 10 seconds`);}
 async function openOutput(task){
  const panel=$('#call-output');panel.hidden=false;$('#stream').closest('label').hidden=false;text('#output-title',`Solver-Problem Pair ${task.id} · ${task.solver}`);highlightShell($('#command'),`Solver command: ${task.command}\nLimiter command: ${task.limiter_command||'Unavailable for this older job'}\nWorking directory: ${task.directory}`);$('#command').hidden=false;text('#output-info',task.problem);text('#output-text','Loading saved output…');selectedOutput=null;panel.scrollIntoView({behavior:'smooth',block:'start'});
  try{const data=await api(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/output/${task.id}?`+params({}));selectedOutput=data;renderOutput();}catch(error){text('#output-text',error.message);}
@@ -362,6 +367,8 @@ async function fetchJob(fresh=false){
  const data=await api(`/api/jobs/${encodeURIComponent(jobId)}?${requestParams}`);
  if(requestedPage!==taskPage||perPage!==pageSize('#task-page-size')||sort!==tableSort.tasks.key||direction!==tableSort.tasks.direction||query!==$('#task-filter').value||outcomeKey!==outcomeSelectionKey()){scheduleRefresh();return;}
  jobData=data;
+ watchRecovery(data);
+ const attention=$('#job-attention');if(attention){attention.hidden=!data.attention;attention.textContent=data.attention||'';}
  autoRefreshTotal=data.total;autoRefreshPercent=data.percent;
  const lastPage=Math.max(0,Math.ceil(data.matched/perPage)-1);if(taskPage>lastPage){taskPage=lastPage;syncTableUrl();scheduleRefresh();return;}
  syncTableUrl();
