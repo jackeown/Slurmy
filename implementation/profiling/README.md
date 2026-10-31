@@ -78,3 +78,40 @@ one read-only collection with a 45-second remote budget. `--save-payload` and
 `--python-profile` are optional local outputs; Python profiling reuses the saved
 in-memory data and does not issue another collection. The default JSON report
 contains timings and counts, not solver commands or problem contents.
+
+## Follow-up: User Read Activity on the Login Node
+
+A 30.011-second sample used 16 snapshots of the account's accessible per-thread
+`/proc/PID/task/TID/io` counters, excluding the observer and its SSH processes.
+Slurmy attribution followed command paths and process ancestry; the summary AWK
+reader belongs to the monitoring pipeline, not solver execution.
+
+| Source | Observed read syscalls | Calls/second | Logical bytes returned |
+|---|---:|---:|---:|
+| Slurmy monitoring | 17,452 | 581.53 | 8,965,442 |
+| Slurmy submission/controller activity | 94 | 3.13 | 58,852 |
+| Other observable account activity | 12 | 0.40 | 5,595 |
+| Total | 17,558 | 585.06 | 9,029,889 |
+
+Slurmy represented 99.93% of these **observed login-node read syscalls**. This is
+not a share of physical storage operations or cluster-wide traffic. The counters
+include reads from pipes, cached files, and other file descriptors; bytes can pass
+through several processes and be counted at each read. Per-thread counters avoid
+adding the same waited-for child accounting to both parent and child. Threads
+that disappeared between snapshots may be missed, and three threads' counters
+were inaccessible, so this is not an exhaustive syscall count.
+
+One Slurmy summary reader remained in uninterruptible I/O wait
+(`folio_wait_bit_common`) while reading a result index. Its open file had been
+replaced by an atomic update; the kernel's `(deleted)` descriptor suffix does not
+mean saved solver results were intentionally removed. The home filesystem was
+identified as **CephFS**.
+
+The queue showed 32 Slurmy tasks on three CPU nodes and two other tasks on GPU
+nodes at inspection time. Compute-node SSH authentication was denied, so their
+process counters were not measured. Exact per-user, per-application Ceph backend
+request counts across those nodes would require additional permissions and
+appropriate tracing/telemetry; the process counters above cannot supply them.
+
+Counter semantics: [Linux proc I/O documentation](https://man7.org/linux/man-pages/man5/proc_pid_io.5.html)
+and [per-thread versus process accounting implementation](https://github.com/torvalds/linux/blob/master/fs/proc/base.c).
