@@ -85,6 +85,7 @@ def summary(job):
                 percent=job.percent, issues=job.issue_count, created=job.created_epoch,
                 directory=workflow_directory, workflow_name=workflow_name,
                 outcomes=history_outcomes(job), attention=job.attention, can_resume=job.can_resume,
+                controller_log=job.controller_log,
                 submission_state=job.submission_state, submitted_batches=job.submission_count,
                 batch_count=job.batch_count, eta_seconds=naive_eta_seconds(job),
                 statuses=job.status_counts)
@@ -495,14 +496,25 @@ def create_app():
         return value
 
     def check_idle_jobs():
-        # The local server keeps watching known jobs even with no browser tab.
-        # Reuse the same cached collector and per-host locks as normal requests.
+        # A running job needs only a scheduler heartbeat, not a history scan.
         for selected_host in recovery_watch.hosts():
-            with app.test_request_context('/api/jobs', query_string={'host': selected_host}):
-                try:
-                    snapshot()
-                except (OSError, RuntimeError, ValueError):
-                    app.logger.info('Automatic recovery deferred: cluster status unavailable', exc_info=True)
+            targets=recovery_watch.targets(selected_host)
+            if not targets:
+                continue
+            try:
+                value=cache.try_host_call(selected_host,lambda:app.config.get('COLLECTOR',RemoteCollector)(selected_host,10).fetch_activity(targets),skip_if_recent=20)
+                if value is None:
+                    continue
+                with guard:
+                    busy={op['scope'] for op in operations.values() if op['state']=='running'}
+                candidates=recovery_watch.idle_candidates(selected_host,value,busy)
+                for job_id in candidates:
+                    with app.test_request_context('/api/jobs',query_string={'host':selected_host}):
+                        # Only a new full observation can trigger recovery. Cached
+                        # data returned while it loads is never fed to the watch.
+                        snapshot(job_id,force=True)
+            except (OSError,RuntimeError,ValueError):
+                app.logger.info('Automatic recovery deferred: cluster status unavailable',exc_info=True)
 
     app.config['CHECK_IDLE_JOBS'] = check_idle_jobs
 

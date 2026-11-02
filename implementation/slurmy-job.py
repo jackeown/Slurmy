@@ -10,6 +10,7 @@ import subprocess
 import sys
 import shutil
 import tempfile
+import time
 
 
 def main():
@@ -46,13 +47,34 @@ def main():
                     stream.write(b'\n')
                     stream.write((templates / f'remote_{action}.sh').read_bytes())
                     stream.seek(0)
-                result = subprocess.run(['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--',
-                                         args.host, 'bash', '-s', '--', args.job_id], stdin=stream, check=False)
+                attempts = 3 if action in {'stop', 'delete'} else 1
+                for attempt in range(1, attempts + 1):
+                    stream.seek(0)
+                    try:
+                        result = subprocess.run(['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--',
+                                                 args.host, 'timeout', '--signal=TERM', '--kill-after=5', '120', 'env', '-u', 'BASH_ENV', '-u', 'ENV', 'bash', '--noprofile', '--norc', '-s', '--', args.job_id], stdin=stream, check=False, timeout=180)
+                        code = result.returncode
+                    except subprocess.TimeoutExpired:
+                        code = 255
+                    if code == 0:
+                        break
+                    if code not in ({255, 124, 137, 75} if action == 'delete' else {255, 124, 137}) or attempt == attempts:
+                        if code in {255, 124, 137}:
+                            message = {
+                                'stop': 'Stop could not be confirmed. Reconnect and retry; completed results are kept.',
+                                'delete': 'Deletion could not be confirmed. It may already have completed; reconnect and retry to confirm.',
+                                'resume': 'Resume could not be confirmed. The job may already be running; check its refreshed status before retrying Resume.',
+                            }[action]
+                            print(message, file=sys.stderr, flush=True)
+                        elif code == 75:
+                            print('Deletion is still in progress remotely. Retry later to confirm completion.', file=sys.stderr, flush=True)
+                        return code
+                    reason = 'Connection interrupted' if code != 75 else 'Deletion still in progress'
+                    print(f'{reason}; retrying {action} ({attempt + 1}/{attempts})…', flush=True)
+                    time.sleep(attempt)
         except OSError as error:
             print(f'Could not {action} job over SSH: {error}', file=sys.stderr)
             return 1
-        if result.returncode:
-            return result.returncode
     if args.action == 'delete':
         if args.delete_local:
             print('Deleting downloaded results…', flush=True)

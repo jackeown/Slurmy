@@ -17,6 +17,36 @@ class RecoveryWatch:
             return {host for (host, _), entry in self.entries.items()
                     if entry['attempts'] < self.max_attempts}
 
+    def targets(self, host):
+        with self.lock:
+            return [job_id for (selected_host,job_id),entry in self.entries.items()
+                    if selected_host==host and entry['attempts']<self.max_attempts]
+
+    def idle_candidates(self, host, activity, busy=(), now=None):
+        """Activity can request verification; it never authorizes a resume itself."""
+        now=time.monotonic() if now is None else now
+        candidates=[]
+        with self.lock:
+            for row in activity['jobs']:
+                key=(host,row['job_id'])
+                entry=self.entries.get(key)
+                if entry is None or key in self.blocked:
+                    continue
+                if not activity['queue_available'] or host+':'+row['job_id'] in busy:
+                    entry['idle']=None
+                    continue
+                if row.get('stopped') or row.get('exists') is False:
+                    self.entries.pop(key,None)
+                    continue
+                if row.get('active') or row.get('controller_state')!='inactive':
+                    entry['idle']=None
+                    continue
+                if entry['idle'] is None:
+                    entry['idle']=now
+                if now-entry['idle']>=self.idle_seconds and now>=entry['retry'] and entry['attempts']<self.max_attempts:
+                    candidates.append(row['job_id'])
+        return candidates
+
     def stop(self, host, job_id):
         with self.lock:
             self.blocked.add((host, job_id))

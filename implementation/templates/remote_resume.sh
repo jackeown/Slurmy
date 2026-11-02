@@ -40,12 +40,15 @@ accepted=0; total=0
 if [[ -f submission.state ]]; then read -r _ accepted total < submission.state || true; fi
 printf 'submitting %s %s\n' "${accepted:-0}" "${total:-0}" > submission.state.launch
 mv -f submission.state.launch submission.state
+: >> .submit-controller.lock
 # Separate stdin, stdout, stderr and the launch lock from the SSH session.
-nohup bash ./remote_submit.sh "$@" </dev/null >> submission-controller.log 2>&1 8>&- &
+nohup env -u BASH_ENV -u ENV bash --noprofile --norc ./remote_submit.sh "$@" </dev/null >> submission-controller.log 2>&1 8>&- &
 controller=$!
 sleep 0.2
 if ! kill -0 "$controller" 2>/dev/null; then
     if wait "$controller"; then :; else
+        printf 'failed %s %s\n' "${accepted:-0}" "${total:-0}" > submission.state.launch
+        mv -f submission.state.launch submission.state
         tail -n 30 submission-controller.log >&2
         exit 1
     fi

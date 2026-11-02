@@ -213,7 +213,7 @@ async function deleteJob(id, control, redirect=false){
    await new Promise(resolve=>setTimeout(resolve,1500));
    deletion=await api(`/api/operations/${encodeURIComponent(deleting.id)}`);
   }
-  if(deletion.state!=='done')throw new Error(`Deletion did not complete. ${deletion.log||''}`);
+  if(deletion.state!=='done')throw new Error('Deletion could not be confirmed. Reconnect and retry; see the progress log for details.');
   savePendingJobs(pendingJobs().filter(item=>item.id!==id));
   if(redirect){location.href='/?'+params({});return;}
   jobs=jobs.filter(item=>item.id!==id);renderJobs();
@@ -399,6 +399,7 @@ async function fetchJob(fresh=false){
  if(requestedPage!==taskPage||perPage!==pageSize('#task-page-size')||sort!==tableSort.tasks.key||direction!==tableSort.tasks.direction||query!==$('#task-filter').value||outcomeKey!==outcomeSelectionKey()){scheduleRefresh();return;}
  jobData=data;
  watchRecovery(data);
+ const submissionDiagnostic=$('#submission-diagnostic');if(submissionDiagnostic){submissionDiagnostic.hidden=!data.controller_log;text('#submission-controller-log',data.controller_log||'');}
  const attention=$('#job-attention');if(attention){attention.hidden=!data.attention;attention.textContent=data.attention||'';}
  autoRefreshTotal=data.total;autoRefreshPercent=data.percent;
  const lastPage=Math.max(0,Math.ceil(data.matched/perPage)-1);if(taskPage>lastPage){taskPage=lastPage;syncTableUrl();scheduleRefresh();return;}

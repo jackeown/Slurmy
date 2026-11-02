@@ -234,3 +234,31 @@ jobs. Accounting requests for a job are restricted to its recorded SLURM IDs.
 Collectors also have a remote time budget, so local request timeouts do not leave
 unbounded collectors running on the head node. Automatic recovery acts only on
 newly collected observations, never on stale cached data.
+
+### Interrupted Job Operations and Submission Diagnostics
+
+Stop and Delete retry interrupted SSH connections or timeouts up to three times.
+Each retry replays the complete operation script. Stop rechecks the queue after
+cancellation, including when a task finishes during `scancel`. Delete rechecks the
+queue and controller lock before removing files. Its separate lock and deletion
+marker make a lost acknowledgment or partially completed removal safe to retry.
+Missing jobs are acknowledged as already removed; symlink job directories are
+rejected. Local downloads are removed only after successful cluster deletion.
+Resume is not blindly replayed after an ambiguous connection failure: it may have
+already launched work, so the message asks the user to check the refreshed status.
+
+The job page now includes **Submission Diagnostic** when a controller fails,
+showing the last 8 KiB of its log. History also shows its last output line. A
+zero-batch failure is not enough to identify its cause without that output.
+Nested submission shells and detached controllers skip noninteractive startup
+hooks while preserving exported variables such as PATH. The SSH login shell is
+still managed by the user's cluster account; interactive-only commands such as
+`bind` belong behind an interactive-shell check there. SSH security warnings are
+retained in the full operation log rather than repeated in a large error notice.
+
+Automatic-recovery monitoring uses a lightweight scheduler heartbeat for known
+jobs. Running jobs require no result, metadata, or progress-file reads. Checks
+are skipped when a collection is already active or a successful collection just
+ran. Only confirmed idle candidates receive a fresh detailed collection before
+recovery; saved cached results never authorize a resume. This replaces the older
+background full-history scan while leaving normal history/detail views available.

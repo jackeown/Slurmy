@@ -10,6 +10,22 @@ class SnapshotCache:
         self.entries, self.pending, self.host_locks = {}, {}, {}
         self.lock = threading.Lock()
 
+    def try_host_call(self, host, callback, skip_if_recent=None):
+        """Skip a heartbeat if this host already has a monitoring read in flight."""
+        with self.lock:
+            if skip_if_recent is not None and any(
+                    key[0]==host and 'value' in entry and not entry.get('error') and
+                    time.monotonic()-entry.get('time',float('-inf'))<skip_if_recent
+                    for key,entry in self.entries.items()):
+                return None
+            lock=self.host_locks.setdefault(host,threading.Lock())
+        if not lock.acquire(blocking=False):
+            return None
+        try:
+            return callback()
+        finally:
+            lock.release()
+
     def peek(self, key):
         with self.lock:
             return self.entries.get(key, {}).get('value')

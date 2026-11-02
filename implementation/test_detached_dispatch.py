@@ -48,6 +48,8 @@ touch survived
                                     env={**os.environ, 'HOME': folder}, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('Invalid topology', result.stderr)
+            self.assertTrue((job/'.submit-controller.lock').exists())
+            self.assertTrue((job/'submission.state').read_text().startswith('failed '))
 
     def test_legacy_resume_embeds_current_dispatcher(self):
         # Existing cluster jobs must receive exactly the same robust launcher.
@@ -95,3 +97,16 @@ touch survived
                 self.assertEqual(result.returncode == 0, state != 'queue-error')
                 self.assertFalse((job / 'SHOULD_NOT_RUN').exists())
                 self.assertEqual((job / '.stopped').exists(), state == 'stopped')
+
+    def test_controller_does_not_rerun_noninteractive_shell_startup_hooks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);job=root/'slurmy/jobs/test-job';job.mkdir(parents=True)
+            hook=root/'shell-hook.sh'
+            hook.write_text('if [[ "$0" == *remote_submit.sh ]]; then echo "bind: line editing not enabled" >&2; exit 23; fi\n')
+            (job/'remote_submit.sh').write_text('printf "%s" "$CLUSTER_SETTING" > preserved; touch started\n')
+            result=subprocess.run(['bash',str(TEMPLATES/'remote_dispatch.sh'),'test-job'],
+                                  env={**os.environ,'HOME':folder,'BASH_ENV':str(hook),'CLUSTER_SETTING':'preserved value'},capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertTrue((job/'started').exists())
+            self.assertEqual((job/'preserved').read_text(),'preserved value')
+            self.assertNotIn('bind:',(job/'submission-controller.log').read_text())

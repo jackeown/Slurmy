@@ -32,7 +32,7 @@ SSH_OPTIONS=(-T "${SSH_REUSE[@]}")
 ssh_stage() {
     local script=$1 label=$2 attempt
     for attempt in 1 2 3; do
-        if ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" < "$ASSETS/$script"; then return 0; fi
+        if ssh "${SSH_OPTIONS[@]}" -- "$HOST" env -u BASH_ENV -u ENV bash --noprofile --norc -s -- "$JOB_ID" < "$ASSETS/$script"; then return 0; fi
         echo "$label: SSH attempt $attempt/3 failed." >&2
         (( attempt == 3 )) || sleep 2
     done
@@ -47,7 +47,7 @@ if [[ -n ${SLURMY_RESUME_JOB_ID:-} ]]; then
     JOB_ID=$SLURMY_RESUME_JOB_ID
     [[ "$JOB_ID" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Invalid SLURMY_RESUME_JOB_ID.' >&2; exit 1; }
     echo "Resuming accepted batches for $JOB_ID; no inputs are rebuilt or uploaded."
-    ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" "$AUTO_JOB_NAME" < "$ASSETS/remote_dispatch.sh"
+    ssh "${SSH_OPTIONS[@]}" -- "$HOST" env -u BASH_ENV -u ENV bash --noprofile --norc -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" "$AUTO_JOB_NAME" < "$ASSETS/remote_dispatch.sh"
     exit $?
 fi
 
@@ -98,9 +98,16 @@ fi
 echo 'Submission phase: Committing upload and submitting SLURM batches'
 # Commit and dispatch in the same authenticated channel. The subshell keeps an
 # idempotent upload acknowledgment's exit from skipping dispatch.
-if ! { printf 'set -euo pipefail\n(\n'; cat "$ASSETS/remote_finish_upload.sh"; printf '\n)\n'; cat "$ASSETS/remote_dispatch.sh"; } | \
-    ssh "${SSH_OPTIONS[@]}" -- "$HOST" bash -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" "$AUTO_JOB_NAME"; then
-    echo "Submission connection failed. Some batches may already be accepted; inspect job $JOB_ID before retrying." >&2
+if { printf 'set -euo pipefail\n(\n'; cat "$ASSETS/remote_finish_upload.sh"; printf '\n)\n'; cat "$ASSETS/remote_dispatch.sh"; } | \
+    ssh "${SSH_OPTIONS[@]}" -- "$HOST" env -u BASH_ENV -u ENV bash --noprofile --norc -s -- "$JOB_ID" "$SLURMY_PARTITION" "$MAX_OUTSTANDING" "$JOB_PREFIX" "$JOB_NAME_B64" 0 "${SLURMY_RESERVATION:--}" "$AUTO_JOB_NAME"; then
+    :
+else
+    code=$?
+    if (( code == 255 )); then
+        echo "Submission connection was interrupted. The cluster controller may still be running; inspect job $JOB_ID before retrying." >&2
+    else
+        echo "Cluster submission failed (exit $code). See Submission Diagnostic on job $JOB_ID for the controller output." >&2
+    fi
     echo "To resume only unaccepted batches: SLURMY_RESUME_JOB_ID=$JOB_ID bash ./submit.sh" >&2
-    exit 1
+    exit "$code"
 fi

@@ -165,3 +165,25 @@ class SnapshotCacheTests(unittest.TestCase):
                     self.assertEqual(client.get('/api/jobs').status_code, 200)
                 self.assertEqual(collector.return_value.fetch.call_count, 1)
                 self.assertEqual(observe.call_count, 1)
+
+    def test_heartbeat_skips_a_host_that_is_already_collecting(self):
+        cache=SnapshotCache();key=('host','job')
+        cache.get(key,30,lambda:SimpleNamespace(fetched_epoch=time.time()))
+        cache.invalidate();entered,release=threading.Event(),threading.Event()
+        def load():
+            entered.set();release.wait(2)
+            return SimpleNamespace(fetched_epoch=time.time())
+        try:
+            cache.get(key,30,load);self.assertTrue(entered.wait(1))
+            pending=cache.pending[key]
+            self.assertIsNone(cache.try_host_call('host',lambda:self.fail('Overlapping heartbeat')))
+        finally:release.set()
+        self.assertTrue(pending.wait(1))
+        self.assertEqual(cache.try_host_call('host',lambda:'checked'),'checked')
+
+    def test_recent_successful_collection_makes_another_heartbeat_unnecessary(self):
+        cache=SnapshotCache();key=('host','job')
+        cache.get(key,30,lambda:SimpleNamespace(fetched_epoch=time.time()))
+        self.assertIsNone(cache.try_host_call('host',lambda:self.fail('Redundant heartbeat'),skip_if_recent=20))
+        cache.invalidate()
+        self.assertEqual(cache.try_host_call('host',lambda:'checked',skip_if_recent=20),'checked')

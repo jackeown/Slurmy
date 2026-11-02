@@ -409,6 +409,16 @@ for directory in "${job_dirs[@]}"; do
         fi
     fi
     printf 'CONTROLLER_STATE\0%s\0%s\0' "$job" "$controller"
+    # Startup failures need a useful explanation, not just "Incomplete".
+    submission_kind=
+    if [[ "$controller" != active && -f "$directory/submission.state" ]]; then read -r submission_kind _ < "$directory/submission.state" || true; fi
+    if [[ "$submission_kind" == failed || ( "$submission_kind" == submitting && "$controller" == inactive ) ]]; then
+        if [[ -f "$directory/submission-controller.log" && ! -L "$directory/submission-controller.log" ]]; then
+            printf 'CONTROLLER_LOG\0%s\0' "$job"
+            tail -c 8192 -- "$directory/submission-controller.log"
+            printf '\0'
+        fi
+    fi
 done
 
 if queue_snapshot=$(squeue -r -h -u "$USER" -o '%i|%F|%K|%T|%M|%L|%j|%Z|%R' 2>/dev/null); then
@@ -446,6 +456,45 @@ sacct "${accounting_options[@]}" -X -S "$start" -n -P \
     2>/dev/null | awk -F '|' -v prefix="$BASE/" 'index($9, prefix) == 1'
 printf '\0'
 """
+
+# Recovery heartbeat: running jobs need a scheduler check, not result scans.
+REMOTE_ACTIVITY_SCRIPT = r'''
+set -u
+BASE="$HOME/slurmy/jobs"
+queue_available=false
+if queue=$(squeue -h -r -u "$USER" -o '%Z' 2>/dev/null); then queue_available=true; else queue=; fi
+printf '{"queue_available":%s,"jobs":[' "$queue_available"
+separator=
+for job in "$@"; do
+    [[ "$job" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || exit 2
+    directory="$BASE/$job"
+    active=false; controller=unknown; stopped=false; exists=null
+    if [[ "$queue_available" == true ]]; then
+        if grep -Fxq -- "$directory" <<< "$queue"; then
+            # No job files are touched while SLURM confirms active work.
+            active=true; exists=true
+        elif [[ -d "$directory" && ! -L "$directory" ]]; then
+            exists=true
+            if [[ -e "$directory/.stopped" ]]; then
+                stopped=true
+            elif [[ -f "$directory/.submit-controller.lock" ]]; then
+                if flock -s -n -E 75 "$directory/.submit-controller.lock" true; then
+                    controller=inactive
+                else
+                    lock_status=$?
+                    if (( lock_status == 75 )); then controller=active; fi
+                fi
+            fi
+        else
+            exists=false
+        fi
+    fi
+    printf '%s{"job_id":"%s","active":%s,"controller_state":"%s","stopped":%s,"exists":%s}' \
+        "$separator" "$job" "$active" "$controller" "$stopped" "$exists"
+    separator=,
+done
+printf ']}\n'
+'''
 
 # Task output is extracted only when the user asks for it. To keep a mistaken huge
 # output from flooding SSH or the terminal, each displayed member is capped at
@@ -611,6 +660,7 @@ class JobSnapshot:
     submitted_batches: set[int] = field(default_factory=set)
     submission_state: str = ""
     controller_state: str = ""
+    controller_log: str = ""
     queue_available: bool = False
     submission_count: int = 0
     slurm: list[SlurmRecord] = field(default_factory=list)
@@ -668,12 +718,19 @@ class JobSnapshot:
         return task_issues + int(unresolved_slurm_failure) + int(setup_incomplete) + int(submission_incomplete)
 
     @property
+    def controller_error(self) -> str:
+        lines=[line.strip() for line in self.controller_log.splitlines() if line.strip()]
+        return lines[-1][:300] if lines else ''
+
+    @property
     def attention(self) -> str:
         if self.completed >= self.task_count or self.submission_state == 'stopped':
             return ''
         if self.submission_state == 'failed' or (self.submission_state == 'submitting' and self.controller_state == 'inactive'):
             pending = max(0, self.batch_count - len(self.submitted_batches))
             suffix = f' {pending} batches have not been submitted.' if pending else ''
+            if self.controller_error:
+                suffix += ' Last controller output: ' + self.controller_error
             if self.active_records:
                 return 'Submission controller stopped; accepted SLURM tasks are still active.' + suffix
             return 'Job is not running: its submission controller stopped and no SLURM tasks are active.' + suffix + ' Resume to retry unfinished solver-problem pairs; completed results are kept.'
@@ -770,6 +827,7 @@ PROTOCOL_ARITY = {
     "SUBMISSION_CSV": 2,
     "SUBMISSION_STATE": 2,
     "CONTROLLER_STATE": 2,
+    "CONTROLLER_LOG": 2,
     "QUEUE_AVAILABLE": 1,
     "RESULT_OVERRIDE": 3,
     "SUBMISSION_TSV": 2,
@@ -984,6 +1042,7 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
     submissions: dict[str, tuple[str, str]] = {}
     submission_states: dict[str, str] = {}
     controller_states: dict[str, str] = {}
+    controller_logs: dict[str, str] = {}
     result_overrides: dict[str, dict[int, str]] = {}
     logs: dict[str, dict[str, str]] = {}
     queue_payload = ""
@@ -1016,6 +1075,8 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
             progress_payloads[fields[0]] = (kind, fields[1])
         elif kind in {"SUBMISSION_CSV", "SUBMISSION_TSV"}:
             submissions[fields[0]] = (kind, fields[1])
+        elif kind == "CONTROLLER_LOG":
+            controller_logs[fields[0]] = fields[1]
         elif kind == "CONTROLLER_STATE":
             controller_states[fields[0]] = fields[1]
         elif kind == "SUBMISSION_STATE":
@@ -1043,6 +1104,7 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
 
     for job_id, job in jobs.items():
         job.controller_state = controller_states.get(job_id, "unknown")
+        job.controller_log = controller_logs.get(job_id, "")
         job.queue_available = queue_available
         state_fields = submission_states.get(job_id, '').split()
         if len(state_fields) >= 2 and state_fields[0] in {'submitting', 'complete', 'failed', 'stopped'}:
@@ -1251,7 +1313,7 @@ class RemoteCollector:
             "-o", "ServerAliveCountMax=2",
             "--",
             self.host,
-            shlex.join(['bash','-c',f'set -o pipefail; timeout --signal=TERM --kill-after=5 {budget} bash -s -- "$@" | gzip -1',
+            shlex.join(['env','-u','BASH_ENV','-u','ENV','bash','--noprofile','--norc','-c',f'set -o pipefail; timeout --signal=TERM --kill-after=5 {budget} bash -s -- "$@" | gzip -1',
                         'slurmy-monitor',detail_job or '-',
                         str(max(0,int(since_epoch))) if since_epoch is not None else '']),
         ]
@@ -1279,6 +1341,35 @@ class RemoteCollector:
             raise RuntimeError('Incomplete compressed monitoring response; retry the refresh.') from exc
         return parse_snapshot(self.host,payload)
 
+    def fetch_activity(self, job_ids):
+        ids=list(job_ids)
+        if any(not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', name) for name in ids):
+            raise ValueError('Invalid job ID.')
+        command=shlex.join(['env','-u','BASH_ENV','-u','ENV','timeout','-k','5','15','bash','--noprofile','--norc','-s','--',*ids])
+        try:
+            result=subprocess.run(['ssh',*connection_options(),'-T','-o','BatchMode=yes',
+                                   '-o',f'ConnectTimeout={max(1,int(self.timeout))}','--',self.host,command],
+                                  input=REMOTE_ACTIVITY_SCRIPT.encode(),capture_output=True,timeout=20)
+        except (OSError,subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f'Could not check job activity: {exc}') from exc
+        if result.returncode:
+            raise RuntimeError(result.stderr.decode(errors='replace').strip() or 'Job activity check failed.')
+        try:
+            value=json.loads(result.stdout)
+            if not isinstance(value,dict) or not isinstance(value.get('queue_available'),bool) or not isinstance(value.get('jobs'),list):
+                raise ValueError('Invalid activity response')
+            rows=value['jobs']
+            if any(not isinstance(row,dict) or row.get('job_id') not in ids or
+                   not isinstance(row.get('active'),bool) or not isinstance(row.get('stopped'),bool) or
+                   row.get('controller_state') not in {'active','inactive','unknown'} or
+                   row.get('exists') not in {True,False,None} for row in rows):
+                raise ValueError('Invalid activity records')
+            if len(rows)!=len(ids) or {row['job_id'] for row in rows}!=set(ids):
+                raise ValueError('Incomplete activity response')
+            return value
+        except (ValueError,TypeError) as exc:
+            raise RuntimeError('Invalid job activity response.') from exc
+
     def fetch_batch_log(self, job_id: str, slurm_id: str) -> str:
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', job_id) or not re.fullmatch(r'[0-9]+_[0-9]+', slurm_id):
             raise ValueError('Invalid job or SLURM task ID.')
@@ -1289,7 +1380,7 @@ if [[ -f "$log" && ! -L "$log" ]]; then tail -c 262144 -- "$log"; fi
         try:
             result = subprocess.run(['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes',
                                      '-o', f'ConnectTimeout={max(1, int(self.timeout))}', '--', self.host,
-                                     shlex.join(['bash', '-s', '--', job_id, slurm_id])],
+                                     shlex.join(['env','-u','BASH_ENV','-u','ENV','bash','--noprofile','--norc','-s','--',job_id,slurm_id])],
                                     input=script.encode(), capture_output=True, timeout=self.timeout + 10)
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise RuntimeError(f'Could not read batch log: {exc}') from exc
@@ -1320,7 +1411,7 @@ head -c 1048577 -- "$file"
 '''
         command = ['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o',
                    f'ConnectTimeout={max(1, int(self.timeout))}', '--', self.host,
-                   'bash', '-s', '--', job_id, problem.lstrip('/')]
+                   'env','-u','BASH_ENV','-u','ENV','bash','--noprofile','--norc','-s','--',job_id,problem.lstrip('/')]
         try:
             process = subprocess.run(command, input=script.encode(), stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, timeout=self.timeout + 20, check=False)

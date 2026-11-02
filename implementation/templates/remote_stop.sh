@@ -3,6 +3,7 @@
 set -euo pipefail
 [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || exit 2
 job="$HOME/slurmy/jobs/$1"
+[[ -e "$job" || -L "$job" ]] || { echo 'Job is already absent; nothing remains to stop.'; exit 0; }
 [[ -d "$job" && ! -L "$job" ]] || { echo 'Job directory not found.' >&2; exit 2; }
 : > "$job/.stopped"
 for attempt in {1..30}; do
@@ -14,7 +15,11 @@ for attempt in {1..30}; do
     if [[ -n "$snapshot" ]]; then
         mapfile -t ids < <(awk -F'|' -v directory="$job" '$2==directory {print $1}' <<< "$snapshot")
     fi
-    if (( ${#ids[@]} )); then scancel "${ids[@]}"; fi
+    if (( ${#ids[@]} )); then
+        if ! scancel "${ids[@]}"; then
+            echo 'SLURM cancellation returned an error; checking the queue again before proceeding.' >&2
+        fi
+    fi
     if (( ${#ids[@]} == 0 )) && flock -n "$job/.submit-controller.lock" true; then
         if [[ -f "$job/submission.state" ]]; then read -r _ accepted total < "$job/submission.state" || true; fi
         printf 'stopped %s %s\n' "${accepted:-0}" "${total:-0}" > "$job/submission.state"
