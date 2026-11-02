@@ -250,6 +250,11 @@ already launched work, so the message asks the user to check the refreshed statu
 The job page now includes **Submission Diagnostic** when a controller fails,
 showing the last 8 KiB of its log. History also shows its last output line. A
 zero-batch failure is not enough to identify its cause without that output.
+Controller failures also report the phase and number of accepted batches, including
+failures before the first submission. A failed or timed-out coordinator `squeue`
+read now returns WAIT: the controller pauses and retries after its normal five-second
+delay without calling `sbatch` against an unknown queue. This does not retry an
+ambiguous `sbatch` acceptance, or suppress permanent submission/validation errors.
 Nested submission shells and detached controllers skip noninteractive startup
 hooks while preserving exported variables such as PATH. The SSH login shell is
 still managed by the user's cluster account; interactive-only commands such as

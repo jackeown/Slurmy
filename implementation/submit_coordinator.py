@@ -138,7 +138,14 @@ def main() -> int:
             if demand > 0:
                 demands[record["job_id"]] = demand
         user = os.environ.get("USER") or command(["id", "-un"]).stdout.strip()
-        total, other, own = queue_snapshot(user, jobs_root)
+        try:
+            total, other, own = queue_snapshot(user, jobs_root)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            # This observation is read-only. Never submit against an unknown
+            # queue, but do not kill the controller over a transient outage.
+            message = str(exc).replace("\n", " ")
+            print(f"WAIT|Cannot read SLURM queue; submission paused until a successful query: {message}")
+            return 0
         capacity_file = base / "submit-capacity.json"
         capacity_record = read_json(capacity_file)
         if now - float(capacity_record.get("checked", 0)) > OBSERVATION_SECONDS:

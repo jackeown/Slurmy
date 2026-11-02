@@ -8,8 +8,12 @@ export JOB_DIR
 [[ -d "$JOB_DIR" && ! -L "$JOB_DIR" ]] || { echo 'Committed Slurmy job directory is missing.' >&2; exit 1; }
 exec 9> "$JOB_DIR/.submit-controller.lock"
 flock -n 9 || { echo 'Another controller is already submitting this Slurmy job.' >&2; exit 1; }
+SUBMISSION_PHASE='initializing committed inputs'
 finish_submit() {
     local rc=$?
+    if (( rc != 0 )); then
+        printf 'Submission controller failed during %s (exit %s; %s batches accepted). See preceding output for the cause.\n' "$SUBMISSION_PHASE" "$rc" "${submitted:-0}" >&2
+    fi
     if [[ -f "$JOB_DIR/submit_coordinator.py" ]]; then python3 "$JOB_DIR/submit_coordinator.py" release "$SLURMY_JOB_ID" || true; fi
     if (( rc != 0 )); then printf "failed %s %s\n" "${submitted:-0}" "${next_batch:-0}" > "$JOB_DIR/submission.state"; fi
 }
@@ -92,6 +96,7 @@ TOTAL_CALLS=$(sed -n 's/.*"task_count": *\([0-9][0-9]*\).*/\1/p' metadata.json |
 [[ "$TOTAL_CALLS" =~ ^[0-9]+$ ]] || { echo 'Missing call count in metadata.json.' >&2; exit 1; }
 
 # Physical core isolation requires allocation at core granularity and cgroups.
+SUBMISSION_PHASE='checking SLURM configuration and partition topology'
 CONFIG=$(scontrol show config)
 grep -Eq 'SelectTypeParameters[[:space:]]*=.*CR_CORE' <<< "$CONFIG" || {
     echo 'This scheduler currently requires SelectTypeParameters=CR_CORE[_MEMORY].' >&2; exit 1;
@@ -111,6 +116,7 @@ TOPOLOGY=$(sinfo -p "$PARTITION" -N -h -o '%X %Y %Z %m' | sort -u)
 read -r SOCKETS CORES_PER_SOCKET THREADS_PER_CORE NODE_MEMORY <<< "$TOPOLOGY"
 [[ "$SOCKETS $CORES_PER_SOCKET $THREADS_PER_CORE" =~ ^[1-9][0-9]*\ [1-9][0-9]*\ [1-9][0-9]*$ ]] || exit 1
 csv_row batch_id concurrent_calls reserved_cores memory_mib wall_seconds exclusive_cpu exclusive_node > allocations.csv
+SUBMISSION_PHASE='planning and validating batch allocations'
 
 # Resolve automatic socket needs using the cluster's actual node topology.
 mkdir -p batches
@@ -190,6 +196,7 @@ for batch in batches/batch_*.sh; do
     csv_row "$BATCH_ID" "$PARALLEL" "$((PARALLEL * SLOT_CORES))" "$MEMORY_MIB" "$WALL_SECONDS" "$EXCLUSIVE_CPU" "$EXCLUSIVE_NODE" >> allocations.csv
 done
 if [[ -f submission.csv ]]; then
+    SUBMISSION_PHASE='reading previously accepted batches'
     prior_ids=$(python3 - <<'PY'
 import csv
 from pathlib import Path
@@ -228,6 +235,7 @@ MAX_OUTSTANDING=${3:-32}
 }
 printf 'submitting %s %s\n' "$submitted" "$next_batch" > submission.state
 declare -A RESUME_WANTED=()
+SUBMISSION_PHASE='selecting unfinished solver-problem pairs'
 if (( RESUME_INCOMPLETE )); then
     resume_batches=$(python3 - <<'PY'
 import csv, json
@@ -257,6 +265,7 @@ fi
 echo "Slurmy job ID: $1"
 echo "Submission progress: $submitted/$next_batch batches accepted (at most $MAX_OUTSTANDING outstanding)"
 for batch in batches/batch_*.sh; do
+    SUBMISSION_PHASE="submitting ${batch##*/}"
     source "$batch"
     [[ ! -f .stopped ]] || { echo 'Submission stopped before the next batch.' >&2; exit 1; }
     if (( BATCH_ID < submitted )) && [[ ! ${RESUME_WANTED[$BATCH_ID]:-} ]]; then continue; fi
