@@ -11,6 +11,25 @@ import subprocess
 import sys
 
 
+def dedicated_core_topology(host, partition):
+    for value in (host, partition):
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', value):
+            raise ValueError('Invalid cluster host or partition.')
+    result = subprocess.run(['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes',
+                             '-o', 'ConnectTimeout=10', '--', host,
+                             f"sinfo -p {partition} -N -h -o '%X %Y'"],
+                            capture_output=True, text=True, timeout=25)
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or 'Cannot inspect dedicated core topology.')
+    rows = {tuple(line.split()) for line in result.stdout.splitlines() if line.strip()}
+    if len(rows) != 1:
+        raise ValueError('All cores requires a partition with homogeneous socket/core topology.')
+    row = rows.pop()
+    if len(row) != 2 or any(not v.isdecimal() or int(v) < 1 for v in row):
+        raise ValueError('Incomplete socket/core topology for All cores.')
+    return tuple(map(int, row))
+
+
 def check_requested(host: str, partition: str, maximum: int) -> int:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", partition):
         raise ValueError("Invalid SLURM partition name.")

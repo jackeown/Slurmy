@@ -267,3 +267,13 @@ are skipped when a collection is already active or a successful collection just
 ran. Only confirmed idle candidates receive a fresh detailed collection before
 recovery; saved cached results never authorize a resume. This replaces the older
 background full-history scan while leaving normal history/detail views available.
+
+Solver placement controls are ordered as whole node, whole CPU sockets, physical
+cores, then threads per core (default 1). Changing whole-node isolation defaults
+socket isolation to the same Yes/No choice; the socket choice remains editable.
+Physical cores accepts a positive number, or `all` when socket isolation is Yes.
+`all` uses one whole socket for socket isolation, or the whole node for node
+isolation. Workflow CSVs retain `all`; preparation resolves it to the selected
+partition's homogeneous socket/core topology before generating solver commands,
+limits, batch allocations, and metadata. Numeric limits continue to restrict the
+solver even when isolation allocates a larger socket or node.

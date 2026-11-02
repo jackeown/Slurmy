@@ -35,13 +35,18 @@ def estimate(configurations, total_pairs, maximum_outstanding, nodes):
         raise ValueError('No solver-problem pairs match the selected sources.')
     capacities = []
     for configuration in configurations:
-        cores = positive(str(configuration.get('cores', '')), 'solver cores')
+        all_cores = str(configuration.get('cores', '')).lower() == 'all'
+        cores = 1 if all_cores else positive(str(configuration.get('cores', '')), 'solver cores')
         threads = positive(str(configuration.get('threads_per_core') or 1), 'threads per core')
         dedicated_node = boolean(str(configuration.get('exclusive_node') or ''), 'dedicated node')
         dedicated_socket = boolean(str(configuration.get('exclusive_cpu') or ''), 'dedicated CPU')
+        if all_cores and not dedicated_socket:
+            raise ValueError('All cores requires dedicated whole CPU sockets.')
         slots = 0
         for node in nodes:
             sockets, per_socket = node['sockets'], node['cores_per_socket']
+            if all_cores:
+                cores = per_socket * (sockets if dedicated_node else 1)
             if cores > sockets * per_socket or threads > node['threads_per_core']:
                 continue
             if dedicated_node:

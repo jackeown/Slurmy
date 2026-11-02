@@ -80,7 +80,8 @@ def memory_bytes(value: str) -> int:
     return int(match[1]) * factors[(match[2] or "MB").lower()]
 
 
-def read_pairs(filename: Path) -> list[dict]:
+def read_pairs(filename: Path, host=None, partition=None) -> list[dict]:
+    all_topology = None
     tasks = []
     solver_directories={}
     local_problems={}
@@ -122,8 +123,19 @@ def read_pairs(filename: Path) -> list[dict]:
                     "remote_problem": cluster_problem,
                     "solver_root": str(solver_root),
                     "solver": solver_name or Path(shlex.split(command)[0]).name}
-            for key in ("wc_limit", "cpu_limit", "cores"):
+            for key in ("wc_limit", "cpu_limit"):
                 task[key] = positive(row[key].strip(), f"{label}: {key}")
+            if row['cores'].strip().lower() == 'all':
+                if not boolean(row.get('exclusive_cpu') or '', f'{label}: exclusive_cpu'):
+                    raise SlurmyError(f'{label}: All cores requires dedicated whole CPU sockets.')
+                if all_topology is None:
+                    from check_threads import dedicated_core_topology
+                    all_topology = dedicated_core_topology(host or os.environ.get('SLURMY_HOST', 'datalab'),
+                                                          partition or os.environ.get('SLURMY_PARTITION', 'CPU-amd'))
+                sockets, per_socket = all_topology
+                task['cores'] = per_socket * (sockets if boolean(row.get('exclusive_node') or '', f'{label}: exclusive_node') else 1)
+            else:
+                task['cores'] = positive(row['cores'].strip(), f'{label}: cores')
             task["threads_per_core"] = positive((row.get("threads_per_core") or "1").strip(),
                                                  f"{label}: threads_per_core")
             task["cpus"] = 0 if row.get("cpus", "").strip().lower() in {"", "auto"} else positive(row["cpus"].strip(), f"{label}: cpus")
@@ -251,8 +263,8 @@ def write_script(path: Path, content: str) -> None:
 def generate(jobpairs: Path, building: Path, limiter_file: Path,
              axioms_file: Path | None = None, batch_size: int = 1, progress=None,
              max_outstanding: int = 32, pair_order: str | None = None,
-             materialize_calls: bool = True) -> Path:
-    tasks = read_pairs(jobpairs)
+             materialize_calls: bool = True, host=None, partition=None) -> Path:
+    tasks = read_pairs(jobpairs, host, partition)
     positive(str(batch_size), 'batch size')
     positive(str(max_outstanding), 'maximum outstanding SLURM tasks')
     if pair_order is not None and pair_order not in PAIR_ORDERS:

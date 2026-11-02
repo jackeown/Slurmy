@@ -34,7 +34,7 @@ if(document.body.dataset.page==='new'){
  function addResource(role,values){const node=add('resource-template',role==='limiter'?'limiter-resources':'solver-resources');node.dataset.resourceRole=role;node.dataset.resourceOrder=resourceOrder++;const caption=$('h3',node);const toggle=$('.collapse-toggle',caption);caption.textContent=role==='limiter'?'Limiter Resource':'Cluster Build for Imported Solver';if(toggle){toggle.setAttribute('aria-label',`Collapse ${caption.textContent}`);caption.prepend(toggle);}if(role==='solver')node.querySelector('[name="artifact"]').placeholder='solver';else $('.remove',node).hidden=true;fill(node,values);if(role==='limiter')updateLimiterStatus();return node;}
  $('#add-solver-resource').addEventListener('click',()=>{addResource('solver',{mode:'script',artifact:''});visibility();});
  function configurationTitle(card){const name=card.querySelector('[name="solver_name"]').value.trim(),caption=$('h3',card);const toggle=$('.collapse-toggle',caption);caption.textContent=name?`${name} Configuration`:'Solver Configuration';if(toggle){toggle.setAttribute('aria-label',`${card.classList.contains('collapsed')?'Expand':'Collapse'} ${caption.textContent}`);caption.prepend(toggle);}}
- function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field){field.value=value??'';field.refreshShell?.();}}if(node.matches('.configuration')){configurationTitle(node);updateSolverStatus(node);queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}}
+ function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field){if(name==='cores'&&value==='all')field.type='text';field.value=value??'';field.refreshShell?.();}}if(node.matches('.configuration')){configurationTitle(node);updateSolverStatus(node);queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}}
  for(const name of ['name','host','partition','reservation','batch_size','max_outstanding','pair_order','mode','jobpairs','configurations_file','limiter_mode','limiter_file','limiter']){const field=form.querySelector(`[name="${name}"]`);if(field&&initial[name]!==undefined)field.value=initial[name];}
  $('[name="limiter_mode"]').value='inline';$('[name="limiter_file"]').value='';
  if(!editing&&!initial.limiter){$('[name="limiter_mode"]').value='inline';$('[name="limiter"]').value=`${repoRoot}/implementation/build/runsolver/runsolver --cpu-limit {{cpu_limit}} --wall-clock-limit {{wc_limit}} --rss-swap-limit {{mem_limit_mib}} --timestamp --watcher-data {{watcher_log}} --var {{var_file}} --solver-data {{solver_log}} {{solver_command}}`;}
@@ -196,7 +196,27 @@ if(document.body.dataset.page==='new'){
  form.addEventListener('input',event=>{if(event.target.name==='threads_per_core')checkThreads(event.target);else if(['host','partition'].includes(event.target.name))form.querySelectorAll('[name="threads_per_core"]').forEach(checkThreads);});
  form.addEventListener('change',event=>{if(['host','partition'].includes(event.target.name))form.querySelectorAll('[name="threads_per_core"]').forEach(checkThreads);});
  form.querySelectorAll('[name="threads_per_core"]').forEach(checkThreads);
+ function syncPlacement(card){
+  const cores=card.querySelector('[name="cores"]'),socket=card.querySelector('[name="exclusive_cpu"]');
+  const choice=card.querySelector('[data-core-choice]'),all=choice.querySelector('[value="all"]');
+  all.hidden=all.disabled=socket.value!=='true';
+  if(cores.value==='all'&&all.disabled)cores.value=cores.dataset.number||'1';
+  const useAll=cores.value==='all';choice.value=useAll?'all':'number';
+  cores.type=useAll?'text':'number';cores.hidden=useAll;
+  card.querySelector('[data-all-cores]').hidden=!useAll;
+ }
+ form.addEventListener('change',event=>{
+  const card=event.target.closest('.configuration');if(!card)return;
+  if(event.target.name==='exclusive_node')card.querySelector('[name="exclusive_cpu"]').value=event.target.value;
+  if(event.target.matches('[data-core-choice]')){
+   const cores=card.querySelector('[name="cores"]');
+   if(event.target.value==='all'){cores.dataset.number=cores.value;cores.type='text';cores.value='all';}
+   else{cores.type='number';cores.value=cores.dataset.number||'1';}
+  }
+  syncPlacement(card);updateSolverStatus(card);
+ });
  function updateSolverStatus(card){
+  syncPlacement(card);
   const value=name=>card.querySelector(`[name="${name}"]`).value.trim();
   const buildSelected=rootValue('building_mode')==='create'&&value('build_mode')==='script';
   const pathReady=name=>{const input=card.querySelector(`[name="${name}"]`);return input.value.trim()&&input.dataset.validated===input.value;};
@@ -206,7 +226,7 @@ if(document.body.dataset.page==='new'){
    !/^\.\/solver(?:\s|$)/.test(value('command'));
   const buildReady=!buildSelected||((!value('build_source')||pathReady('build_source'))&&pathReady('build_script'));
   const positive=name=>{const input=card.querySelector(`[name="${name}"]`);return input.value.trim()!==''&&input.validity.valid&&Number(input.value)>0;};
-  const limitsReady=card.querySelector('[name="threads_per_core"]').dataset.threadValid==='true'&&['wc_limit','cpu_limit','cores','threads_per_core'].every(positive)&&
+  const limitsReady=card.querySelector('[name="threads_per_core"]').dataset.threadValid==='true'&&['wc_limit','cpu_limit','threads_per_core'].every(positive)&&(positive('cores')||(value('cores')==='all'&&value('exclusive_cpu')==='true'))&&
    /^\s*(?:\d+(?:\.\d+)?)(?:\s*(?:[kmgpt]i?b?|b))?\s*$/i.test(value('mem_limit'))&&
    ['exclusive_cpu','exclusive_node'].every(name=>['true','false'].includes(value(name)));
   for(const [section,ready,good,bad] of [
@@ -274,7 +294,7 @@ if(document.body.dataset.page==='new'){
   if(step===1&&rootValue('mode')==='interactive'&&[...document.querySelectorAll('#configurations .configuration')].some(card=>card.dataset.state==='invalid'))throw new Error('Give each solver configuration a distinct name.');
   if(step===1&&rootValue('mode')==='interactive'){
    const coreInputs=[...document.querySelectorAll('#configurations .configuration [name="cores"]')];
-   const requested=Math.max(...coreInputs.map(input=>Number(input.value)));
+   const requested=Math.max(...coreInputs.map(input=>(input.value==='all'?1:Number(input.value))));
    const response=await fetch('/api/validate-solver-cores',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({host:rootValue('host'),partition:rootValue('partition'),cores:requested})});
    const result=await response.json();
    if(!response.ok){const input=coreInputs.find(item=>Number(item.value)===requested);input?.closest('details')?.setAttribute('open','');input?.focus();throw new Error(result.error||'Could not check the selected partition’s core capacity.');}

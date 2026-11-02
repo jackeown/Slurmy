@@ -14,6 +14,13 @@ class BatchSuggestionTests(unittest.TestCase):
     def setUp(self):
         self.nodes = [dict(sockets=2, cores_per_socket=32, threads_per_core=2) for _ in range(10)]
 
+    def test_all_cores_uses_dedicated_socket_or_node_capacity(self):
+        for node, capacity in [('false',20),('true',10)]:
+            result=batch.estimate([config(cores='all',exclusive_cpu='true',exclusive_node=node)],1000,100,self.nodes)
+            self.assertEqual(result['hardware_parallelism'],capacity)
+        with self.assertRaisesRegex(ValueError,'requires dedicated'):
+            batch.estimate([config(cores='all',exclusive_cpu='false')],1000,100,self.nodes)
+
     def test_shared_socket_and_node_and_outstanding_limit(self):
         for extra, capacity in (({}, 80), ({'exclusive_cpu': 'true'}, 20),
                                 ({'exclusive_node': 'true'}, 10)):
