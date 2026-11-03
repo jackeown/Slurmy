@@ -147,17 +147,24 @@ function jobActionControls(){
 }
 function lockWorkflowActions(locked){if(page!=='workflow')return;for(const id of ['prepare','submit','submit-only','submit-menu-toggle']){const control=$('#'+id);if(control)control.disabled=locked;}}
 function operationVisibility(){const pane=$('#operation');pane.hidden=operationHidden;const reopen=$('#show-operation');if(reopen)reopen.hidden=!currentOperationId||!operationHidden;}
+function updateOperationLog(value){
+ const log=$('#operation-log');if(!log||log.textContent===value)return;
+ const top=log.scrollTop;
+ const follow=log.scrollHeight-log.clientHeight-top<=4;
+ log.textContent=value;
+ log.scrollTop=follow?log.scrollHeight:top;
+}
 async function watchOperation(id){
   clearTimeout(operationTimer);currentOperationId=id;operationVisibility();sessionStorage.setItem('slurmy-operation',id);
   try{
-    const op=await api('/api/operations/'+encodeURIComponent(id));if(currentOperationId!==id)return;text('#operation-title',`${op.phase} · ${op.state}`);text('#operation-log',op.log||'Starting…');
+    const op=await api('/api/operations/'+encodeURIComponent(id));if(currentOperationId!==id)return;text('#operation-title',`${op.phase} · ${op.state}`);updateOperationLog(op.log||'Starting…');
     const match=op.log.match(/Slurmy job ID: ([A-Za-z0-9._-]+)/);
     $('#submitted-link')?.remove();
     if(match&&['prepare and dispatch SLURM job','dispatch prepared SLURM job'].includes(op.label)){announceJob(match[1],op.requested_name);if($('#jobs-body'))renderJobs();const node=link('View submitted job →','/jobs/'+encodeURIComponent(match[1])+'?'+params({}));node.id='submitted-link';$('#operation').append(node);refresh();}
     if(op.scope===host+':'+document.body.dataset.job){jobAction=op.state==='running'?op.label:null;jobActionControls();}
     if(op.state==='running'){lockWorkflowActions(true);operationTimer=setTimeout(()=>watchOperation(id),1500);}
     else{lockWorkflowActions(false);sessionStorage.removeItem('slurmy-operation');text('#show-operation','View completed operation');if(op.label!=='delete')await refresh(true);}
-  }catch(error){jobAction=null;jobActionControls();lockWorkflowActions(false);text('#operation-log',error.message);sessionStorage.removeItem('slurmy-operation');}
+  }catch(error){jobAction=null;jobActionControls();lockWorkflowActions(false);updateOperationLog(error.message);sessionStorage.removeItem('slurmy-operation');}
 }
 $('#dismiss-operation')?.addEventListener('click',()=>{operationHidden=true;if(currentOperationId)sessionStorage.setItem('slurmy-operation-hidden',currentOperationId);operationVisibility();});
 $('#show-operation')?.addEventListener('click',()=>{operationHidden=false;sessionStorage.removeItem('slurmy-operation-hidden');operationVisibility();if(currentOperationId)watchOperation(currentOperationId);});
