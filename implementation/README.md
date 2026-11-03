@@ -277,3 +277,13 @@ isolation. Workflow CSVs retain `all`; preparation resolves it to the selected
 partition's homogeneous socket/core topology before generating solver commands,
 limits, batch allocations, and metadata. Numeric limits continue to restrict the
 solver even when isolation allocates a larger socket or node.
+
+Submission controllers use `nohup setsid` with redirected streams: ignoring HUP
+alone does not detach the process group from SSH/session cleanup. Resume always
+uses the current launcher supplied by the client, including for older jobs with
+an obsolete `remote_dispatch.sh` in their uploaded bundle. This was verified on
+3 November 2026 against an account where a `nohup` probe did not survive closing
+SSH but a `setsid` probe did. Its failed 64-batch job had repeatedly terminated
+while preparing 2,438 custom axioms; resuming with the corrected launcher completed
+that preparation and submitted the first 32 batches. SLURM then queued those tasks
+for Priority, while the controller correctly waited at its 32-task limit.

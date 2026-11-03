@@ -89,8 +89,12 @@ print('Job name: ' + metadata['job_name'])
 PY
     flock -u 8
     exec 8>&-
-    if [[ -f ./prepare_axioms.sh ]]; then bash ./prepare_axioms.sh; fi
+    if [[ -f ./prepare_axioms.sh ]]; then
+        SUBMISSION_PHASE='preparing custom TPTP axioms'
+        bash ./prepare_axioms.sh
+    fi
 fi
+SUBMISSION_PHASE='reading solver-problem pair metadata'
 source ./csv.sh
 TOTAL_CALLS=$(sed -n 's/.*"task_count": *\([0-9][0-9]*\).*/\1/p' metadata.json | head -n 1)
 [[ "$TOTAL_CALLS" =~ ^[0-9]+$ ]] || { echo 'Missing call count in metadata.json.' >&2; exit 1; }

@@ -39,6 +39,25 @@ touch survived
             self.assertTrue((job / 'survived').exists())
             self.assertEqual((job / 'starts').read_text(), 'started\n')
 
+    def test_controller_survives_termination_of_launcher_process_group(self):
+        import signal
+        import shlex
+        with tempfile.TemporaryDirectory() as folder:
+            job=Path(folder)/'slurmy/jobs/test-job';job.mkdir(parents=True)
+            (job/'remote_submit.sh').write_text('exec 9> .submit-controller.lock; flock -n 9; touch started; sleep 1; touch survived\n')
+            command='bash '+shlex.quote(str(TEMPLATES/'remote_dispatch.sh'))+' test-job; touch '+shlex.quote(str(job/'launched'))+'; sleep 30'
+            parent=subprocess.Popen(['bash','-c',command],env={**os.environ,'HOME':folder},start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            try:
+                deadline=time.monotonic()+3
+                while not (job/'launched').exists() and time.monotonic()<deadline:time.sleep(.02)
+                self.assertTrue((job/'launched').exists())
+                os.killpg(parent.pid,signal.SIGTERM);parent.wait(timeout=3)
+                deadline=time.monotonic()+3
+                while not (job/'survived').exists() and time.monotonic()<deadline:time.sleep(.02)
+                self.assertTrue((job/'survived').exists())
+            finally:
+                if parent.poll() is None:os.killpg(parent.pid,signal.SIGKILL);parent.wait()
+
     def test_early_failure_reports_controller_log(self):
         with tempfile.TemporaryDirectory() as folder:
             job = Path(folder) / 'slurmy/jobs/test-job'

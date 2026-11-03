@@ -13,14 +13,10 @@ flock -n "$job/.submit-controller.lock" true || { echo 'The submission controlle
 cd "$job"
 source ./submission_context.sh
 rm -- .stopped
-if [[ -f ./remote_dispatch.sh ]]; then
-    dispatcher=./remote_dispatch.sh
-else
-    # Compatibility: older jobs have no detached dispatcher in their bundle.
-    # Run the same launcher sent with this request, using the saved controller.
-    dispatcher=$(mktemp "$job/.resume-dispatch.XXXXXXXX")
-    trap 'rm -f -- "$dispatcher"' EXIT
-    cat > "$dispatcher" <<'SLURMY_DISPATCH'
+# Use the current launcher even for jobs carrying an older bundled dispatcher.
+dispatcher=$(mktemp "$job/.resume-dispatch.XXXXXXXX")
+trap 'rm -f -- "$dispatcher"' EXIT
+cat > "$dispatcher" <<'SLURMY_DISPATCH'
 #!/usr/bin/env bash
 # Start the submission controller independently of the client/SSH lifetime.
 set -euo pipefail
@@ -41,8 +37,9 @@ if [[ -f submission.state ]]; then read -r _ accepted total < submission.state |
 printf 'submitting %s %s\n' "${accepted:-0}" "${total:-0}" > submission.state.launch
 mv -f submission.state.launch submission.state
 : >> .submit-controller.lock
-# Separate stdin, stdout, stderr and the launch lock from the SSH session.
-nohup env -u BASH_ENV -u ENV bash --noprofile --norc ./remote_submit.sh "$@" </dev/null >> submission-controller.log 2>&1 8>&- &
+# Leave the SSH session/process group as well as its streams and launch lock.
+# nohup alone ignores HUP but does not protect against group-directed TERM.
+nohup setsid env -u BASH_ENV -u ENV bash --noprofile --norc ./remote_submit.sh "$@" </dev/null >> submission-controller.log 2>&1 8>&- &
 controller=$!
 sleep 0.2
 if ! kill -0 "$controller" 2>/dev/null; then
@@ -56,5 +53,4 @@ fi
 echo "Slurmy job ID: $1"
 echo 'Submission phase: Cluster submission controller started; it continues if this connection closes'
 SLURMY_DISPATCH
-fi
 bash "$dispatcher" "$1" "$SAVED_PARTITION" "$SAVED_MAX_OUTSTANDING" "$SAVED_JOB_PREFIX" "$SAVED_JOB_NAME_B64" 1 "${SAVED_RESERVATION:--}"

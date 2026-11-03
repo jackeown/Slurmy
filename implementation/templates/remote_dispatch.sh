@@ -18,8 +18,9 @@ if [[ -f submission.state ]]; then read -r _ accepted total < submission.state |
 printf 'submitting %s %s\n' "${accepted:-0}" "${total:-0}" > submission.state.launch
 mv -f submission.state.launch submission.state
 : >> .submit-controller.lock
-# Separate stdin, stdout, stderr and the launch lock from the SSH session.
-nohup env -u BASH_ENV -u ENV bash --noprofile --norc ./remote_submit.sh "$@" </dev/null >> submission-controller.log 2>&1 8>&- &
+# Leave the SSH session/process group as well as its streams and launch lock.
+# nohup alone ignores HUP but does not protect against group-directed TERM.
+nohup setsid env -u BASH_ENV -u ENV bash --noprofile --norc ./remote_submit.sh "$@" </dev/null >> submission-controller.log 2>&1 8>&- &
 controller=$!
 sleep 0.2
 if ! kill -0 "$controller" 2>/dev/null; then
