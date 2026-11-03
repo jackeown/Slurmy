@@ -22,7 +22,7 @@ import time
 import tarfile
 from datetime import datetime
 
-from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, session, send_file, url_for
+from flask import Flask, Request, Response, abort, g, jsonify, redirect, render_template, request, session, send_file, url_for
 from werkzeug.exceptions import HTTPException
 from slurmy_archives import is_archive
 
@@ -36,6 +36,16 @@ from .snapshot_cache import SnapshotCache
 
 REPO = workflows.REPO
 STATE = REPO / 'web-app/.state'
+
+
+class SlurmyRequest(Request):
+    @property
+    def max_content_length(self):
+        # Flask 3.0 exposes this as read-only. Select the upload limit here
+        # instead of mutating the request or shared application configuration.
+        if self.path == '/api/workflows/import':
+            return 10 * 1024**3
+        return super().max_content_length
 
 
 class BuilderCancelled(Exception):
@@ -377,6 +387,7 @@ def call_page_args(default_sort='id'):
 def create_app():
     workflows.migrate_user_runs()
     app = Flask(__name__)
+    app.request_class = SlurmyRequest
     startup_web_version = web_version()
     app.config.update(SECRET_KEY=secrets.token_hex(32), MAX_CONTENT_LENGTH=2 * 1024 * 1024,
                       SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
@@ -394,8 +405,6 @@ def create_app():
 
     @app.before_request
     def local_only():
-        if request.path == '/api/workflows/import':
-            request.max_content_length = 10 * 1024**3
         if request.remote_addr not in {'127.0.0.1', '::1', None}:
             abort(403)
         if request.headers.get('Sec-Fetch-Site') == 'cross-site' and (

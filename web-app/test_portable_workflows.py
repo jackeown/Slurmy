@@ -148,6 +148,18 @@ class PortableWorkflowTests(unittest.TestCase):
             self.assertEqual(response.json['count'],1)
             self.assertTrue((Path(response.json['directory'])/'jobpairs.csv').is_file())
 
+    def test_large_upload_limit_does_not_change_other_requests(self):
+        from flask import request
+        from slurmy_web.app import create_app
+        with patch.object(workflows, 'migrate_user_runs'):
+            app = create_app()
+        for path, limit in [('/api/workflows/import', 10 * 1024**3),
+                            ('/api/workflows/import-other', 2 * 1024**2),
+                            ('/api/workflows/export', 2 * 1024**2)]:
+            with app.test_request_context(path, method='POST'):
+                self.assertEqual(request.max_content_length, limit)
+        self.assertEqual(app.config['MAX_CONTENT_LENGTH'], 2 * 1024**2)
+
     def test_duplicate_name_and_unsafe_archive_do_not_overwrite(self):
         existing=self.users/'existing';existing.mkdir();(existing/'keep').write_text('keep')
         with self.assertRaises(ValueError):portable.import_bundle(io.BytesIO(), 'existing')
