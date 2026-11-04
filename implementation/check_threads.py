@@ -23,10 +23,10 @@ def dedicated_core_topology(host, partition):
         raise ValueError(result.stderr.strip() or 'Cannot inspect dedicated core topology.')
     rows = {tuple(line.split()) for line in result.stdout.splitlines() if line.strip()}
     if len(rows) != 1:
-        raise ValueError('All cores requires a partition with homogeneous socket/core topology.')
+        raise ValueError('Choose a partition with homogeneous socket/core topology.')
     row = rows.pop()
     if len(row) != 2 or any(not v.isdecimal() or int(v) < 1 for v in row):
-        raise ValueError('Incomplete socket/core topology for All cores.')
+        raise ValueError('Incomplete compute-node socket/core topology.')
     return tuple(map(int, row))
 
 

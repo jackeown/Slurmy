@@ -901,6 +901,18 @@ def create_app():
         supported = check_cores(selected_host, selected_partition, int(requested))
         return jsonify(max_cores=supported)
 
+    @app.post('/api/partition-core-topology')
+    def partition_core_topology():
+        from check_threads import dedicated_core_topology
+        data = request.get_json() or {}
+        selected_host = workflows.alias(data.get('host') or host())
+        partition = workflows.alias(data.get('partition'))
+        try:
+            sockets, per_socket = dedicated_core_topology(selected_host, partition)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ValueError(f'Cannot inspect compute-node topology: {exc}') from exc
+        return jsonify(sockets=sockets, cores_per_socket=per_socket)
+
     @app.post('/api/browse-tptp')
     def browse_tptp():
         from slurmy_archives import browse_cluster_tptp
@@ -1222,9 +1234,9 @@ def create_app():
                 stopping = next((op for op in active if op['label'] == 'stop'), None)
                 if stopping:
                     return jsonify(stopping), 202
-                active = [op for op in active if op['label'] not in {'sync', 'sync_verbose', 'resume'}]
+                active = [op for op in active if op['label'] not in {'sync', 'sync_verbose', 'sync_starexec', 'resume'}]
             if active:
-                active_label = {'sync': 'download', 'sync_verbose': 'verbose download'}.get(active[0]['label'], active[0]['label'])
+                active_label = {'sync': 'download', 'sync_verbose': 'verbose download', 'sync_starexec': 'StarExec download'}.get(active[0]['label'], active[0]['label'])
                 abort(409, f"Wait for the active {active_label} operation to finish.")
             key = secrets.token_hex(12)
             STATE.mkdir(exist_ok=True)
@@ -1306,10 +1318,12 @@ def create_app():
         elif data.get('action') == 'resume':
             recovery_watch.resume(host(), safe_job(job_id))
         job = job_snapshot(job_id)
-        if data.get('action') in ('sync', 'sync_verbose'):
+        if data.get('action') in ('sync', 'sync_verbose', 'sync_starexec'):
             argv = [sys.executable, str(REPO/'implementation/slurmy-sync.py'), job_id, '--host', host()]
             if data['action'] == 'sync_verbose':
                 argv.append('--verbose')
+            elif data['action'] == 'sync_starexec':
+                argv.append('--starexec')
         elif data.get('action') in ('stop', 'resume'):
             argv = [sys.executable, str(REPO/'implementation/slurmy-job.py'),
                     data['action'], safe_job(job_id), '--host', host()]
@@ -1341,7 +1355,8 @@ def create_app():
         job_id = safe_job(job_id)
         local = REPO / 'job-results' / job_id
         verbose_local = REPO / 'job-results' / 'verbose' / job_id
-        if local.is_symlink() or verbose_local.is_symlink():
+        starexec_local = REPO / 'job-results' / 'starexec' / job_id
+        if local.is_symlink() or verbose_local.is_symlink() or starexec_local.is_symlink():
             abort(409, 'The local result directory is a symlink; remove it manually.')
         metadata = verbose_local / 'sync-metadata.json'
         if not metadata.is_file():
@@ -1364,7 +1379,7 @@ def create_app():
                 percent = 100 * done / total if total else 0
             except (OSError, UnicodeError, csv.Error):
                 pass
-        return jsonify(synced=local.is_dir() or verbose_local.is_dir(), percent_complete=percent,
+        return jsonify(synced=local.is_dir() or verbose_local.is_dir() or starexec_local.is_dir(), percent_complete=percent,
                        updated_at=summary.get('updated_at'))
 
     @app.get('/api/operations/<key>')
@@ -1388,6 +1403,7 @@ def create_app():
                                        {'SLURMY_HOST': operation['operation_host']})
         op = operations[key]
         phase = ({'sync': 'Download results', 'sync_verbose': 'Download complete/verbose results',
+                  'sync_starexec': 'Download StarExec-Compatible Results',
                   'stop': 'Stop job', 'resume': 'Resume unfinished solver-problem pairs',
                   'delete': 'Stop and delete job', 'cancel': 'Cancel SLURM task'}.get(op['label'])
                  or submission_phase(content))

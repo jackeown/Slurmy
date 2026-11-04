@@ -143,7 +143,7 @@ function jobActionControls(){
  $('#stop-job').disabled=(stopped&&jobAction!=='resume')||complete||jobAction==='stop';
  $('#stop-job').textContent=jobAction==='stop'?'Stopping…':'Stop job';
  $('#resume-job').disabled=Boolean(jobAction)||!(jobData?.can_resume??stopped)||complete;
- for(const id of ['delete-job','sync','sync-verbose','sync-menu-toggle'])$('#'+id).disabled=Boolean(jobAction);
+ for(const id of ['delete-job','sync','sync-verbose','sync-starexec','sync-menu-toggle'])$('#'+id).disabled=Boolean(jobAction);
 }
 function lockWorkflowActions(locked){if(page!=='workflow')return;for(const id of ['prepare','submit','submit-only','submit-menu-toggle']){const control=$('#'+id);if(control)control.disabled=locked;}}
 function operationVisibility(){const pane=$('#operation');pane.hidden=operationHidden;const reopen=$('#show-operation');if(reopen)reopen.hidden=!currentOperationId||!operationHidden;}
@@ -168,7 +168,7 @@ async function watchOperation(id){
 }
 $('#dismiss-operation')?.addEventListener('click',()=>{operationHidden=true;if(currentOperationId)sessionStorage.setItem('slurmy-operation-hidden',currentOperationId);operationVisibility();});
 $('#show-operation')?.addEventListener('click',()=>{operationHidden=false;sessionStorage.removeItem('slurmy-operation-hidden');operationVisibility();if(currentOperationId)watchOperation(currentOperationId);});
-async function startOperation(url,data){if(page==='job'){if(jobAction&&!(data.action==='stop'&&['sync','sync_verbose','resume'].includes(jobAction)))return;clearTimeout(operationTimer);currentOperationId=null;jobAction=data.action;jobActionControls();}try{const op=await api(url,data);operationHidden=false;sessionStorage.removeItem('slurmy-operation-hidden');lockWorkflowActions(true);watchOperation(op.id);}catch(error){jobAction=null;jobActionControls();notice(error.message);}}
+async function startOperation(url,data){if(page==='job'){if(jobAction&&!(data.action==='stop'&&['sync','sync_verbose','sync_starexec','resume'].includes(jobAction)))return;clearTimeout(operationTimer);currentOperationId=null;jobAction=data.action;jobActionControls();}try{const op=await api(url,data);operationHidden=false;sessionStorage.removeItem('slurmy-operation-hidden');lockWorkflowActions(true);watchOperation(op.id);}catch(error){jobAction=null;jobActionControls();notice(error.message);}}
 const runningOperation=sessionStorage.getItem('slurmy-operation');
 if(page==='workflow'){
  api('/api/workflow/active-operation?'+params({directory:document.body.dataset.directory})).then(data=>{const id=data.operation;if(id){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===id;watchOperation(id);}}).catch(()=>{if(runningOperation){operationHidden=sessionStorage.getItem('slurmy-operation-hidden')===runningOperation;watchOperation(runningOperation);}});
@@ -478,6 +478,7 @@ const syncMenu=$('#sync-menu'),syncMenuToggle=$('#sync-menu-toggle');
 function closeSyncMenu(){if(!syncMenu)return;syncMenu.hidden=true;syncMenuToggle.setAttribute('aria-expanded','false');}
 syncMenuToggle?.addEventListener('click',()=>{syncMenu.hidden=!syncMenu.hidden;syncMenuToggle.setAttribute('aria-expanded',String(!syncMenu.hidden));});
 $('#sync-verbose')?.addEventListener('click',()=>{closeSyncMenu();startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'sync_verbose'});});
+$('#sync-starexec')?.addEventListener('click',()=>{closeSyncMenu();startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'sync_starexec'});});
 $('#stop-job')?.addEventListener('click',()=>startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'stop'}));
 $('#resume-job')?.addEventListener('click',()=>startOperation(`/api/jobs/${encodeURIComponent(document.body.dataset.job)}/action?`+params({}),{action:'resume'}));
 $('#rename-job')?.addEventListener('click',()=>renameJob(document.body.dataset.job,$('#job-display-name').textContent));

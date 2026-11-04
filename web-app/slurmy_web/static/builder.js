@@ -2,6 +2,7 @@
 if(document.body.dataset.page==='new'){
  const form=$('#builder');let step=0;const initial=JSON.parse($('#builder-initial').textContent||'{}');const context=$('#builder-context');const editing=context?.dataset.editing==='true';
  const repoRoot=document.body.dataset.repoRoot;
+ let coreTopologyState=null;
  const sections=[...form.querySelectorAll('[data-step]')];
  const pendingWork=new Map();let workTimer=null;
  function showWork(){const panel=$('#builder-progress');if(!pendingWork.size){panel.hidden=true;if(workTimer){clearInterval(workTimer);workTimer=null;}return;}const latest=[...pendingWork.values()].at(-1);panel.hidden=false;if($('#builder-progress-message').textContent!==latest.message)text('#builder-progress-message',latest.message);const bar=$('#builder-progress-bar'),detail=$('#builder-progress-detail');bar.hidden=!latest.total;if(latest.total){bar.value=Math.min(100,latest.completed/latest.total*100);detail.textContent=latest.unit==='bytes'?`${memory(latest.completed)} / ${memory(latest.total)} · ${Math.floor(bar.value)}%`:`${latest.completed.toLocaleString()} / ${latest.total.toLocaleString()} · ${Math.floor(bar.value)}%`;}else detail.textContent=latest.detail||'';text('#builder-progress-time',`${Math.floor((Date.now()-latest.started)/1000)}s elapsed`);if(!workTimer)workTimer=setInterval(showWork,1000);}
@@ -34,7 +35,7 @@ if(document.body.dataset.page==='new'){
  function addResource(role,values){const node=add('resource-template',role==='limiter'?'limiter-resources':'solver-resources');node.dataset.resourceRole=role;node.dataset.resourceOrder=resourceOrder++;const caption=$('h3',node);const toggle=$('.collapse-toggle',caption);caption.textContent=role==='limiter'?'Limiter Resource':'Cluster Build for Imported Solver';if(toggle){toggle.setAttribute('aria-label',`Collapse ${caption.textContent}`);caption.prepend(toggle);}if(role==='solver')node.querySelector('[name="artifact"]').placeholder='solver';else $('.remove',node).hidden=true;fill(node,values);if(role==='limiter')updateLimiterStatus();return node;}
  $('#add-solver-resource').addEventListener('click',()=>{addResource('solver',{mode:'script',artifact:''});visibility();});
  function configurationTitle(card){const name=card.querySelector('[name="solver_name"]').value.trim(),caption=$('h3',card);const toggle=$('.collapse-toggle',caption);caption.textContent=name?`${name} Configuration`:'Solver Configuration';if(toggle){toggle.setAttribute('aria-label',`${card.classList.contains('collapsed')?'Expand':'Collapse'} ${caption.textContent}`);caption.prepend(toggle);}}
- function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field){if(name==='cores'&&value==='all')field.type='text';field.value=value??'';field.refreshShell?.();}}if(node.matches('.configuration')){configurationTitle(node);updateSolverStatus(node);queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}}
+ function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field){if(name==='cores')setCoreRequest(field,value??'1');else field.value=value??'';field.refreshShell?.();}}if(node.matches('.configuration')){configurationTitle(node);updateSolverStatus(node);queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}}
  for(const name of ['name','host','partition','reservation','batch_size','max_outstanding','pair_order','mode','jobpairs','configurations_file','limiter_mode','limiter_file','limiter']){const field=form.querySelector(`[name="${name}"]`);if(field&&initial[name]!==undefined)field.value=initial[name];}
  $('[name="limiter_mode"]').value='inline';$('[name="limiter_file"]').value='';
  if(!editing&&!initial.limiter){$('[name="limiter_mode"]').value='inline';$('[name="limiter"]').value=`${repoRoot}/implementation/build/runsolver/runsolver --cpu-limit {{cpu_limit}} --wall-clock-limit {{wc_limit}} --rss-swap-limit {{mem_limit_mib}} --timestamp --watcher-data {{watcher_log}} --var {{var_file}} --solver-data {{solver_log}} {{solver_command}}`;}
@@ -196,24 +197,64 @@ if(document.body.dataset.page==='new'){
  form.addEventListener('input',event=>{if(event.target.name==='threads_per_core')checkThreads(event.target);else if(['host','partition'].includes(event.target.name))form.querySelectorAll('[name="threads_per_core"]').forEach(checkThreads);});
  form.addEventListener('change',event=>{if(['host','partition'].includes(event.target.name))form.querySelectorAll('[name="threads_per_core"]').forEach(checkThreads);});
  form.querySelectorAll('[name="threads_per_core"]').forEach(checkThreads);
+ function setCoreRequest(field,value){
+  field.dataset.coreRequest=String(value);
+  if(![...field.options].some(option=>option.value===String(value)))field.append(el('option',String(value)));
+  field.value=String(value);
+ }
+ function ensureCoreTopology(){
+  const selectedHost=rootValue('host'),partition=rootValue('partition'),key=JSON.stringify([selectedHost,partition]);
+  if(coreTopologyState?.key===key)return coreTopologyState;
+  if(coreTopologyState){clearTimeout(coreTopologyState.timer);coreTopologyState.controller?.abort();}
+  const state={key,loading:true};coreTopologyState=state;
+  state.timer=setTimeout(async()=>{
+   state.controller=new AbortController();
+   try{
+    const response=await fetch('/api/partition-core-topology',{method:'POST',signal:state.controller.signal,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({host:selectedHost,partition})});
+    const result=await response.json();if(coreTopologyState!==state)return;
+    if(!response.ok)throw new Error(result.error||'Could not inspect compute-node topology.');
+    if(!Number.isSafeInteger(result.sockets)||!Number.isSafeInteger(result.cores_per_socket)||result.sockets<1||result.cores_per_socket<1)throw new Error('Incomplete compute-node topology.');
+    state.topology=result;
+   }catch(error){if(error.name==='AbortError'||coreTopologyState!==state)return;state.error=error.message;}
+   state.loading=false;
+   form.querySelectorAll('.configuration').forEach(updateSolverStatus);
+  },350);
+  return state;
+ }
  function syncPlacement(card){
-  const cores=card.querySelector('[name="cores"]'),socket=card.querySelector('[name="exclusive_cpu"]');
-  const choice=card.querySelector('[data-core-choice]'),all=choice.querySelector('[value="all"]');
-  all.hidden=all.disabled=socket.value!=='true';
-  if(cores.value==='all'&&all.disabled)cores.value=cores.dataset.number||'1';
-  const useAll=cores.value==='all';choice.value=useAll?'all':'number';
-  cores.type=useAll?'text':'number';cores.hidden=useAll;
-  card.querySelector('[data-all-cores]').hidden=!useAll;
+  const cores=card.querySelector('[name="cores"]'),status=card.querySelector('.core-validation');
+  const state=ensureCoreTopology(),retry=card.querySelector('[data-core-retry]');
+  retry.hidden=!state.error;
+  if(!state.topology){
+   cores.disabled=true;cores.dataset.coreValid='false';
+   status.className='core-validation validation'+(state.error?' invalid':'');
+   status.textContent=state.error||'Checking compute-node topology…';return;
+  }
+  const {sockets,cores_per_socket:perSocket}=state.topology;
+  const maximum=card.querySelector('[name="exclusive_cpu"]').value==='true'?perSocket:perSocket*sockets;
+  let requested=cores.dataset.coreRequest||cores.value||'1';
+  if(requested==='all'){requested=String(maximum);cores.dataset.coreRequest=requested;}
+  const valid=/^[1-9][0-9]*$/.test(requested)&&Number(requested)<=maximum;
+  const signature=JSON.stringify([maximum,requested]);
+  if(cores.dataset.coreRange!==signature){
+   const options=[];
+   if(!valid){const placeholder=el('option','Choose a core count…');placeholder.value='';placeholder.disabled=true;options.push(placeholder);}
+   for(let count=1;count<=maximum;count++){const option=el('option',String(count));option.value=String(count);options.push(option);}
+   cores.replaceChildren(...options);cores.value=valid?requested:'';cores.dataset.coreRange=signature;
+  }
+  cores.disabled=false;cores.dataset.coreValid=String(valid);cores.setAttribute('aria-invalid',String(!valid));
+  status.className='core-validation validation '+(valid?'valid':'invalid');
+  status.textContent=(valid?'':`Previous request (${requested}) exceeds the available range. Choose 1–${maximum}. `)+`${perSocket} cores per socket · ${sockets} sockets per node · maximum ${maximum} cores.`;
  }
  form.addEventListener('change',event=>{
   const card=event.target.closest('.configuration');if(!card)return;
   if(event.target.name==='exclusive_node')card.querySelector('[name="exclusive_cpu"]').value=event.target.value;
-  if(event.target.matches('[data-core-choice]')){
-   const cores=card.querySelector('[name="cores"]');
-   if(event.target.value==='all'){cores.dataset.number=cores.value;cores.type='text';cores.value='all';}
-   else{cores.type='number';cores.value=cores.dataset.number||'1';}
-  }
-  syncPlacement(card);updateSolverStatus(card);
+  if(event.target.name==='cores')event.target.dataset.coreRequest=event.target.value;
+  updateSolverStatus(card);
+ });
+ form.addEventListener('click',event=>{
+  if(!event.target.closest('[data-core-retry]'))return;
+  coreTopologyState=null;form.querySelectorAll('.configuration').forEach(updateSolverStatus);
  });
  function updateSolverStatus(card){
   syncPlacement(card);
@@ -226,7 +267,7 @@ if(document.body.dataset.page==='new'){
    !/^\.\/solver(?:\s|$)/.test(value('command'));
   const buildReady=!buildSelected||((!value('build_source')||pathReady('build_source'))&&pathReady('build_script'));
   const positive=name=>{const input=card.querySelector(`[name="${name}"]`);return input.value.trim()!==''&&input.validity.valid&&Number(input.value)>0;};
-  const limitsReady=card.querySelector('[name="threads_per_core"]').dataset.threadValid==='true'&&['wc_limit','cpu_limit','threads_per_core'].every(positive)&&(positive('cores')||(value('cores')==='all'&&value('exclusive_cpu')==='true'))&&
+  const limitsReady=card.querySelector('[name="threads_per_core"]').dataset.threadValid==='true'&&['wc_limit','cpu_limit','threads_per_core'].every(positive)&&positive('cores')&&card.querySelector('[name="cores"]').dataset.coreValid==='true'&&
    /^\s*(?:\d+(?:\.\d+)?)(?:\s*(?:[kmgpt]i?b?|b))?\s*$/i.test(value('mem_limit'))&&
    ['exclusive_cpu','exclusive_node'].every(name=>['true','false'].includes(value(name)));
   for(const [section,ready,good,bad] of [
@@ -292,13 +333,6 @@ if(document.body.dataset.page==='new'){
    updateSolverStatus(card);const section=card.querySelector('.solver-card-section[data-state="invalid"]');if(section&&!section.hidden){section.open=true;section.querySelector('input,textarea,select')?.focus();throw new Error('Complete the highlighted solver section before continuing.');}
   }
   if(step===1&&rootValue('mode')==='interactive'&&[...document.querySelectorAll('#configurations .configuration')].some(card=>card.dataset.state==='invalid'))throw new Error('Give each solver configuration a distinct name.');
-  if(step===1&&rootValue('mode')==='interactive'){
-   const coreInputs=[...document.querySelectorAll('#configurations .configuration [name="cores"]')];
-   const requested=Math.max(...coreInputs.map(input=>(input.value==='all'?1:Number(input.value))));
-   const response=await fetch('/api/validate-solver-cores',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({host:rootValue('host'),partition:rootValue('partition'),cores:requested})});
-   const result=await response.json();
-   if(!response.ok){const input=coreInputs.find(item=>Number(item.value)===requested);input?.closest('details')?.setAttribute('open','');input?.focus();throw new Error(result.error||'Could not check the selected partition’s core capacity.');}
-  }
   if(step===2){updateProblemStatus();const section=sections[step].querySelector('.problem-card-section[data-state="invalid"]');if(section){section.open=true;throw new Error('Complete the highlighted problem or axiom section before continuing.');}}
   if(step===3){updateLimiterStatus();const section=sections[step].querySelector('.limiter-card-section[data-state="invalid"]');if(section){section.open=true;throw new Error('Complete the highlighted limiter section before continuing.');}}
  }

@@ -49,6 +49,21 @@ class JobOperationTests(unittest.TestCase):
         self.assertNotEqual(download.json['id'], stop.json['id'])
         self.assertEqual(self.action('resume').status_code, 409)
 
+    def test_starexec_download_uses_new_format_and_does_not_block_stop(self):
+        response=self.action('sync_starexec')
+        self.assertEqual(response.status_code,202)
+        worker=web.threading.Thread.call_args.kwargs['target']
+        with patch.object(web.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
+            worker()
+        self.assertIn('--starexec',run.call_args.args[0]);self.assertNotIn('--verbose',run.call_args.args[0])
+        operation=self.client.get('/api/operations/'+response.json['id']).json
+        self.assertEqual(operation['phase'],'Download StarExec-Compatible Results')
+        self.assertEqual(self.action('stop').status_code,202)
+
+    def test_starexec_download_can_be_stopped_while_running(self):
+        self.assertEqual(self.action('sync_starexec').status_code,202)
+        self.assertEqual(self.action('stop').status_code,202)
+
     def test_simultaneous_stop_requests_start_only_one_worker(self):
         barrier = Barrier(2)
         responses = []

@@ -701,9 +701,9 @@ def sync_loop(args: argparse.Namespace) -> int:
         time.sleep(args.interval)
 
 
-def compact_sync_loop(args: argparse.Namespace) -> int:
+def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
     """Download only the cluster-built CSV and two solver-stream archives."""
-    job_id = resolve_job_id(args.host, args.job_id, args.ssh_timeout)
+    job_id = resolved_job_id or resolve_job_id(args.host, args.job_id, args.ssh_timeout)
     destination = Path(args.output).expanduser() if args.output else Path.cwd() / 'job-results' / job_id
     if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
         raise SyncError(f'output path is not a normal directory: {destination}')
@@ -795,6 +795,27 @@ def compact_sync_loop(args: argparse.Namespace) -> int:
         time.sleep(max(15, args.interval))
 
 
+def starexec_sync_loop(args):
+    from starexec_export import export
+    job_id = resolve_job_id(args.host, args.job_id, args.ssh_timeout)
+    destination = Path(args.output).expanduser() if args.output else Path.cwd() / 'job-results' / 'starexec' / job_id
+    if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
+        raise SyncError(f'output path is not a normal directory: {destination}')
+    while True:
+        with tempfile.TemporaryDirectory(prefix='slurmy-starexec-') as folder:
+            compact = Path(folder) / 'compact'
+            download = argparse.Namespace(**{**vars(args), 'job_id': job_id, 'output': str(compact), 'follow': False})
+            compact_sync_loop(download, resolved_job_id=job_id)
+            print('Converting summary and solver output to StarExec-compatible ZIPs…', flush=True)
+            names, completed, total = export(compact, destination, job_id)
+        print(f'Downloaded StarExec-compatible results: {completed}/{total} complete to {destination}', flush=True)
+        for name in names:
+            print(destination / name, flush=True)
+        if not args.follow or (total and completed == total):
+            return 0
+        time.sleep(max(15, args.interval))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="slurmy-sync.py",
@@ -824,8 +845,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="keep downloading until every planned task has a complete result",
     )
-    parser.add_argument('--verbose', action='store_true',
+    formats = parser.add_mutually_exclusive_group()
+    formats.add_argument('--verbose', action='store_true',
                         help='download all raw per-solver-problem pair archives, SLURM logs, plans, and metadata')
+    formats.add_argument('--starexec', action='store_true',
+                         help='download StarExec-compatible info and output ZIPs')
     parser.add_argument(
         "--interval",
         type=float,
@@ -850,11 +874,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.ssh_timeout <= 0:
         raise SystemExit("--ssh-timeout must be greater than zero")
     try:
+        if args.starexec:
+            return starexec_sync_loop(args)
         return sync_loop(args) if args.verbose else compact_sync_loop(args)
     except KeyboardInterrupt:
         print("\nSlurmy download stopped; already downloaded files were kept.", file=sys.stderr)
         return 130
-    except (OSError, SyncError) as exc:
+    except (OSError, ValueError, tarfile.TarError, SyncError) as exc:
         print(f"Slurmy download: {exc}", file=sys.stderr)
         return 1
 

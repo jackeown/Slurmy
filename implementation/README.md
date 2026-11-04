@@ -271,12 +271,14 @@ background full-history scan while leaving normal history/detail views available
 Solver placement controls are ordered as whole node, whole CPU sockets, physical
 cores, then threads per core (default 1). Changing whole-node isolation defaults
 socket isolation to the same Yes/No choice; the socket choice remains editable.
-Physical cores accepts a positive number, or `all` when socket isolation is Yes.
-`all` uses one whole socket for socket isolation, or the whole node for node
-isolation. Workflow CSVs retain `all`; preparation resolves it to the selected
-partition's homogeneous socket/core topology before generating solver commands,
-limits, batch allocations, and metadata. Numeric limits continue to restrict the
-solver even when isolation allocates a larger socket or node.
+Physical cores is a numeric dropdown populated from the selected partition's
+compute nodes: 1 through cores-per-socket for dedicated sockets, or 1 through
+sockets-per-node times cores-per-socket otherwise. Whole-node isolation does not
+override this socket-based limit. One debounced lookup is shared across solver
+cards; changing the host or partition checks again. An out-of-range saved value
+requires a new choice. Older `all` editor values become the available maximum;
+CSV/CLI definitions still accept `all` for backward compatibility. Numeric limits
+continue to restrict the solver when isolation allocates a larger socket or node.
 
 Submission controllers use `nohup setsid` with redirected streams: ignoring HUP
 alone does not detach the process group from SSH/session cleanup. Resume always
@@ -297,3 +299,24 @@ derivatives. Changes invalidate `submit.sh`, requiring preparation before the ne
 dispatch; submitted cluster jobs are unaffected. Example files can be downloaded;
 duplicate the workflow before replacing them. Makefile replacement supports the
 generated settings, with custom command/rule changes rejected rather than lost.
+
+
+The job Download menu also offers **Download StarExec-Compatible Results**
+(`slurmy-sync.py JOB_ID --starexec --host HOST`). It reuses the compact cluster
+export and converts locally into two ZIPs under `job-results/starexec/JOB_ID`:
+`JobN_info.zip` contains `JobN/JobN_info.csv`; `JobN_output.zip` contains
+`JobN_output/Problems/DOMAIN/SOLVER___CONFIG/PROBLEM/PAIR_ID.txt`. N is a stable
+numeric alias derived from the Slurmy job ID, and pair IDs retain Slurmy task IDs.
+The column order and directory layout match the supplied StarExec Job7575 exports.
+
+CPU/wall times are seconds and memory usage is bytes. A Slurmy solver configuration
+name supplies both the solver and configuration columns because Slurmy does not
+store a separate StarExec solver identity. TPTP-relative problem paths and original
+filenames are retained; local problems go under Problems/local, with distinct
+parent directories when names collide. Unknown expected results are `--`;
+unfinished pairs are labelled incomplete. SZS mnemonics follow the
+[TPTP ontology](https://szs.tptp.org/) and [manual](https://tptp-manual.tptp.org/).
+Existing timestamped output lines are preserved. Other lines carry the final
+recorded pair CPU/wall totals, explicitly labelled as totals rather than per-line
+measurements. Stdout precedes stderr, with a separator explaining that the original
+interleaving was not recorded. Standard and verbose downloads remain separate.

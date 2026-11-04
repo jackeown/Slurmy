@@ -29,7 +29,8 @@ def main():
         parser.error('--if-idle is only valid with resume')
     templates = Path(__file__).with_name('templates')
     local_paths = [Path(__file__).resolve().parent.parent / 'job-results' / args.job_id,
-                   Path(__file__).resolve().parent.parent / 'job-results' / 'verbose' / args.job_id]
+                   Path(__file__).resolve().parent.parent / 'job-results' / 'verbose' / args.job_id,
+                   Path(__file__).resolve().parent.parent / 'job-results' / 'starexec' / args.job_id]
     if args.action == 'delete' and args.delete_local and any(p.is_symlink() for p in local_paths):
         print('Local result directory is a symlink; job was kept.', file=sys.stderr)
         return 1
