@@ -45,6 +45,8 @@ class SlurmyRequest(Request):
         # instead of mutating the request or shared application configuration.
         if self.path == '/api/workflows/import':
             return 10 * 1024**3
+        if self.path == '/api/workflows/files/replace':
+            return 64 * 1024**2
         return super().max_content_length
 
 
@@ -621,8 +623,9 @@ def create_app():
     @app.get('/workflow')
     def workflow():
         path = directory()
+        from .workflow_files import FILES
         files = {name: (path / name).read_text() for name in
-                 ('jobpairs.csv', 'configurations.csv', 'problem-globs.txt', 'axiom-globs.txt', 'building.txt', 'resource_limiter_template.txt', 'Makefile') if (path / name).is_file()}
+                 FILES if (path / name).is_file()}
         name = path.name.removeprefix('example-') if path.parent == workflows.USER_RUNS else path.name
         created = datetime.fromtimestamp(path.stat().st_ctime).astimezone().strftime('%Y-%m-%d %H:%M')
         return page('experiment.html', directory=str(path), name=name, created=created, files=files,
@@ -1036,6 +1039,29 @@ def create_app():
             return builder_stream(work)
         with guard:
             destination, count = workflows.rename_and_save(data, path)
+        return jsonify(directory=str(destination), count=count)
+
+    @app.get('/api/workflows/files/download')
+    def download_workflow_file():
+        from .workflow_files import definition_file
+        path = definition_file(directory(), request.args.get('file', ''))
+        return send_file(path, as_attachment=True, download_name=path.name, mimetype='text/plain')
+
+    @app.post('/api/workflows/files/replace')
+    def replace_workflow_file():
+        from .workflow_files import replace
+        path = directory()
+        upload = request.files.get('replacement')
+        if upload is None:
+            raise ValueError('Choose a replacement text file.')
+        try:
+            content = upload.read().decode('utf-8-sig')
+        except UnicodeError as exc:
+            raise ValueError('Choose a UTF-8 text file.') from exc
+        with guard:
+            if any(op['scope'] == str(path) and op['state'] == 'running' for op in operations.values()):
+                abort(409, 'Wait for the active workflow operation to finish before replacing its files.')
+            destination, count = replace(path, request.form.get('file', ''), content)
         return jsonify(directory=str(destination), count=count)
 
     @app.post('/api/workflows/name')

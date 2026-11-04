@@ -576,3 +576,23 @@ $('#workflow-upload-file')?.addEventListener('change',async event=>{
   location.href='/workflow?'+params({directory:result.directory});
  }catch(error){notice(error.message);}finally{control.disabled=false;control.textContent='↑ Upload workflow';event.target.value='';}
 });
+
+let replacingWorkflowFile=null;
+document.querySelectorAll('.workflow-file-actions').forEach(actions=>actions.addEventListener('click',event=>event.stopPropagation()));
+document.querySelectorAll('.replace-workflow-file').forEach(control=>control.addEventListener('click',()=>{
+ replacingWorkflowFile=control.dataset.file;
+ $('#workflow-file-replacement').click();
+}));
+$('#workflow-file-replacement')?.addEventListener('change',async event=>{
+ const file=event.target.files[0],name=replacingWorkflowFile;if(!file||!name)return;
+ const status=$('#workflow-file-status'),controls=[...document.querySelectorAll('.replace-workflow-file')];
+ controls.forEach(control=>control.disabled=true);lockWorkflowActions(true);status.hidden=false;status.className='validation';
+ status.replaceChildren(el('span',undefined,'spinner'),document.createTextNode(` Validating ${name} and updating the workflow…`));
+ try{
+  const data=new FormData();data.append('replacement',file);data.append('file',name);
+  const response=await fetch('/api/workflows/files/replace?'+params({directory:document.body.dataset.directory}),{method:'POST',headers:{'X-CSRF-Token':csrf},body:data});
+  const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not replace workflow file.');
+  location.reload();
+ }catch(error){status.className='validation invalid';status.textContent=error.message;}
+ finally{controls.forEach(control=>control.disabled=false);lockWorkflowActions(false);event.target.value='';}
+});

@@ -287,3 +287,13 @@ SSH but a `setsid` probe did. Its failed 64-batch job had repeatedly terminated
 while preparing 2,438 custom axioms; resuming with the corrected launcher completed
 that preparation and submitted the first 32 batches. SLURM then queued those tasks
 for Priority, while the controller correctly waited at its 32-task limit.
+
+Generated workflow file headers offer Download and Replace actions. Replacement
+uses the workflow editor's validator and regenerates the definition and related
+files together; invalid replacements leave the workflow unchanged. Relative paths
+in uploaded definitions are resolved from the workflow directory. Replacing
+`jobpairs.csv` switches to explicit pairs and removes obsolete configuration/glob
+derivatives. Changes invalidate `submit.sh`, requiring preparation before the next
+dispatch; submitted cluster jobs are unaffected. Example files can be downloaded;
+duplicate the workflow before replacing them. Makefile replacement supports the
+generated settings, with custom command/rule changes rejected rather than lost.

@@ -154,6 +154,7 @@ class PortableWorkflowTests(unittest.TestCase):
         with patch.object(workflows, 'migrate_user_runs'):
             app = create_app()
         for path, limit in [('/api/workflows/import', 10 * 1024**3),
+                            ('/api/workflows/files/replace', 64 * 1024**2),
                             ('/api/workflows/import-other', 2 * 1024**2),
                             ('/api/workflows/export', 2 * 1024**2)]:
             with app.test_request_context(path, method='POST'):

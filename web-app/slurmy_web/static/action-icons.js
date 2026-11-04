@@ -5,7 +5,7 @@ window.SlurmyActionIcons=(()=>{
   const selector='button,a.button,label.button,a.back';
   const rules=[
     [/3d|comparison/i,'cube'],[/recovery|archive/i,'box-archive'],
-    [/duplicat|copy|import.*configuration/i,'copy'],[/download/i,'download'],[/upload|import/i,'upload'],
+    [/replace/i,'upload'],[/duplicat|copy|import.*configuration/i,'copy'],[/download/i,'download'],[/upload|import/i,'upload'],
     [/restor/i,'clock-rotate-left'],[/delet|remove permanently/i,'trash-can'],[/remov|clear/i,'xmark'],
     [/renam|edit/i,'pen'],[/refresh|try again|retry/i,'rotate'],[/stop|kill/i,'stop'],[/resum|start/i,'play'],
     [/prepar|build/i,'gears'],[/dispatch|submit/i,'paper-plane'],[/sav|create copy/i,'floppy-disk'],
