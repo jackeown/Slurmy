@@ -103,15 +103,24 @@ window.SlurmyThemes = (() => {
   function apply(id) { const item = find(id); if(item) paint(item); }
   function previewCustom(settings) { paint(customTheme(normalize(settings))); }
   function saveCustom(settings, name) {
-    const next = normalize(settings);
-    // Do not pretend to save if a large image exceeds the browser's quota.
-    localStorage.setItem('slurmy-custom-theme',JSON.stringify(next));
-    if(cleanName(name)){
-      const entry={name:cleanName(name),settings:next};
-      const updated=library.some(item=>item.name===entry.name)?library.map(item=>item.name===entry.name?entry:item):library.concat(entry);
-      localStorage.setItem('slurmy-theme-library',JSON.stringify(updated));library=updated;
+    const next = normalize(settings), entryName=cleanName(name);
+    const entry={name:entryName,settings:next};
+    const updated=entryName?(library.some(item=>item.name===entryName)?library.map(item=>item.name===entryName?entry:item):library.concat(entry)):library;
+    const writes=[['slurmy-custom-theme',JSON.stringify(next)],
+                  ...(entryName?[['slurmy-theme-library',JSON.stringify(updated)]]:[]),
+                  ['slurmy-theme','custom']];
+    const previous=new Map(writes.map(([key])=>[key,localStorage.getItem(key)])),written=[];
+    try {
+      for(const [key,value] of writes){localStorage.setItem(key,value);written.push(key);}
+    } catch(error) {
+      // A quota failure on the library must not leave a different custom theme
+      // persisted despite the editor reporting that Save failed.
+      for(const key of written.reverse()){
+        try{const old=previous.get(key);if(old===null)localStorage.removeItem(key);else localStorage.setItem(key,old);}catch{}
+      }
+      throw error;
     }
-    custom = next; hasCustom = true; select('custom');
+    library=updated;custom=next;hasCustom=true;selected='custom';apply(selected);
   }
   function select(id) {
     if (!find(id)) return;

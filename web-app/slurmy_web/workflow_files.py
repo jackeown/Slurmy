@@ -16,7 +16,7 @@ FILES = ('jobpairs.csv', 'configurations.csv', 'problem-globs.txt', 'axiom-globs
 SETTINGS = {'BATCH_SIZE': 'batch_size', 'PAIR_ORDER': 'pair_order',
             'SLURMY_MAX_OUTSTANDING': 'max_outstanding', 'SLURMY_HOST': 'host',
             'SLURMY_PARTITION': 'partition', 'SLURMY_RESERVATION': 'reservation'}
-ASSIGNMENTS = re.compile(r'(?m)^(' + '|'.join([*SETTINGS, 'REPO_ROOT', 'AXIOMS']) + r')[ \t]*(?::|\?|\+)?=[ \t]*([^\n]*)$')
+ASSIGNMENTS = re.compile(r'(?m)^(' + '|'.join([*SETTINGS, 'REPO_ROOT', 'AXIOMS']) + r')[ \t]*(?::|\?)?=[ \t]*([^\n]*)$')
 
 
 def definition_file(directory, name):

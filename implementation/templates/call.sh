@@ -97,6 +97,19 @@ szs_status=$(sed -nE 's/.*SZS[[:space:]]+status[[:space:]]+([A-Za-z][A-Za-z0-9_-
     "$SOLVER_LOG" "$SOLVER_STDERR_LOG" "$LIMITER_STDOUT_LOG" 2>/dev/null | tail -n 1 || true)
 szs_output=$(sed -nE 's/.*SZS[[:space:]]+output[[:space:]]+end[[:space:]]+([A-Za-z][A-Za-z0-9_-]*).*/\1/p' \
     "$SOLVER_LOG" "$SOLVER_STDERR_LOG" "$LIMITER_STDOUT_LOG" 2>/dev/null | tail -n 1 || true)
+# Solver-enforced limits can fire before the external limiter. Vampire's
+# non-portfolio mode reports a termination reason without an SZS status.
+case "${szs_status,,}" in
+    timeout) timed_out=true ;;
+    memoryout) memory_out=true ;;
+esac
+if [[ -z "$szs_status" ]]; then
+    if grep -Eq '(^|[[:space:]])%[[:space:]]+Termination reason:[[:space:]]+Time limit[[:space:]]*$' "$SOLVER_LOG" "$SOLVER_STDERR_LOG" 2>/dev/null; then
+        timed_out=true
+    elif grep -Eq '(^|[[:space:]])%[[:space:]]+Termination reason:[[:space:]]+Memory limit[[:space:]]*$' "$SOLVER_LOG" "$SOLVER_STDERR_LOG" 2>/dev/null; then
+        memory_out=true
+    fi
+fi
 if (( interrupted )); then status=interrupted; complete=false
 elif [[ "$memory_out" == true ]]; then status=memory-limit
 elif [[ "$timed_out" == true ]]; then status=time-limit

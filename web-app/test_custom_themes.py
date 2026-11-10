@@ -63,3 +63,20 @@ const change=(key,value)=>{const input=get('#custom-'+key);input.value=String(va
         root=Path(__file__).parent/'slurmy_web/static'
         result=subprocess.run(['node','-e',script,str(root/'theme.js'),str(root/'custom-theme.js'),str(root/'background-image.js')],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_partial_storage_failure_restores_previous_saved_theme(self):
+        script = r"""
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const store=new Map();let failing=false;
+const context={window:{},document:{documentElement:{dataset:{},style:{setProperty(){}}},addEventListener(){}},
+localStorage:{getItem:key=>store.get(key)??null,setItem:(key,value)=>{if(failing&&key==='slurmy-theme-library')throw Error('quota');store.set(key,value);},removeItem:key=>store.delete(key)},matchMedia:()=>({matches:false})};
+vm.createContext(context);vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),context);
+const api=context.window.SlurmyThemes;
+api.saveCustom({accent:'#112233'},'Original');const before=Object.fromEntries(store),old=JSON.stringify(api.custom);
+failing=true;assert.throws(()=>api.saveCustom({accent:'#abcdef'},'New Theme'),/quota/);
+assert.deepEqual(Object.fromEntries(store),before);assert.equal(JSON.stringify(api.custom),old);assert.equal(api.library.length,1);
+failing=false;api.saveCustom({accent:'#abcdef'},'New Theme');assert.equal(api.library.length,2);assert.equal(api.custom.accent,'#abcdef');
+"""
+        source=Path(__file__).parent/'slurmy_web/static/theme.js'
+        result=subprocess.run(['node','-e',script,str(source)],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)

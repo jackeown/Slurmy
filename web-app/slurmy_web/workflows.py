@@ -279,6 +279,49 @@ def specification(data, destination_override=None, progress=None):
     return destination, files, len(rows)
 
 
+def write_definitions(source, files, destination=None):
+    """Publish staged definitions, restoring originals on a failed save or rename."""
+    destination = destination or source
+    obsolete = {'configurations.csv', 'problem-globs.txt', 'axiom-globs.txt', 'submit.sh'} - files.keys()
+    changed = set(files) | obsolete
+    if source.is_symlink():
+        raise ValueError('Workflow directory must not be a symlink.')
+    # Stage every write and retain originals before moving the directory. A failed
+    # commit must restore definitions as well as the original directory name.
+    with tempfile.TemporaryDirectory(prefix='.workflow-write-', dir=source.parent) as folder:
+        stage = Path(folder) / 'new'; stage.mkdir()
+        backup = Path(folder) / 'old'; backup.mkdir()
+        existing_files = set()
+        for filename in changed:
+            original = source / filename
+            if original.is_symlink() or (original.exists() and not original.is_file()):
+                raise ValueError(f'Cannot replace a symbolic link or non-file: {filename}')
+            if original.exists():
+                shutil.copy2(original, backup / filename)
+                existing_files.add(filename)
+        for filename, body in files.items():
+            original = source / filename
+            prepared = stage / filename
+            prepared.write_text(body, encoding='utf-8')
+            if original.exists(): shutil.copymode(original, prepared)
+            if prepared.suffix == '.sh': prepared.chmod(0o755)
+        if destination != source:
+            source.rename(destination)
+        try:
+            for filename in files:
+                (stage / filename).replace(destination / filename)
+            for filename in obsolete:
+                (destination / filename).unlink(missing_ok=True)
+        except BaseException:
+            for filename in changed:
+                target = destination / filename
+                if filename in existing_files: shutil.copy2(backup / filename, target)
+                else: target.unlink(missing_ok=True)
+            if destination != source:
+                destination.rename(source)
+            raise
+
+
 def save(data, destination=None, progress=None):
     data = dict(data)
     if '_created_at' not in data:
@@ -290,18 +333,25 @@ def save(data, destination=None, progress=None):
     if created:
         destination.mkdir(parents=True)  # Atomic refusal if another request created it.
     try:
-        for name, body in files.items():
-            path = destination / name
-            temporary = path.with_name('.' + path.name + '.slurmy-new')
-            temporary.write_text(body, encoding='utf-8')
-            temporary.replace(path)
-            if path.suffix == '.sh':
-                path.chmod(0o755)
-    except Exception:
+        write_definitions(destination, files)
+    except BaseException:
         if created:
             shutil.rmtree(destination)
         raise
     return destination, count
+
+
+def relocate_paths(value, source, destination):
+    """Relocate a directory at path/token boundaries, including serialized fields."""
+    if isinstance(value, str):
+        pattern = re.compile(r"(?<![^\s\x22\x27=;|&(),])" + re.escape(str(source))
+                             + r"(?=[/\s\x22\x27;|&(),]|$)")
+        return pattern.sub(lambda _: str(destination), value)
+    if isinstance(value, list):
+        return [relocate_paths(item, source, destination) for item in value]
+    if isinstance(value, dict):
+        return {key: relocate_paths(item, source, destination) for key, item in value.items()}
+    return value
 
 
 def rename_and_save(data, source, progress=None):
@@ -317,7 +367,7 @@ def rename_and_save(data, source, progress=None):
             if previous:
                 data = {**data, '_previous_directories': previous}
         return save(data, source, progress)
-    if destination.exists():
+    if destination.exists() or destination.is_symlink():
         raise ValueError(f'Workflow already exists: {destination}')
 
     _, files, count = specification(data, source, progress)
@@ -329,31 +379,12 @@ def rename_and_save(data, source, progress=None):
         previous = json.loads(old_manifest.read_text(encoding='utf-8')).get('_previous_directories', [])
     data = dict(data)
 
-    def remap(value):
-        if isinstance(value, str):
-            return value.replace(str(source), str(destination))
-        if isinstance(value, list):
-            return [remap(item) for item in value]
-        if isinstance(value, dict):
-            return {key: remap(item) for key, item in value.items()}
-        return value
-    data = remap(data)
+    data = relocate_paths(data, source, destination)
     data['_previous_directories'] = [*previous, str(source)]
-    files = {filename: body.replace(str(source), str(destination)) for filename, body in files.items()}
+    files = {filename: relocate_paths(body, source, destination) for filename, body in files.items()}
     files['.slurmy-workflow.json'] = json.dumps(data, indent=2, sort_keys=True) + '\n'
 
-    source.rename(destination)
-    try:
-        for filename, body in files.items():
-            target = destination / filename
-            temporary = target.with_name('.' + target.name + '.slurmy-new')
-            temporary.write_text(body, encoding='utf-8')
-            temporary.replace(target)
-            if target.suffix == '.sh':
-                target.chmod(0o755)
-    except Exception:
-        destination.rename(source)
-        raise
+    write_definitions(source, files, destination)
     return destination, count
 
 
@@ -734,7 +765,7 @@ def duplicate(source, name):
     try:
         copied = 0
         for path in source.iterdir():
-            if path.name in {'submit.sh', 'submit.sh.files', 'source'} or (path.name.startswith('.') and path.name != '.slurmy-workflow.json'):
+            if path.name in {'submit.sh', 'submit.sh.files'} or (path.name.startswith('.') and path.name != '.slurmy-workflow.json'):
                 continue
             if path.is_file():
                 shutil.copy2(path, destination / path.name)
@@ -748,14 +779,17 @@ def duplicate(source, name):
         makefile.write_text(re.sub(r'(?m)^REPO_ROOT\s*:?=.*$', 'REPO_ROOT := ../../..',
                                    makefile.read_text(encoding='utf-8'), count=1), encoding='utf-8')
         def remap(value):
-            if isinstance(value, str):
-                return str(destination) if value == str(source) else value.replace(str(source) + '/', str(destination) + '/')
-            if isinstance(value, list):
-                return [remap(item) for item in value]
-            if isinstance(value, dict):
-                return {key: remap(item) for key, item in value.items()}
-            return value
+            return relocate_paths(value, source, destination)
         data = remap(source_data)
+        if data.get('building_mode') == 'existing':
+            definition = existing(source_data.get('building_file'), base=source)
+            data['resources'] = [dict(root=str(build.root), source=str(build.source) if build.source else '',
+                                      mode='script' if build.recipe else 'none',
+                                      script=str(build.recipe) if build.recipe else '',
+                                      artifact=build.artifact or '', build_policy=build.build_policy)
+                                 for build in read_builds(definition, check_paths=False)]
+            data['resources'] = remap(data['resources'])
+            data['building_file'] = str(destination / 'building.txt')
         data['name'] = name
         data['_created_at'] = time.time()
         data.pop('_previous_directories', None)

@@ -5,6 +5,7 @@ from ssh_transport import connection_options
 
 from dataclasses import asdict
 import base64
+import glob
 import io
 import json
 import os
@@ -198,7 +199,7 @@ def command_paths(command, mapping):
         # Quoted paths may contain spaces; unquoted path suffixes end at shell separators.
         for quote in ("'", '"', ''):
             suffix = r"(?:/[^'\n]*)?" if quote == "'" else r'(?:/[^"\n]*)?' if quote else r'''(?:/[^\s;|&()'"\n]*)?'''
-            pattern = r'(?<![^\s;|&()])' + re.escape(quote + old) + '(' + suffix + ')' + re.escape(quote) + r'(?=$|[\s;|&()])'
+            pattern = r'(?<![^\s;|&()=])' + re.escape(quote + old) + '(' + suffix + ')' + re.escape(quote) + r'(?=$|[\s;|&()])'
             def replacement(match):
                 token = f'\x00portable{len(replacements)}\x00'
                 replacements[token] = shlex.quote(new + (match[1] or ''))
@@ -345,7 +346,7 @@ def import_bundle(stream, name):
                 if identity not in seen_configs:
                     configs.append(config); seen_configs.add(identity)
             data.update(mode='interactive', configurations=configs,
-                        globs=sorted({row['problem'] for row in normalized}),
+                        globs=sorted({glob.escape(row['problem']) for row in normalized}),
                         pair_order=payload.get('pair_order', 'solver-major'), building_mode='create',
                         resources=[dict(root=build['root'], source=build.get('source') or '',
                                         mode='script' if build.get('recipe') else 'none',

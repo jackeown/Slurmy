@@ -88,6 +88,26 @@ class WorkflowFileTests(unittest.TestCase):
             workflow_files.replace(self.directory,'Makefile',body+'\ncustom:\n\techo custom\n')
         self.assertEqual(self.snapshot(),before)
 
+    def test_normal_save_removes_obsolete_sources_and_axiom_configuration(self):
+        data=workflows.decisions(self.directory)
+        axiom=self.root/'old.ax';axiom.write_text('cnf(a,axiom,p).')
+        data.update(axiom_mode='custom',axiom_globs=[str(axiom)])
+        workflows.save(data,self.directory)
+        self.assertTrue((self.directory/'axiom-globs.txt').exists())
+        (self.directory/'submit.sh').write_text('stale prepared input')
+        data.update(axiom_mode='cluster',axiom_globs=[],mode='jobpairs',jobpairs=str(self.directory/'jobpairs.csv'))
+        workflows.save(data,self.directory)
+        for name in ['axiom-globs.txt','configurations.csv','problem-globs.txt','submit.sh']:
+            self.assertFalse((self.directory/name).exists(),name)
+        self.assertEqual(workflows.decisions(self.directory)['mode'],'jobpairs')
+
+    def test_makefile_append_assignment_is_not_silently_reinterpreted(self):
+        before=self.snapshot()
+        body=(self.directory/'Makefile').read_text().replace('BATCH_SIZE := 2','BATCH_SIZE += 7')
+        with self.assertRaisesRegex(ValueError,'custom commands'):
+            workflow_files.replace(self.directory,'Makefile',body)
+        self.assertEqual(self.snapshot(),before)
+
     def test_invalid_replacement_and_failed_commit_preserve_originals(self):
         before=self.snapshot()
         with self.assertRaises(ValueError):workflow_files.replace(self.directory,'configurations.csv','wrong,headers\n1,2\n')

@@ -99,6 +99,8 @@ class SyncError(RuntimeError):
 
 
 def resolve_job_id(host: str, requested: str | None, timeout: float) -> str:
+    if requested is not None and not JOB_ID_RE.fullmatch(requested):
+        raise SyncError("Invalid Slurmy job ID")
     if shutil.which("ssh") is None:
         raise SyncError("ssh is not installed or not on PATH")
     command = [
@@ -110,10 +112,7 @@ def resolve_job_id(host: str, requested: str | None, timeout: float) -> str:
         f"ConnectTimeout={max(1, int(timeout))}",
         "--",
         host,
-        "bash",
-        "-s",
-        "--",
-        requested or "",
+        shlex.join(["bash", "-s", "--", requested or ""]),
     ]
     try:
         process = subprocess.run(
@@ -239,6 +238,7 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
                 "max_memory_kib": as_float(fields[10]),
                 "task_key": fields[13],
                 "archive": fields[14],
+                "szs_status": fields[15] if len(fields) > 15 else "",
                 "szs_output": fields[16] if len(fields) > 16 else "",
             }
     for path in sorted(results_dir.glob("*.csv")):
@@ -261,6 +261,7 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
                 "max_memory_kib": as_float(fields[10]),
                 "task_key": fields[13],
                 "archive": fields[14],
+                "szs_status": fields[15] if len(fields) > 15 else "",
                 "szs_output": fields[16] if len(fields) > 16 else "",
             }
     for path in sorted(results_dir.glob("*.jsonl")):
@@ -284,6 +285,7 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
                 "max_memory_kib": as_float(item.get("max_memory_kib")),
                 "task_key": str(item.get("task_key", "")),
                 "archive": str(item.get("archive", "")),
+                "szs_status": str(item.get("szs_status", "")),
                 "szs_output": str(item.get("szs_output", "")),
             }
     return records
@@ -322,7 +324,8 @@ class ArchiveStatusCache:
                 for info in archive:
                     if not info.isfile():
                         continue
-                    match = TASK_LOG_RE.search(PurePosixPath(info.name).as_posix())
+                    match = (TASK_LOG_RE.search(PurePosixPath(info.name).as_posix()) or
+                             TASK_ERROR_RE.search(PurePosixPath(info.name).as_posix()))
                     if not match:
                         continue
                     member = archive.extractfile(info)
@@ -357,7 +360,7 @@ def collect_szs_statuses(
     selected: dict[int, str] = {}
     for task_id, record in records.items():
         archive_name = str(record.get("archive", ""))
-        status = by_archive.get(archive_name, {}).get(task_id)
+        status = record.get("szs_status") or by_archive.get(archive_name, {}).get(task_id)
         if status:
             selected[task_id] = status
     return selected, warnings, len(archives)
@@ -712,6 +715,17 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
         raise SyncError('SSH is required to download results. Install OpenSSH and retry.')
     if shutil.which('rsync') is None and shutil.which('scp') is None:
         raise SyncError('Downloads require rsync or scp. Install OpenSSH (which includes scp) and retry.')
+    # Keep ownership outside the three-file export, keyed by its absolute path.
+    identity_path = destination.parent / ('.slurmy-export-identity-' + hashlib.sha256(
+        os.fsencode(destination.resolve())).hexdigest() + '.json')
+    try:
+        identity = json.loads(identity_path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        identity = {}
+    if not isinstance(identity, dict):
+        identity = {}
+    if identity and (identity.get('host'), identity.get('job_id')) != (args.host, job_id):
+        raise SyncError('This output directory belongs to a different host or job.')
     while True:
         print(f'Preparing three-file export for {job_id} on {args.host}…', flush=True)
         expected = None
@@ -744,6 +758,12 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
         # a verbose result directory that must be moved out of the way.
         job_name = expected[0].removesuffix('_results-summary.csv')
         old_names = {f'{job_name}.csv', f'{job_name}_logs.tgz', f'{job_name}_errors.tgz'}
+        previous_names = identity.get('files', [])
+        if (isinstance(previous_names, list) and len(previous_names) == 3 and
+                all(isinstance(name, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', name)
+                    for name in previous_names)):
+            old_names.update(previous_names)
+        old_names.difference_update(expected)
         old_files = ([item for item in destination.iterdir() if item.name in old_names and item.is_file()]
                      if destination.is_dir() else [])
         allowed_names = set(expected) | {item.name for item in old_files}
@@ -787,6 +807,14 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
             for row in csv.DictReader(source):
                 total += 1
                 completed += row.get('complete', '').lower() == 'true'
+        identity = {'host': args.host, 'job_id': job_id, 'files': list(expected)}
+        fd, identity_temporary = tempfile.mkstemp(prefix='.export-identity-', dir=destination.parent)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                json.dump(identity, stream)
+            os.replace(identity_temporary, identity_path)
+        finally:
+            Path(identity_temporary).unlink(missing_ok=True)
         for path in old_files:
             path.unlink(missing_ok=True)
         print(f'Downloaded {completed}/{total} solver-problem pairs ({percentage(completed, total):.1f}%) to {destination}', flush=True)
