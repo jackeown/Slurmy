@@ -397,6 +397,12 @@ async function openDiagnostic(task){
 function renderOutput(){if(!selectedOutput)return;const stream=selectedOutput.streams[$('#stream').value];text('#output-text',stream?.exists?(stream.content||'(Empty file)'):'(No file was saved)');text('#output-info',`${stream?.explanation||'Stream unavailable.'}${stream?.exists?` · ${memory(stream.size)}`:''}${stream?.truncated?' · Truncated: beginning and end shown':''}`);}
 $('#stream')?.addEventListener('change',renderOutput);
 $('#close-output')?.addEventListener('click',()=>{$('#call-output').hidden=true;selectedOutput=null;});
+function taskPlacement(task,jobId){
+ if(!task.slurm_id)return '—';
+ if(task.finished)return task.slurm_id;
+ if(task.node)return link(`${task.node} · ${task.slurm_id}`,`/cluster?`+params({partition:'all',nodes:'job',job:jobId}));
+ return task.state==='queued'?`Queued · ${task.slurm_id}`:task.slurm_id;
+}
 async function fetchJob(fresh=false){
  const jobId=document.body.dataset.job;
  const perPage=pageSize('#task-page-size'),requestedPage=taskPage,sort=tableSort.tasks.key,direction=tableSort.tasks.direction,query=$('#task-filter').value,outcomeKey=outcomeSelectionKey();
@@ -418,7 +424,7 @@ async function fetchJob(fresh=false){
  renderJobCompletion(data);
  renderOutcomes(data.outcomes);
  const tasks=$('#tasks-body');if(jobStatusTooltip)jobStatusTooltip.hidden=true;tasks.replaceChildren();
- for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):(task.diagnostic||task.diagnostic_available)?button('Inspect log →',()=>openDiagnostic(task)):'—';const placement=task.node?link(`${task.node} · ${task.slurm_id}`,`/cluster?`+params({partition:'all',nodes:'job',job:jobId})):task.slurm_id?`Queued · ${task.slurm_id}`:'—';tasks.append(tableRow([String(task.id),task.solver||'—',problem,taskStatus(task),placement,duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
+ for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):(task.diagnostic||task.diagnostic_available)?button('Inspect log →',()=>openDiagnostic(task)):'—';tasks.append(tableRow([String(task.id),task.solver||'—',problem,taskStatus(task),taskPlacement(task,jobId),duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
  if(!data.tasks.length)tasks.append(tableRow(['No matching solver-problem pairs.','','','','','','','','']));
  text('#page-label',`${data.matched} matching solver-problem pairs ·`);$('#task-page').value=taskPage+1;$('#task-page').max=lastPage+1;text('#task-page-count',lastPage+1);$('#previous').disabled=taskPage===0;$('#next').disabled=(taskPage+1)*perPage>=data.matched;
  const selected=new URLSearchParams(location.search).get('call');if(selected&&data.tasks.some(task=>String(task.id)===selected)){const url=new URL(location.href);url.searchParams.delete('call');history.replaceState(null,'',url);openOutput(data.tasks.find(task=>String(task.id)===selected));}

@@ -9,6 +9,28 @@ from slurmy_web import workflows
 
 
 class PlacementControlTests(unittest.TestCase):
+    def test_navigation_waits_for_current_checks_without_repeating_requests(self):
+        source=(Path(__file__).parent/'slurmy_web/static/builder.js').read_text()
+        helper=source[source.index(' async function waitForPlacement(card){'):source.index(' async function validSection(){')]
+        code=r'''
+const assert=require('assert');let topologyCalls=0;
+const deferred=()=>{let finish;const ready=new Promise(resolve=>finish=resolve);return {ready,finish};};
+let coreTopologyState=deferred(),thread=deferred();const input={},card={isConnected:true,querySelector:()=>input};
+const threadChecks=new WeakMap([[input,thread]]),ensureCoreTopology=()=>{topologyCalls++;return coreTopologyState;};
+'''+helper+r'''
+(async()=>{
+ let done=false;const waiting=waitForPlacement(card).then(()=>done=true);
+ await Promise.resolve();assert.equal(done,false);coreTopologyState.finish();
+ const old=thread;thread=deferred();threadChecks.set(input,thread);old.finish();
+ await Promise.resolve();await Promise.resolve();assert.equal(done,false);
+ thread.finish();await waiting;assert.equal(done,true);assert.equal(topologyCalls,2);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+        result=subprocess.run(['node','-e',code],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        validation=source[source.index(' async function validSection(){'):source.index(' let navigating=false;')]
+        self.assertLess(validation.index('.map(waitForPlacement)'),validation.index('input.checkValidity()'))
+
     def test_core_range_and_legacy_values(self):
         source=(Path(__file__).parent/'slurmy_web/static/builder.js').read_text()
         controls=source[source.index(' function syncPlacement(card){'):source.index(' function updateSolverStatus(card){')]

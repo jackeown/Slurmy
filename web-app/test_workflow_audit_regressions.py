@@ -1,5 +1,6 @@
 """Local regressions for workflow copying, transactional rename and portability."""
 import json
+from datetime import datetime
 from pathlib import Path
 import shutil
 import unittest
@@ -7,11 +8,30 @@ from unittest.mock import patch
 
 from slurmy import read_builds
 from slurmy_web import workflows, portable
+from slurmy_web.app import create_app
 import test_workflow_files as fixtures
 
 
 class WorkflowAuditTests(unittest.TestCase):
     setUp = fixtures.WorkflowFileTests.setUp
+
+    def test_creation_date_matches_card_after_edit(self):
+        data = workflows.decisions(self.directory)
+        data['_created_at'] = 1600000000
+        workflows.save(data, self.directory)
+        # The browser submits editable fields, not internal creation metadata.
+        data.pop('_created_at')
+        workflows.rename_and_save(data, self.directory)
+        with patch.object(workflows, 'migrate_user_runs'):
+            client = create_app().test_client()
+        expected = datetime.fromtimestamp(1600000000).astimezone().strftime('%Y-%m-%d %H:%M')
+        for route in ['/workflows', '/workflow']:
+            response = client.get(route, query_string={'directory': str(self.directory)})
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(expected, response.text)
+        data['name'] = 'renamed'
+        renamed, _ = workflows.rename_and_save(data, self.directory)
+        self.assertEqual(workflows.decisions(renamed)['_created_at'], 1600000000)
 
     def snapshot(self, directory):
         return {str(p.relative_to(directory)): (p.read_bytes(), p.stat().st_mode)

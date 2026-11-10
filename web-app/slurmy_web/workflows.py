@@ -356,16 +356,18 @@ def relocate_paths(value, source, destination):
 
 def rename_and_save(data, source, progress=None):
     """Validate, rename, and update a workflow while retaining its former paths."""
+    data = dict(data)
+    manifest = source / '.slurmy-workflow.json'
+    saved = json.loads(manifest.read_text(encoding='utf-8')) if manifest.is_file() else {}
+    data['_created_at'] = saved.get('_created_at', source.stat().st_ctime)
+    previous = saved.get('_previous_directories', [])
     name = data.get('name', '')
     if not isinstance(name, str) or not re.fullmatch(r'[a-z0-9][a-z0-9-]*', name):
         raise ValueError('Workflow name: use lowercase letters, numbers and hyphens.')
     destination = USER_RUNS / name
     if destination == source:
-        manifest = source / '.slurmy-workflow.json'
-        if manifest.is_file():
-            previous = json.loads(manifest.read_text(encoding='utf-8')).get('_previous_directories', [])
-            if previous:
-                data = {**data, '_previous_directories': previous}
+        if previous:
+            data['_previous_directories'] = previous
         return save(data, source, progress)
     if destination.exists() or destination.is_symlink():
         raise ValueError(f'Workflow already exists: {destination}')
@@ -373,12 +375,6 @@ def rename_and_save(data, source, progress=None):
     _, files, count = specification(data, source, progress)
     if progress:
         progress('committing', 'Saving workflow files', 0, 0)
-    previous = []
-    old_manifest = source / '.slurmy-workflow.json'
-    if old_manifest.is_file():
-        previous = json.loads(old_manifest.read_text(encoding='utf-8')).get('_previous_directories', [])
-    data = dict(data)
-
     data = relocate_paths(data, source, destination)
     data['_previous_directories'] = [*previous, str(source)]
     files = {filename: relocate_paths(body, source, destination) for filename, body in files.items()}

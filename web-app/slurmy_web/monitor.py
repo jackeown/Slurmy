@@ -92,7 +92,16 @@ oldest=
 for directory in "${job_dirs[@]}"; do
     [[ -d "$directory" ]] || continue
     job=${directory##*/}
-    created=$(stat -c %Y "$directory" 2>/dev/null || printf '0')
+    # Generated IDs retain their submission epoch across downloads and renames.
+    # Directory mtimes change whenever exports or controller files are written.
+    if [[ "$job" =~ _([0-9]{9,10})_[0-9]+$ ]]; then
+        created=${BASH_REMATCH[1]}
+    else
+        created=$(stat -c %W "$directory" 2>/dev/null || printf '0')
+        if [[ ! "$created" =~ ^[1-9][0-9]*$ ]]; then
+            created=$(stat -c %Y "$directory" 2>/dev/null || printf '0')
+        fi
+    fi
     if [[ "$created" =~ ^[0-9]+$ ]] && { [[ -z "$oldest" ]] || (( created < oldest )); }; then oldest=$created; fi
     emit_job() {
         printf 'JOB\0%s\0%s\0' "$job" "$created"
@@ -1056,10 +1065,11 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
             detail_job = fields[0]
         elif kind == "JOB":
             job_id, created = fields
+            submitted = re.search(r'_([0-9]{9,10})_[0-9]+$', job_id)
             jobs[job_id] = JobSnapshot(
                 job_id=job_id,
                 remote_dir=f"{remote_home}/{job_id}" if remote_home else job_id,
-                created_epoch=as_float(created) or 0.0,
+                created_epoch=float(submitted[1]) if submitted else as_float(created) or 0.0,
             )
         elif kind == "METADATA":
             pending_metadata[fields[0]] = fields[1]

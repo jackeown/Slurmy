@@ -13,6 +13,28 @@ from slurmy_web.monitor import REMOTE_SNAPSHOT_SCRIPT,RemoteCollector,parse_snap
 
 
 class MonitorFastPathTests(unittest.TestCase):
+    def test_submission_date_ignores_directory_changes_and_older_cache_dates(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            job_id = 'Renamed-workflow_1794311266_33992'
+            job = root/'slurmy/jobs'/job_id
+            job.mkdir(parents=True)
+            tools = root/'tools'; tools.mkdir()
+            for name in ('squeue', 'sacct'):
+                path = tools/name; path.write_text('#!/bin/sh\nexit 0\n'); path.chmod(0o755)
+            def collect():
+                result = subprocess.run(['bash', '-s', '--', job_id], input=REMOTE_SNAPSHOT_SCRIPT.encode(),
+                                        capture_output=True, check=True, timeout=5,
+                                        env={**os.environ, 'HOME': folder, 'PATH': str(tools)+os.pathsep+os.environ['PATH']})
+                return parse_snapshot('test', result.stdout).jobs[0]
+            self.assertEqual(collect().created_epoch, 1794311266)
+            (job/'export.tgz').touch()
+            os.utime(job, (1900000000, 1900000000))
+            self.assertEqual(collect().created_epoch, 1794311266)
+            # Already cached JOB records can still carry a mutable directory date.
+            payload = b'JOB\0'+job_id.encode()+b'\0'+b'1900000000\0'
+            self.assertEqual(parse_snapshot('test', payload).jobs[0].created_epoch, 1794311266)
+
     def test_detail_only_reads_selected_job_and_compact_formats(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);job=root/'slurmy/jobs/selected';(job/'results/index').mkdir(parents=True)

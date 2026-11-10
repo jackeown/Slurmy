@@ -598,15 +598,16 @@ def create_app():
     def problem_page(job_id, task_id):
         return page('problem.html', job_id=safe_job(job_id), task_id=task_id)
 
+    def created_label(path):
+        try:
+            value = json.loads((path / '.slurmy-workflow.json').read_text()).get('_created_at')
+            epoch = float(value) if value is not None else path.stat().st_ctime
+            return datetime.fromtimestamp(epoch).astimezone().strftime('%Y-%m-%d %H:%M')
+        except (OSError, ValueError, TypeError, OverflowError):
+            return datetime.fromtimestamp(path.stat().st_ctime).astimezone().strftime('%Y-%m-%d %H:%M')
+
     @app.get('/workflows')
     def workflow_list():
-        def created_label(path):
-            try:
-                value = json.loads((path / '.slurmy-workflow.json').read_text()).get('_created_at')
-                epoch = float(value) if value is not None else path.stat().st_ctime
-            except (OSError, ValueError, TypeError, json.JSONDecodeError):
-                epoch = path.stat().st_ctime
-            return datetime.fromtimestamp(epoch).astimezone().strftime('%Y-%m-%d %H:%M')
         def entries(root):
             if not root.exists():
                 return []
@@ -627,7 +628,7 @@ def create_app():
         files = {name: (path / name).read_text() for name in
                  FILES if (path / name).is_file()}
         name = path.name.removeprefix('example-') if path.parent == workflows.USER_RUNS else path.name
-        created = datetime.fromtimestamp(path.stat().st_ctime).astimezone().strftime('%Y-%m-%d %H:%M')
+        created = created_label(path)
         return page('experiment.html', directory=str(path), name=name, created=created, files=files,
                     base=str(workflows.USER_RUNS.resolve()) + os.sep,
                     prepared=(path / 'submit.sh').is_file())

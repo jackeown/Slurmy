@@ -5,6 +5,24 @@ import unittest
 
 
 class TaskStatusTooltipTests(unittest.TestCase):
+    def test_only_queued_pairs_show_queued_placement(self):
+        path = Path(__file__).parent/'slurmy_web/static/app.js'
+        script = r'''
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const source=fs.readFileSync(process.argv[1],'utf8');
+const context={link:(text,href)=>({text,href}),params:values=>new URLSearchParams(values)};
+vm.createContext(context);
+vm.runInContext(source.slice(source.indexOf('function taskPlacement('),source.indexOf('async function fetchJob(')),context);
+assert.equal(context.taskPlacement({finished:true,slurm_id:'123_0'},'job'),'123_0');
+assert.equal(context.taskPlacement({finished:true,node:'node1',slurm_id:'123_0'},'job'),'123_0');
+assert.equal(context.taskPlacement({state:'queued',slurm_id:'123_0'},'job'),'Queued · 123_0');
+assert.equal(context.taskPlacement({state:'stopped',slurm_id:'123_0'},'job'),'123_0');
+assert.equal(context.taskPlacement({state:'batch failed',slurm_id:'123_0'},'job'),'123_0');
+assert.equal(context.taskPlacement({state:'running',node:'node1',slurm_id:'123_0'},'job').text,'node1 · 123_0');
+assert.equal(context.taskPlacement({state:'not submitted'},'job'),'—');
+'''
+        subprocess.run(['node','-e',script,str(path)],check=True,capture_output=True,text=True)
+
     def test_tooltip_only_shows_current_pair_and_supports_keyboard(self):
         path=Path(__file__).parent/'slurmy_web/static/app.js'
         script=r'''

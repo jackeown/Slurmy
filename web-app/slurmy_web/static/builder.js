@@ -174,13 +174,13 @@ if(document.body.dataset.page==='new'){
  form.addEventListener('input',event=>{if(event.target.matches('[name="limiter"]')||event.target.closest('#limiter-resources'))updateLimiterStatus();});
  const threadChecks=new WeakMap();
  function checkThreads(input){
-  const prior=threadChecks.get(input);if(prior){clearTimeout(prior.timer);prior.controller?.abort();}
-  const state={};threadChecks.set(input,state);delete input.dataset.threadValid;
+  const prior=threadChecks.get(input);if(prior){clearTimeout(prior.timer);prior.controller?.abort();prior.finish();}
+  const state={};state.ready=new Promise(resolve=>{state.finish=resolve;});threadChecks.set(input,state);delete input.dataset.threadValid;
   const status=input.closest('label').querySelector('.thread-validation');
   const card=input.closest('.configuration');
   const value=input.value.trim(), selectedHost=rootValue('host'), partition=rootValue('partition');
   const report=(message,valid)=>{status.replaceChildren(document.createTextNode(message));status.className='thread-validation validation '+(valid?'valid':'invalid');input.setAttribute('aria-invalid',String(!valid));};
-  if(!/^[1-9][0-9]*$/.test(value)){report('Enter a positive whole number.',false);updateSolverStatus(card);return;}
+  if(!/^[1-9][0-9]*$/.test(value)){report('Enter a positive whole number.',false);updateSolverStatus(card);state.finish();return;}
   status.className='thread-validation validation';status.replaceChildren(el('span',undefined,'spinner'),document.createTextNode(' Checking compute nodes…'));input.removeAttribute('aria-invalid');
   updateSolverStatus(card);
   state.timer=setTimeout(async()=>{
@@ -191,6 +191,7 @@ if(document.body.dataset.page==='new'){
     if(!response.ok)throw new Error(result.error||'Could not validate compute nodes.');
     input.dataset.threadValid='true';report(`Valid · ${selectedHost}/${partition} supports up to ${result.supported} threads per core.`,true);
    }catch(error){if(error.name==='AbortError'||threadChecks.get(input)!==state||!input.isConnected)return;report(error.message,false);}
+   finally{state.finish();}
    updateSolverStatus(card);
   },350);
  }
@@ -205,8 +206,8 @@ if(document.body.dataset.page==='new'){
  function ensureCoreTopology(){
   const selectedHost=rootValue('host'),partition=rootValue('partition'),key=JSON.stringify([selectedHost,partition]);
   if(coreTopologyState?.key===key)return coreTopologyState;
-  if(coreTopologyState){clearTimeout(coreTopologyState.timer);coreTopologyState.controller?.abort();}
-  const state={key,loading:true};coreTopologyState=state;
+  if(coreTopologyState){clearTimeout(coreTopologyState.timer);coreTopologyState.controller?.abort();coreTopologyState.finish();}
+  const state={key,loading:true};state.ready=new Promise(resolve=>{state.finish=resolve;});coreTopologyState=state;
   state.timer=setTimeout(async()=>{
    state.controller=new AbortController();
    try{
@@ -216,6 +217,7 @@ if(document.body.dataset.page==='new'){
     if(!Number.isSafeInteger(result.sockets)||!Number.isSafeInteger(result.cores_per_socket)||result.sockets<1||result.cores_per_socket<1)throw new Error('Incomplete compute-node topology.');
     state.topology=result;
    }catch(error){if(error.name==='AbortError'||coreTopologyState!==state)return;state.error=error.message;}
+   finally{state.finish();}
    state.loading=false;
    form.querySelectorAll('.configuration').forEach(updateSolverStatus);
   },350);
@@ -324,8 +326,17 @@ if(document.body.dataset.page==='new'){
  form.addEventListener('change',event=>{if(event.target!==batchInput&&step===4){++batchRequest;clearTimeout(batchTimer);batchTimer=setTimeout(suggestBatchSize,400);}});
  function renderStep(){sections.forEach((s,i)=>s.hidden=i!==step);document.querySelectorAll('#steps li').forEach((n,i)=>{n.classList.toggle('current',i===step);const tab=$('button',n);if(i===step)tab.setAttribute('aria-current','step');else tab.removeAttribute('aria-current');});$('#builder-back').hidden=step===0;$('#builder-next').hidden=step===5;$('#builder-save').hidden=step!==5;text('#step-count',`Step ${step+1} of 6`);$('#builder-error').hidden=true;if(step===4)suggestBatchSize();}
  function showError(error){text('#builder-error',error.message);$('#builder-error').hidden=false;}
+ async function waitForPlacement(card){
+  const input=card.querySelector('[name="threads_per_core"]');
+  while(card.isConnected){
+   const topology=ensureCoreTopology(),threads=threadChecks.get(input);
+   await Promise.all([topology.ready,threads?.ready]);
+   if(topology===coreTopologyState&&threads===threadChecks.get(input))return;
+  }
+ }
  async function validSection(){
   if(step===1&&rootValue('mode')==='interactive'&&!$('#configurations .configuration'))throw new Error('Add a solver configuration or copy one from an existing workflow before continuing.');
+  if(step===1&&rootValue('mode')==='interactive')await Promise.all([...document.querySelectorAll('.configuration')].map(waitForPlacement));
   const inputs=[...sections[step].querySelectorAll('input,textarea,select')].filter(n=>n.type!=='hidden'&&!n.closest('[hidden]'));
   for(const input of inputs){if(!input.value.trim()&&!input.dataset.optional){const details=input.closest('.solver-card-section,.problem-card-section,.limiter-card-section');if(details)details.open=true;input.focus();throw new Error('Fill in each visible setting before continuing.');}if(!input.checkValidity()){const details=input.closest('.solver-card-section,.problem-card-section,.limiter-card-section');if(details)details.open=true;input.reportValidity();throw new Error('Please correct the highlighted field.');}}
   for(const input of inputs.filter(n=>n.dataset.path&&n.value.trim())){if(input.dataset.validated!==input.value&&!await validatePath(input)){const details=input.closest('.solver-card-section,.problem-card-section,.limiter-card-section');if(details)details.open=true;throw new Error('Correct the path highlighted above.');}}
