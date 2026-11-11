@@ -62,7 +62,7 @@ def reported_limit(user: str) -> int | None:
 
 
 def queue_snapshot(user: str, jobs_root: Path) -> tuple[int, int, dict[str, int]]:
-    result = command(["squeue", "-h", "-r", "-u", user, "-o", "%i|%Z"])
+    result = command(["squeue", "-h", "-r", "-u", user, "-o", "%i|%Z|%k"])
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or "squeue failed")
     total = other = 0
@@ -72,7 +72,11 @@ def queue_snapshot(user: str, jobs_root: Path) -> tuple[int, int, dict[str, int]
         if not line.strip():
             continue
         total += 1
-        directory = line.split("|", 1)[1] if "|" in line else ""
+        fields = line.split('|', 2)
+        directory = fields[1] if len(fields) > 1 else ''
+        if len(fields) > 2 and fields[2] == 'slurmy-controller:v1':
+            other += 1  # Controllers consume account slots, not worker-window slots.
+            continue
         name = directory[len(prefix):] if directory.startswith(prefix) else ""
         if name and JOB_ID.fullmatch(name):
             own[name] = own.get(name, 0) + 1

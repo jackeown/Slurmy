@@ -425,6 +425,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         # copy of the declared root; downloaded files preserve that layout.
         shutil.copy2(REPO / "implementation/build/slurmy-build.py", assets / "builds/driver.py")
         shutil.copy2(REPO / "implementation/submit_coordinator.py", assets / "submit_coordinator.py")
+        shutil.copy2(REPO / "implementation/submission_controller.py", assets / "submission_controller.py")
         shutil.copyfile(REPO / "implementation/check_threads.py", assets / "check_threads.py")
         shutil.copyfile(REPO / "implementation/ssh_transport.py", assets / "ssh_transport.py")
         shutil.copyfile(REPO / "implementation/ssh_transport.py", assets / "builds/ssh_transport.py")

@@ -140,13 +140,21 @@ are reported without dispatching a batch. Once `sbatch` begins accepting
 batches, submission is checkpointed per batch rather than globally atomic:
 SLURM cannot roll back allocations already accepted before a connection loss.
 Inspect the reported job ID before attempting a retry.
-The cluster submission controller keeps its SSH session connected until all
-batches have been accepted (or submission is stopped). This supports clusters
-whose login policy terminates all session processes at logout, including
-`nohup`/`setsid` processes. Closing the browser does not close that session; keep
-the local server and network connected while submission is in progress.
-Already accepted SLURM tasks continue independently. A broken connection can
-stop the controller; Resume retains accepted batches and completed results.
+The submission controller is a SLURM batch job, not a login-session process.
+After uploads and its initial `sbatch` acceptance, neither the local server nor
+SSH needs to remain connected. `submission_controller.py` runs finite waves:
+it reserves a continuation job before filling the worker submission window,
+then makes that continuation depend on its own completion and a queued worker.
+It exits while waiting, freeing its core for dedicated whole-node workers.
+Controllers request one core, 256 MiB and a ten-minute limit in the workflow's
+partition/reservation. They yield before that limit, and count toward the
+cluster account's submission limit while remaining outside the worker window.
+At least three account submission slots are needed: the running controller,
+its queued continuation, and one worker. Controllers are named **Submission
+Controller** in Cluster Status and are excluded from solver ETA parallelism.
+Stop cancels queued continuations and workers by their shared working directory.
+Resume installs the current controller/coordinator on older jobs, retaining
+accepted batches and a persistent unfinished-batch worklist across waves.
 Its output is kept in `submission-controller.log` in the job directory.
 Custom TPTP axioms are copied atomically by one Python process, with progress
 every 500 files, rather than spawning separate `mkdir` and `cp` processes for

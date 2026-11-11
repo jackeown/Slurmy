@@ -18,6 +18,9 @@ if [[ -f submission.state ]]; then read -r _ accepted total < submission.state |
 printf 'submitting %s %s\n' "${accepted:-0}" "${total:-0}" > submission.state.launch
 mv -f submission.state.launch submission.state
 : >> .submit-controller.lock
+if [[ ${SLURMY_CONTROLLER_MODE:-slurm} == slurm ]]; then
+    exec python3 "$job/submission_controller.py" launch "$@"
+fi
 # Leave the SSH session/process group as well as its streams and launch lock.
 # nohup alone ignores HUP but does not protect against group-directed TERM.
 nohup setsid env -u BASH_ENV -u ENV bash --noprofile --norc ./remote_submit.sh "$@" </dev/null >> submission-controller.log 2>&1 8>&- &

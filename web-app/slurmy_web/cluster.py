@@ -208,6 +208,8 @@ def parse_status(host, partition, output):
                      active_call=active_calls.get(job_id) if slurmy else None,
                      solver_cores=active_calls.get(job_id, {}).get('cores') if slurmy else None,
                      solver_isolation=active_calls.get(job_id, {}).get('isolation') if slurmy else None)
+        if comment == 'slurmy-controller:v1':
+            entry.update(controller=True, name='Submission Controller')
         public = re.fullmatch(r'slurmy:v1:calls=(?P<calls>\d+):batches=(?P<batches>\d+)(?::cores=(?P<cores>\d+))?(?::isolation=(?P<isolation>shared|socket|node))?:batch=(?P<batch>\d+)', comment)
         if public and slurmy:
             entry.update(jobpairs=int(public.group('calls')), batches=int(public.group('batches')),
@@ -216,7 +218,7 @@ def parse_status(host, partition, output):
                 entry['solver_cores'] = int(public.group('cores'))
             if public.group('isolation'):
                 entry['solver_isolation'] = public.group('isolation')
-        if slurmy and directory in metadata:
+        if slurmy and not entry.get('controller') and directory in metadata:
             entry.update(metadata[directory])
             entry['metadata_source'] = 'private job files'
         jobs.append(entry)

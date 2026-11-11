@@ -11,11 +11,11 @@ flock -n 9 || { echo 'Another controller is already submitting this Slurmy job.'
 SUBMISSION_PHASE='initializing committed inputs'
 finish_submit() {
     local rc=$?
-    if (( rc != 0 )); then
+    if (( rc != 0 && rc != 75 )); then
         printf 'Submission controller failed during %s (exit %s; %s batches accepted). See preceding output for the cause.\n' "$SUBMISSION_PHASE" "$rc" "${submitted:-0}" >&2
     fi
     if [[ -f "$JOB_DIR/submit_coordinator.py" ]]; then python3 "$JOB_DIR/submit_coordinator.py" release "$SLURMY_JOB_ID" || true; fi
-    if (( rc != 0 )); then printf "failed %s %s\n" "${submitted:-0}" "${next_batch:-0}" > "$JOB_DIR/submission.state"; fi
+    if (( rc != 0 && rc != 75 )); then printf "failed %s %s\n" "${submitted:-0}" "${next_batch:-0}" > "$JOB_DIR/submission.state"; fi
 }
 trap finish_submit EXIT
 trap 'exit 1' HUP INT TERM
@@ -241,6 +241,7 @@ printf 'submitting %s %s\n' "$submitted" "$next_batch" > submission.state
 declare -A RESUME_WANTED=()
 SUBMISSION_PHASE='selecting unfinished solver-problem pairs'
 if (( RESUME_INCOMPLETE )); then
+    if (( RESUME_INCOMPLETE == 1 )); then
     resume_batches=$(python3 - <<'PY'
 import csv, json
 from pathlib import Path
@@ -262,6 +263,10 @@ for batch, tasks in enumerate(metadata['planned_batch_tasks']):
         print(batch)
 PY
     )
+    printf '%s\n' "$resume_batches" > .resume-pending
+    else
+        resume_batches=$(cat .resume-pending 2>/dev/null || true)
+    fi
     RESUME_BATCHES=()
     if [[ -n "$resume_batches" ]]; then mapfile -t RESUME_BATCHES <<< "$resume_batches"; fi
     for batch_id in "${RESUME_BATCHES[@]}"; do RESUME_WANTED[$batch_id]=1; done
@@ -301,6 +306,10 @@ for batch in batches/batch_*.sh; do
     if (( EXCLUSIVE_NODE )); then OPTIONS+=(--exclusive); fi
     while :; do
         [[ ! -f .stopped ]] || { echo 'Submission stopped before the next batch.' >&2; exit 1; }
+        if [[ ${SLURMY_MANAGED_CONTROLLER:-0} == 1 ]] && (( $(date +%s) >= ${SLURMY_CONTROLLER_DEADLINE:-0} )); then
+            echo 'Submission waiting: yielding controller before its time limit'
+            exit 75
+        fi
         if ! SUBMITTED=$(python3 "$JOB_DIR/submit_coordinator.py" attempt "$SLURMY_JOB_ID" "$MAX_OUTSTANDING" -- "${OPTIONS[@]}" batch.sh); then
             printf '%s\n' "$SUBMITTED" >&2
             exit 1
@@ -311,6 +320,7 @@ for batch in batches/batch_*.sh; do
                 break ;;
             WAIT\|*)
                 echo "Submission waiting: ${SUBMITTED#WAIT|}; $submitted/$next_batch accepted"
+                if [[ ${SLURMY_MANAGED_CONTROLLER:-0} == 1 ]]; then exit 75; fi
                 sleep 5 ;;
             *)
                 printf 'Unexpected submit coordinator response: %s\n' "$SUBMITTED" >&2
@@ -322,6 +332,7 @@ for batch in batches/batch_*.sh; do
     [[ "$ID" =~ ^[0-9]+$ ]] || { echo "Invalid sbatch ID: $SUBMITTED" >&2; exit 1; }
     row=$(csv_row "$ID" "$BATCH_ID" 1 "$(date +%s)" "$BATCH_ID")
     printf '%s\n' "$row" >> submission.csv
+    if [[ -f .resume-pending ]]; then sed -i "/^${BATCH_ID}$/d" .resume-pending; fi
     OUTSTANDING_IDS+=("$ID")
     if (( BATCH_ID >= submitted )); then submitted=$((submitted + 1)); fi
     printf 'submitting %s %s\n' "$submitted" "$next_batch" > submission.state

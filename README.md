@@ -327,13 +327,17 @@ user and have mode 0700; otherwise connection sharing is disabled. No changes to
 `~/.ssh/config` are required. Multiple TPTP globs are resolved in one remote query,
 with fresh matches on each preparation.
 
-During submission, Slurmy keeps the controller's SSH session open until all
-batches have been accepted. This is necessary on clusters that terminate login
-processes when SSH disconnects, even when those processes use `nohup`/`setsid`.
-Keep the local server and network connected during submission; closing the
-browser is fine. Already accepted SLURM tasks continue independently. If a
-connection loss interrupts submission, Resume preserves completed results and
-continues unfinished work.
+After local builds, uploads and the initial SLURM controller submission finish,
+the entire job can continue with your browser closed, local server stopped, or
+laptop switched off. Brief **Submission Controller** jobs run on the cluster to
+submit batches within the configured window. Each queues its continuation
+before exiting; SLURM starts it after a batch frees a slot. Controllers use the
+workflow's partition and reservation, one core and 256 MiB, and release their
+allocation while waiting so they do not block dedicated whole-node batches.
+They use separate SLURM submission slots, not solver-problem pair batch slots.
+No login-session daemon, persistent SSH, or administrator privileges are needed.
+Resume preserves completed results and installs the current controller for
+existing jobs.
 
 Normal preparation streams per-pair scripts directly into batch bundles. Use
 `slurmy.py --materialize-calls` to also write individual scripts for inspection. Uploads contain one

@@ -1252,6 +1252,11 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
     for record in all_slurm:
         job_id = previous_ids.get(PurePosixPath(record.workdir).name, PurePosixPath(record.workdir).name)
         if job_id in jobs:
+            if record.job_name == 'slurmy:controller':
+                if record.source == 'queue':
+                    jobs[job_id].controller_state = 'active'
+                    jobs[job_id].controller_log = ''
+                continue  # A controller is not a solver batch or ETA parallelism.
             jobs[job_id].slurm.append(record)
 
     return ClusterSnapshot(

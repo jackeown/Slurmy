@@ -23,6 +23,7 @@ function clusterCoreUsage(data, mode) {
   return {entries, denominator: mode === 'total' ? capacity : allocated, allocated, capacity, unknown, users: users.size};
 }
 function clusterAllocationDescription(job, allocated = job.reserved_cores) {
+  if (job.controller) return `submission controller · ${allocated == null ? 'core allocation unavailable' : `${allocated} physical core allocated`} · no solver-problem pairs run here`;
   const cores = job.solver_cores || job.active_call?.cores;
   const isolation = job.solver_isolation || job.active_call?.isolation;
   const details = [];

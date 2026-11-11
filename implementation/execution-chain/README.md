@@ -242,7 +242,8 @@ CLUSTER LOGIN / HEAD NODE — SOLVER-JOB SUBMISSION
   │ Working directory: ~/slurmy/jobs/JOB_ID/                                 │
   │                                                                          │
   │   • Hold this job’s submission-controller lock                           │
-  │   • Keep the launching SSH session open until submission finishes         │
+  │   • Run submission waves as brief SLURM-managed controller jobs            │
+  │   • Queue continuations, then release the core while waiting for slots     │
   │   • Prepare custom axioms in one Python process, with atomic file copies  │
   │   • Validate SLURM core-allocation / cgroup configuration                 │
   │   • Inspect the partition’s socket/core/thread topology                   │

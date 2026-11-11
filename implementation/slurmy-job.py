@@ -3,6 +3,7 @@
 from ssh_transport import connection_options
 
 import argparse
+import base64
 import os
 from pathlib import Path
 import re
@@ -42,10 +43,26 @@ def main():
                'resume': 'Resuming unfinished solver-problem pairs; completed results are kept…',
                'delete': 'All tasks stopped. Deleting cluster job files…'}[action], flush=True)
         try:
-            with (tempfile.TemporaryFile() if args.if_idle else (templates / f'remote_{action}.sh').open('rb')) as stream:
-                if args.if_idle:
-                    stream.write((templates / 'remote_recover.sh').read_bytes())
-                    stream.write(b'\n')
+            with (tempfile.TemporaryFile() if action == 'resume' else (templates / f'remote_{action}.sh').open('rb')) as stream:
+                if action == 'resume':
+                    if args.if_idle:
+                        stream.write((templates / 'remote_recover.sh').read_bytes())
+                        stream.write(b'\n')
+                    updates = {name: base64.b64encode(path.read_bytes()).decode('ascii') for name, path in (
+                        ('submission_controller.py', templates.with_name('submission_controller.py')),
+                        ('submit_coordinator.py', templates.with_name('submit_coordinator.py')),
+                        ('remote_submit.sh', templates/'remote_submit.sh'))}
+                    stream.write(('set -euo pipefail\n'
+                                  '[[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || exit 2\n'
+                                  '[[ -d "$HOME/slurmy/jobs/$1" && ! -L "$HOME/slurmy/jobs/$1" ]] || exit 2\n'
+                                  'python3 - "$HOME/slurmy/jobs/$1" <<\'SLURMY_HELPER\'\n'
+                                  'import base64,shutil,sys\nfrom pathlib import Path\n'
+                                  'root=Path(sys.argv[1])\n'
+                                  f'for name, encoded in {updates!r}.items():\n'
+                                  ' p=root/name; backup=root/(name+".before-managed-controller")\n'
+                                  ' if p.is_file() and not backup.exists(): shutil.copy2(p,backup)\n'
+                                  ' t=p.with_suffix(".tmp"); t.write_bytes(base64.b64decode(encoded)); t.replace(p)\n'
+                                  'SLURMY_HELPER\n').encode())
                     stream.write((templates / f'remote_{action}.sh').read_bytes())
                     stream.seek(0)
                 attempts = 3 if action in {'stop', 'delete'} else 1

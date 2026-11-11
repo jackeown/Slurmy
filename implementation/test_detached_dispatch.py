@@ -15,7 +15,7 @@ class DetachedDispatchTests(unittest.TestCase):
             job = Path(folder)/'slurmy/jobs/test-job'; job.mkdir(parents=True)
             (job/'remote_submit.sh').write_text('exec 9> .submit-controller.lock; flock -n 9; touch started; sleep 1; touch survived\n')
             command = ['bash', str(TEMPLATES/'remote_dispatch.sh'), 'test-job']
-            env = {**os.environ, 'HOME': folder}
+            env = {**os.environ, 'SLURMY_CONTROLLER_MODE': 'connected', 'HOME': folder}
             env.pop('SLURMY_KEEP_SUBMISSION_SESSION', None)
             first = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
@@ -36,7 +36,7 @@ class DetachedDispatchTests(unittest.TestCase):
             job = Path(folder)/'slurmy/jobs/test-job'; job.mkdir(parents=True)
             (job/'remote_submit.sh').write_text('sleep .3; echo axiom-failure >&2; exit 17\n')
             result = subprocess.run(['bash', str(TEMPLATES/'remote_dispatch.sh'), 'test-job'],
-                                    env={**os.environ, 'HOME': folder}, capture_output=True, text=True, timeout=3)
+                                    env={**os.environ, 'SLURMY_CONTROLLER_MODE': 'connected', 'HOME': folder}, capture_output=True, text=True, timeout=3)
             self.assertEqual(result.returncode, 17)
             self.assertIn('axiom-failure', result.stderr)
 
@@ -54,7 +54,7 @@ sleep 1
 printf 'complete 1 1\\n' > submission.state
 touch survived
 ''')
-            env = {**os.environ, 'HOME': folder, 'SLURMY_KEEP_SUBMISSION_SESSION': '0'}
+            env = {**os.environ, 'SLURMY_CONTROLLER_MODE': 'connected', 'HOME': folder, 'SLURMY_KEEP_SUBMISSION_SESSION': '0'}
             command = ['bash', str(TEMPLATES / 'remote_dispatch.sh'), 'test-job']
             first = subprocess.run(command, env=env, capture_output=True, text=True, timeout=3)
             self.assertEqual(first.returncode, 0, first.stderr)
@@ -76,7 +76,7 @@ touch survived
             job=Path(folder)/'slurmy/jobs/test-job';job.mkdir(parents=True)
             (job/'remote_submit.sh').write_text('exec 9> .submit-controller.lock; flock -n 9; touch started; sleep 1; touch survived\n')
             command='bash '+shlex.quote(str(TEMPLATES/'remote_dispatch.sh'))+' test-job; touch '+shlex.quote(str(job/'launched'))+'; sleep 30'
-            parent=subprocess.Popen(['bash','-c',command],env={**os.environ,'HOME':folder,'SLURMY_KEEP_SUBMISSION_SESSION':'0'},start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            parent=subprocess.Popen(['bash','-c',command],env={**os.environ,'SLURMY_CONTROLLER_MODE':'connected','HOME':folder,'SLURMY_KEEP_SUBMISSION_SESSION':'0'},start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             try:
                 deadline=time.monotonic()+3
                 while not (job/'launched').exists() and time.monotonic()<deadline:time.sleep(.02)
@@ -94,7 +94,7 @@ touch survived
             job.mkdir(parents=True)
             (job / 'remote_submit.sh').write_text('echo "Invalid topology" >&2; exit 23\n')
             result = subprocess.run(['bash', str(TEMPLATES / 'remote_dispatch.sh'), 'test-job'],
-                                    env={**os.environ, 'HOME': folder}, capture_output=True, text=True)
+                                    env={**os.environ, 'SLURMY_CONTROLLER_MODE': 'connected', 'HOME': folder}, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('Invalid topology', result.stderr)
             self.assertTrue((job/'.submit-controller.lock').exists())
@@ -141,7 +141,7 @@ touch survived
                 queue.chmod(0o755)
                 script = (TEMPLATES / 'remote_recover.sh').read_text() + '\ntouch "$job/SHOULD_NOT_RUN"\n'
                 result = subprocess.run(['bash', '-s', '--', 'test-job'], input=script, text=True,
-                                        env={**os.environ, 'HOME': folder, 'PATH': str(tools) + os.pathsep + os.environ['PATH']},
+                                        env={**os.environ, 'SLURMY_CONTROLLER_MODE': 'connected', 'HOME': folder, 'PATH': str(tools) + os.pathsep + os.environ['PATH']},
                                         capture_output=True)
                 self.assertEqual(result.returncode == 0, state != 'queue-error')
                 self.assertFalse((job / 'SHOULD_NOT_RUN').exists())
@@ -154,7 +154,7 @@ touch survived
             hook.write_text('if [[ "$0" == *remote_submit.sh ]]; then echo "bind: line editing not enabled" >&2; exit 23; fi\n')
             (job/'remote_submit.sh').write_text('printf "%s" "$CLUSTER_SETTING" > preserved; touch started\n')
             result=subprocess.run(['bash',str(TEMPLATES/'remote_dispatch.sh'),'test-job'],
-                                  env={**os.environ,'HOME':folder,'BASH_ENV':str(hook),'CLUSTER_SETTING':'preserved value'},capture_output=True,text=True)
+                                  env={**os.environ,'SLURMY_CONTROLLER_MODE':'connected','HOME':folder,'BASH_ENV':str(hook),'CLUSTER_SETTING':'preserved value'},capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertTrue((job/'started').exists())
             self.assertEqual((job/'preserved').read_text(),'preserved value')

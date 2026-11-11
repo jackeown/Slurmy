@@ -15,7 +15,13 @@ class LifecycleTests(unittest.TestCase):
         for action in ('delete', 'resume'):
             scripts = []
             def run(*args, stdin, **kwargs):
-                scripts.append(Path(stdin.name).name)
+                if isinstance(stdin.name, int):
+                    payload = stdin.read().decode()
+                    self.assertIn('Continue only unfinished', payload)
+                    self.assertIn('submission_controller.py', payload)
+                    scripts.append('remote_resume.sh')
+                else:
+                    scripts.append(Path(stdin.name).name)
                 return SimpleNamespace(returncode=0)
             with self.subTest(action=action), patch('sys.argv', ['slurmy-job.py', action, 'test-job']), patch.object(cli.subprocess, 'run', side_effect=run):
                 self.assertEqual(cli.main(), 0)
