@@ -52,8 +52,9 @@ def main():
                 for attempt in range(1, attempts + 1):
                     stream.seek(0)
                     try:
+                        budget = [] if action == 'resume' else ['timeout', '--signal=TERM', '--kill-after=5', '120']
                         result = subprocess.run(['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--',
-                                                 args.host, 'timeout', '--signal=TERM', '--kill-after=5', '120', 'env', '-u', 'BASH_ENV', '-u', 'ENV', 'bash', '--noprofile', '--norc', '-s', '--', args.job_id], stdin=stream, check=False, timeout=180)
+                                                 args.host, *budget, 'env', '-u', 'BASH_ENV', '-u', 'ENV', 'bash', '--noprofile', '--norc', '-s', '--', args.job_id], stdin=stream, check=False, timeout=None if action == 'resume' else 180)
                         code = result.returncode
                     except subprocess.TimeoutExpired:
                         code = 255

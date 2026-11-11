@@ -1225,7 +1225,9 @@ def create_app():
                 deleting = next((op for op in active if op['label'] == 'delete'), None)
                 if deleting:
                     return jsonify(deleting), 202
-                dependencies = list(active)
+                # Resume now keeps SSH open while submitting. Stop/delete must
+                # interrupt it rather than wait for the submission window.
+                dependencies = [op for op in active if op['label'] != 'resume']
                 active = []
             else:
                 dependencies = []

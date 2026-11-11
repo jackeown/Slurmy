@@ -430,15 +430,11 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         shutil.copyfile(REPO / "implementation/ssh_transport.py", assets / "builds/ssh_transport.py")
         shutil.copyfile(REPO / "implementation/package_inputs.py", assets / "package_inputs.py")
         if axioms:
-            axiom_lines = ['#!/usr/bin/env bash', 'set -euo pipefail',
-                           'JOB_DIR=${JOB_DIR:?}', 'TPTP_DIR="$JOB_DIR/rootfs/.slurmy-tptp"',
-                           'mkdir -p -- "$TPTP_DIR/Axioms"']
-            for source, relative in axiom_destinations.items():
-                target = 'Axioms/' + relative.as_posix()
-                axiom_lines.append(f'mkdir -p -- "$TPTP_DIR"/{shlex.quote(str(Path(target).parent))}')
-                axiom_lines.append(f'cp -- "$JOB_DIR/rootfs"/{shlex.quote(str(source).lstrip("/"))} '
-                                   f'"$TPTP_DIR"/{shlex.quote(target)}')
-            write_script(assets / 'prepare_axioms.sh', '\n'.join(axiom_lines) + '\n')
+            shutil.copy2(REPO / 'implementation/prepare_axioms.py', assets / 'prepare_axioms.py')
+            (assets / 'axiom-paths.json').write_text(json.dumps(
+                [(str(source), relative.as_posix()) for source, relative in axiom_destinations.items()]), encoding='utf-8')
+            write_script(assets / 'prepare_axioms.sh', '#!/usr/bin/env bash\nset -euo pipefail\n'
+                         'exec python3 "${JOB_DIR:?}/prepare_axioms.py"\n')
         build_lines = ["#!/usr/bin/env bash", "set -euo pipefail", 'HERE=$(cd -- "$(dirname -- "$0")" && pwd)', 'source "$HERE/../workflow_name.sh"']
         active_builds = [(i, build) for i, build in enumerate(builds) if build.recipe is not None]
         build_total = len(active_builds)

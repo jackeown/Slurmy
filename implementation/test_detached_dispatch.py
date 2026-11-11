@@ -10,6 +10,36 @@ TEMPLATES = Path(__file__).parent / 'templates'
 
 
 class DetachedDispatchTests(unittest.TestCase):
+    def test_default_launcher_keeps_session_open_and_releases_launch_lock(self):
+        with tempfile.TemporaryDirectory() as folder:
+            job = Path(folder)/'slurmy/jobs/test-job'; job.mkdir(parents=True)
+            (job/'remote_submit.sh').write_text('exec 9> .submit-controller.lock; flock -n 9; touch started; sleep 1; touch survived\n')
+            command = ['bash', str(TEMPLATES/'remote_dispatch.sh'), 'test-job']
+            env = {**os.environ, 'HOME': folder}
+            env.pop('SLURMY_KEEP_SUBMISSION_SESSION', None)
+            first = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                deadline = time.monotonic()+3
+                while not (job/'started').exists() and time.monotonic()<deadline: time.sleep(.02)
+                self.assertIsNone(first.poll())
+                duplicate = subprocess.run(command, env=env, capture_output=True, text=True, timeout=2)
+                self.assertIn('already active', duplicate.stdout)
+                output, error = first.communicate(timeout=3)
+                self.assertEqual(first.returncode, 0, error)
+                self.assertIn('Keeping SSH connected', output)
+                self.assertTrue((job/'survived').is_file())
+            finally:
+                if first.poll() is None: first.kill(); first.communicate()
+
+    def test_failure_after_launch_propagates_to_the_connected_client(self):
+        with tempfile.TemporaryDirectory() as folder:
+            job = Path(folder)/'slurmy/jobs/test-job'; job.mkdir(parents=True)
+            (job/'remote_submit.sh').write_text('sleep .3; echo axiom-failure >&2; exit 17\n')
+            result = subprocess.run(['bash', str(TEMPLATES/'remote_dispatch.sh'), 'test-job'],
+                                    env={**os.environ, 'HOME': folder}, capture_output=True, text=True, timeout=3)
+            self.assertEqual(result.returncode, 17)
+            self.assertIn('axiom-failure', result.stderr)
+
     def test_controller_outlives_launcher_and_second_launch_keeps_existing_controller(self):
         with tempfile.TemporaryDirectory() as folder:
             job = Path(folder) / 'slurmy/jobs/test-job'
@@ -24,7 +54,7 @@ sleep 1
 printf 'complete 1 1\\n' > submission.state
 touch survived
 ''')
-            env = {**os.environ, 'HOME': folder}
+            env = {**os.environ, 'HOME': folder, 'SLURMY_KEEP_SUBMISSION_SESSION': '0'}
             command = ['bash', str(TEMPLATES / 'remote_dispatch.sh'), 'test-job']
             first = subprocess.run(command, env=env, capture_output=True, text=True, timeout=3)
             self.assertEqual(first.returncode, 0, first.stderr)
@@ -46,7 +76,7 @@ touch survived
             job=Path(folder)/'slurmy/jobs/test-job';job.mkdir(parents=True)
             (job/'remote_submit.sh').write_text('exec 9> .submit-controller.lock; flock -n 9; touch started; sleep 1; touch survived\n')
             command='bash '+shlex.quote(str(TEMPLATES/'remote_dispatch.sh'))+' test-job; touch '+shlex.quote(str(job/'launched'))+'; sleep 30'
-            parent=subprocess.Popen(['bash','-c',command],env={**os.environ,'HOME':folder},start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            parent=subprocess.Popen(['bash','-c',command],env={**os.environ,'HOME':folder,'SLURMY_KEEP_SUBMISSION_SESSION':'0'},start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             try:
                 deadline=time.monotonic()+3
                 while not (job/'launched').exists() and time.monotonic()<deadline:time.sleep(.02)

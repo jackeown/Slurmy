@@ -327,6 +327,14 @@ user and have mode 0700; otherwise connection sharing is disabled. No changes to
 `~/.ssh/config` are required. Multiple TPTP globs are resolved in one remote query,
 with fresh matches on each preparation.
 
+During submission, Slurmy keeps the controller's SSH session open until all
+batches have been accepted. This is necessary on clusters that terminate login
+processes when SSH disconnects, even when those processes use `nohup`/`setsid`.
+Keep the local server and network connected during submission; closing the
+browser is fine. Already accepted SLURM tasks continue independently. If a
+connection loss interrupts submission, Resume preserves completed results and
+continues unfinished work.
+
 Normal preparation streams per-pair scripts directly into batch bundles. Use
 `slurmy.py --materialize-calls` to also write individual scripts for inspection. Uploads contain one
 compressed script bundle per batch, rather than thousands of small script files.

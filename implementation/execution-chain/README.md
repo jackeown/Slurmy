@@ -234,7 +234,7 @@ CLUSTER LOGIN / HEAD NODE — SOLVER-JOB SUBMISSION
   └──────────────────────────────────┬─────────────────────────────────────────┘
                                      │
                                      │ submit.sh invokes over SSH:
-                                     │ bash -s ... < remote_submit.sh
+                                     │ remote_dispatch.sh starts remote_submit.sh
                                      ▼
   ┌────────────────────────────────────────────────────────────────────────────┐
   │ 12. remote_submit.sh resolves the actual SLURM allocations                │
@@ -242,6 +242,8 @@ CLUSTER LOGIN / HEAD NODE — SOLVER-JOB SUBMISSION
   │ Working directory: ~/slurmy/jobs/JOB_ID/                                 │
   │                                                                          │
   │   • Hold this job’s submission-controller lock                           │
+  │   • Keep the launching SSH session open until submission finishes         │
+  │   • Prepare custom axioms in one Python process, with atomic file copies  │
   │   • Validate SLURM core-allocation / cgroup configuration                 │
   │   • Inspect the partition’s socket/core/thread topology                   │
   │   • Resolve automatic socket requirements                                │

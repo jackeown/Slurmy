@@ -116,6 +116,16 @@ class JobOperationTests(unittest.TestCase):
         self.assertEqual(self.action('resume').status_code, 202)
         self.assertEqual(self.action('stop').status_code, 202)
 
+    def test_delete_stops_running_resume_without_waiting_for_submission_window(self):
+        self.assertEqual(self.action('resume').status_code, 202)
+        response = self.delete()
+        self.assertEqual(response.status_code, 202)
+        worker = web.threading.Thread.call_args.kwargs['target']
+        with patch.object(web.subprocess, 'run', return_value=SimpleNamespace(returncode=0)), \
+                patch.object(web.time, 'sleep', side_effect=AssertionError('Delete waited for Resume')):
+            worker()
+        self.assertEqual(self.client.get('/api/operations/'+response.json['id']).json['state'], 'done')
+
     def delete(self, **options):
         return self.client.post('/api/jobs/test-job/delete', json=options, headers=self.headers)
 

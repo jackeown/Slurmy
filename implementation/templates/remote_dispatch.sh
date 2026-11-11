@@ -32,4 +32,20 @@ if ! kill -0 "$controller" 2>/dev/null; then
     fi
 fi
 echo "Slurmy job ID: $1"
-echo 'Submission phase: Cluster submission controller started; it continues if this connection closes'
+# Release the launch lock before waiting, so Stop and duplicate requests work.
+flock -u 8
+exec 8>&-
+if [[ ${SLURMY_KEEP_SUBMISSION_SESSION:-1} == 1 ]]; then
+    # setsid cannot escape logind's SSH session cgroup. With
+    # KillUserProcesses=yes, logging out kills even nohup/setsid children.
+    echo 'Submission phase: Keeping SSH connected while the controller submits batches'
+    if wait "$controller"; then
+        echo 'Submission phase: All batches accepted or submission stopped'
+    else
+        code=$?
+        tail -n 30 submission-controller.log >&2
+        exit "$code"
+    fi
+else
+    echo 'Submission phase: Cluster submission controller started in detached mode'
+fi

@@ -140,10 +140,17 @@ are reported without dispatching a batch. Once `sbatch` begins accepting
 batches, submission is checkpointed per batch rather than globally atomic:
 SLURM cannot roll back allocations already accepted before a connection loss.
 Inspect the reported job ID before attempting a retry.
-The cluster submission controller runs independently of the local app and SSH
-connection. Its output is kept in `submission-controller.log` in the job directory;
-closing the browser, stopping the app, or losing the network does not stop
-submission. Monitoring probes its kernel lock on each refresh, including when
+The cluster submission controller keeps its SSH session connected until all
+batches have been accepted (or submission is stopped). This supports clusters
+whose login policy terminates all session processes at logout, including
+`nohup`/`setsid` processes. Closing the browser does not close that session; keep
+the local server and network connected while submission is in progress.
+Already accepted SLURM tasks continue independently. A broken connection can
+stop the controller; Resume retains accepted batches and completed results.
+Its output is kept in `submission-controller.log` in the job directory.
+Custom TPTP axioms are copied atomically by one Python process, with progress
+every 500 files, rather than spawning separate `mkdir` and `cp` processes for
+every axiom. Monitoring probes the controller's kernel lock on each refresh, including when
 history data is cached. An abandoned submission with no active SLURM tasks is
 shown as **Incomplete**, with a reason and a **Resume** action. While monitoring,
 the local server checks known jobs every 30 seconds, even without an open
