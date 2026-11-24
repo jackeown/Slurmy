@@ -112,9 +112,9 @@ text.value='saved.p';initializeProblemNames(row,{problem_selection_mode:'files'}
 
     def test_environment_validation_accepts_literal_values_and_rejects_errors(self):
         headers={'X-CSRF-Token':'test'}
-        response=self.client.post('/api/validate-solver-environment',json={'environment':'X=Y Z=3\nHello = World'},headers=headers)
+        response=self.client.post('/api/validate-solver-environment',json={'environment':'X=Y Z=3\nHello = World THREADS={{cores}}'},headers=headers)
         self.assertEqual(response.status_code,200)
-        self.assertEqual(response.json['count'],3)
-        for value in ['bad-name=x','X=one X=two','X="unfinished']:
+        self.assertEqual(response.json['count'],4)
+        for value in ['bad-name=x','X=one X=two','X="unfinished','X={{unknown}}','X={{var_file}}','X={{cores']:
             response=self.client.post('/api/validate-solver-environment',json={'environment':value},headers=headers)
             self.assertEqual(response.status_code,400)

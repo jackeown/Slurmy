@@ -15,14 +15,14 @@ from starexec_export import export as starexec_export
 
 
 class LiveOutputTests(unittest.TestCase):
-    def run_capture(self, command, wall=5, computer_info=False, environment=""):
+    def run_capture(self, command, wall=5, computer_info=False, environment="", problem_name="example.p"):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         runtime = root/'runtime'; runtime.mkdir()
         binary = Path(__file__).parent/'build/runsolver/runsolver'
         shutil.copy2(binary, runtime/'runsolver')
-        problem = root/'example.p'; problem.touch()
+        problem = root/problem_name; problem.touch()
         row = dict(solver_name='test',command=command,solver_directory=str(runtime),
                    problem=str(problem),wc_limit=wall,cpu_limit=0,mem_limit='100MiB',
                    cores=1,threads_per_core=1,cpus='auto',exclusive_cpu='false',exclusive_node='false',environment=environment)
@@ -53,6 +53,13 @@ class LiveOutputTests(unittest.TestCase):
         _,_,logs=self.run_capture(command,environment='SLURMY_TEST_ENV="$(echo unsafe); $HOME" Hello = World')
         self.assertEqual(logs['solver'],b'$(echo unsafe); $HOME\nWorld\n')
         self.assertNotIn('SLURMY_TEST_ENV',os.environ)
+
+    def test_environment_placeholders_resolve_limits_and_safe_cluster_problem_path(self):
+        command="/bin/bash -c 'printf \"%s\\n\" \"$THREADS\" \"$CPU\" \"$WALL\" \"$MEM\" \"$INPUT\" \"$TEXT\"'"
+        name="problem with spaces'$(echo BAD)+1.p"
+        job,_,logs=self.run_capture(command,environment='THREADS={{cores}} CPU={{cpu_limit}} WALL={{wc_limit}} MEM={{mem_limit_mib}} INPUT={{problem}} TEXT="pre {{problem}} post"',problem_name=name)
+        problem=job/'rootfs'/str(job.parent/name).lstrip('/')
+        self.assertEqual(logs['solver'].decode().splitlines(),['1','0','5','100',str(problem),'pre '+str(problem)+' post'])
 
     def test_early_stderr_is_measured_live_and_exported_once(self):
         job,row,logs=self.run_capture("/bin/bash -c 'printf \"early error\\n\" >&2; sleep 0.8; printf \"late stdout\\n\"; exit 7'",computer_info=True)

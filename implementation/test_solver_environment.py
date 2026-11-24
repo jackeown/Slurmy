@@ -1,5 +1,6 @@
 """Literal environment syntax and safe shell emission."""
 import subprocess
+import shlex
 import unittest
 from solver_environment import parse, exports
 
@@ -19,3 +20,15 @@ class SolverEnvironmentTests(unittest.TestCase):
         values=parse('A="$(echo unsafe); `echo unsafe` $HOME" B="a b"')
         result=subprocess.run(['bash','-c',exports(values)+'printf "%s\\n" "$A" "$B"'],capture_output=True,text=True,check=True)
         self.assertEqual(result.stdout.splitlines(),[values['A'],values['B']])
+
+    def test_placeholder_fragments_are_safely_joined_with_literal_text(self):
+        values=parse('THREADS={{cores}} INPUT={{problem}} MESSAGE="before {{problem}} after; $(echo BAD)"')
+        path="/cluster/a b'$(echo BAD).p"
+        script=exports(values,dict(cores='12',problem=shlex.quote(path)))+'printf "%s\\n" "$THREADS" "$INPUT" "$MESSAGE"'
+        result=subprocess.run(['bash','-c',script],capture_output=True,text=True,check=True)
+        self.assertEqual(result.stdout.splitlines(),['12',path,'before '+path+' after; $(echo BAD)'])
+
+    def test_unknown_malformed_or_unavailable_placeholders_fail(self):
+        for text in ['X={{unknown}}','X={{solver_command}}','X={{cores','X={{ cores }}','X=cores}}']:
+            with self.subTest(text=text),self.assertRaises(ValueError):parse(text)
+        with self.assertRaisesRegex(ValueError,'not available'):exports(parse('X={{cpus}}'),{})

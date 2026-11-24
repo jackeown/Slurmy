@@ -658,6 +658,8 @@ X=Y Z=3
 Hello = World
 GREETING="Hello World"
 EMPTY=
+THREADS={{cores}}
+INPUT={{problem}}
 ```
 
 Assignments may be separated by spaces or newlines, with spaces around `=`.
@@ -665,8 +667,13 @@ Names use letters, digits and underscores and cannot start with a digit. Quote
 values containing whitespace; single and double quotes are supported, and a
 backslash escapes the next character outside single quotes. Empty values are
 allowed. Duplicate names, malformed assignments, control characters and unfinished
-quotes or escapes are errors, shown beneath the field. Values are literal: shell
-expansion and command substitution are never performed on them.
+quotes or escapes are errors, shown beneath the field. Values support the same
+solver-command placeholders: `{{problem}}`, `{{cores}}`, `{{cpu_limit}}`,
+`{{wc_limit}}`, `{{mem_limit}}` and `{{mem_limit_mib}}` (also `{{cpus}}` when
+explicitly configured). Each pair receives its own limits and cluster problem
+path, including paths with spaces. Unknown or malformed placeholders are errors.
+Other text remains literal: shell expansion and command substitution are never
+performed on environment values.
 
 Variables are exported inside the solver process wrapper, so the solver and its
 children receive them without changing other pairs, the resource limiter or build

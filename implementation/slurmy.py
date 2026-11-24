@@ -382,7 +382,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         values.update(mem_limit=str(math.ceil(task["mem_limit"] / 10**6)),
                       mem_limit_mib=str(math.ceil(task["mem_limit"] / 2**20)),
                       problem=(shlex.quote(task['problem']) if task['remote_problem'] else remote_path(Path(task["problem"]))))
-        task["remote_command"] = solver_environment.exports(task["environment"]) + render(relocate(omit_unlimited_arguments(task["command"], task), command_paths), values)
+        task["remote_command"] = solver_environment.exports(task["environment"], values) + render(relocate(omit_unlimited_arguments(task["command"], task), command_paths), values)
         values["solver_command"] = '/bin/bash "$CALL_DIR/solver.sh"'
         for name in ("watcher_log", "var_file", "solver_log"):
             values[name] = '"${' + name.upper() + '}"'

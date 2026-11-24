@@ -2,6 +2,9 @@
 import re
 import shlex
 
+PLACEHOLDER = re.compile(r'\{\{([a-z_]+)\}\}')
+PLACEHOLDERS = {'problem','cores','cpu_limit','wc_limit','mem_limit','mem_limit_mib','cpus'}
+
 NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 
 
@@ -42,8 +45,30 @@ def parse(value):
             chars.append(char);position+=1
         if quote:raise ValueError(f'Unclosed quote in environment variable {name}.')
         result[name]=''.join(chars)
+    for name,text in result.items():
+        for match in PLACEHOLDER.finditer(text):
+            if match[1] not in PLACEHOLDERS:
+                raise ValueError(f'Unknown environment placeholder {match[0]} in {name}.')
+        remainder=PLACEHOLDER.sub('',text)
+        if '{{' in remainder or '}}' in remainder:
+            raise ValueError(f'Unsupported placeholder syntax in environment variable {name}. Use {{{{cores}}}}, for example.')
     return result
 
 
-def exports(values):
-    return ''.join(f'export {name}={shlex.quote(value)}\n' for name,value in values.items())
+def exports(values, replacements=None):
+    """Quote literal fragments separately from trusted shell-word replacements.
+
+    The problem replacement is a shell expression for its cluster path. Never
+    interpolate raw user text into that expression or reparse a resolved value.
+    """
+    lines=[]
+    for name,value in values.items():
+        parts=[];position=0
+        for match in PLACEHOLDER.finditer(value):
+            if replacements is None or match[1] not in replacements:
+                raise ValueError(f'Environment placeholder {match[0]} is not available for this solver configuration.')
+            parts.extend([shlex.quote(value[position:match.start()]), replacements[match[1]]])
+            position=match.end()
+        parts.append(shlex.quote(value[position:]))
+        lines.append(f'export {name}={"".join(parts)}\n')
+    return ''.join(lines)
