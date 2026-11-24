@@ -161,6 +161,37 @@ the available placeholder parameters.
 The tool can also be built from source by specifying the source directory on the local computer,
 and a script in that directory that is run to build the tool.
 
+Set **Analysis script** under **Runtime and Command** for each solver configuration
+that needs custom measurements. The workflow stores the path to the selected
+`.py` or `.sh` file. Slurmy copies the script into the prepared job and runs that
+copy on the compute node after each run of the solver.
+The first argument is the path to solver stdout and the second is the path to
+solver stderr. An unavailable stream is passed as `/dev/null`. Print a flat
+JSON object or a CSV header and one data row to stdout. Send diagnostics to
+stderr. For example, a Python script can count lines in both streams.
+
+```python
+import json
+import sys
+
+def count_lines(path):
+    with open(path, 'rb') as stream:
+        return sum(1 for _ in stream)
+
+print(json.dumps({'stdout_lines': count_lines(sys.argv[1]),
+                  'stderr_lines': count_lines(sys.argv[2])}))
+```
+
+**Download** adds the reported columns to `<job-name>_results-summary.csv`.
+To specify the columns in advance, set **Analysis columns** to a comma-separated
+list of names for that solver. Use those names as JSON keys or CSV headers.
+Declared columns appear even when no run has reported a value. Missing values
+are blank, and a result with undeclared names is recorded as an analysis error.
+Leave the list empty to discover columns from script output. Column names that match standard columns get
+an `analysis.` prefix. Analysis has a 60-second limit per pair and runs outside
+the solver's measured time. If analysis fails, Slurmy keeps the solver result and
+records the failure in the controller log.
+
 **SLURM settings:**
 The solver-problem pairs can be run in problem major order, i.e., for each problm run all solvers,
 or solution major order, i.e., for each solver run all problems, or random order.
@@ -223,14 +254,19 @@ might not expose counts.
 In **Job history**, follow progress and open a job to inspect solver-problem pair outcomes,
 solver comparisons, problems, output streams, and diagnostics. Select solver-problem pair
 outcomes to filter the solver-problem pairs table by multiple statuses; the 3D plot compares outcome
-counts across solvers. **Download** saves three files under
+counts across solvers. Use **Analysis columns** above the table to show selected
+metrics beside CPU and Wall. Undeclared metrics become available as you view pages
+that contain them. Choose **Inspect** on a solver-problem pair to see its full
+**Analysis Results** alongside the output streams. **Download** saves three files under
 `job-results/JOB_ID/`: `<job-name>_results-summary.csv`,
 `<job-name>_solver-stdout.tgz`, and `<job-name>_solver-stderr.tgz`.
 Each archive extracts into its own directory, with one log per solver-problem pair named
 `<solver>___<original-problem-filename>___<solver-problem-pair-id>.log` (or `.stderr.log`
 for stderr). Problem filenames, including their extensions and characters such
 as `+` and `^`, are preserved exactly. Unsafe filename characters in the job
-name are replaced with hyphens. The arrow menu offers
+name are replaced with hyphens. Choose **Download summary CSV** from the arrow
+menu to save just the CSV, including analysis columns. The log-availability
+fields are blank because this option skips reading the archives. The arrow menu also offers
 **Complete/verbose download**
 under `job-results/verbose/JOB_ID/`. Readable individual archives are grouped in
 `solver-problem-pairs/` and named

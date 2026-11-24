@@ -55,6 +55,60 @@ class PortableWorkflowTests(unittest.TestCase):
         self.assertEqual(workflows.imported_rows(imported/'jobpairs.csv',check_paths=False)[0]['environment'],rows[0]['environment'])
         self.assertEqual(workflows.copyable_solver_configurations(imported)[0]['environment'],rows[0]['environment'])
 
+    def test_analysis_source_path_stays_fixed_and_preparation_copies_the_script(self):
+        script = self.root/'custom metrics.sh'
+        source = 'printf "metric\\n1\\n"\n'
+        script.write_text(source)
+        config = workflows.imported_rows(self.workflow/'jobpairs.csv')[0]
+        config.pop('problem')
+        data = {**workflows.decisions(self.workflow), 'mode': 'interactive', 'globs': [str(self.problem)],
+                'configurations': [{**config, 'analysis_script': str(script), 'analysis_columns': 'metric, optional'},
+                                   {**config, 'solver_name': 'No analysis'}]}
+        def selected(data):
+            return [row.get('analysis_script', '') for row in data['configurations']]
+        with patch.object(workflows, 'check_requested'):
+            workflows.save(data, self.workflow)
+        self.assertEqual(selected(workflows.decisions(self.workflow)), [str(script), ''])
+        for filename in ('jobpairs.csv', 'configurations.csv'):
+            with (self.workflow / filename).open(newline='') as stream:
+                self.assertEqual(next(csv.DictReader(stream))['analysis_script'], str(script))
+        self.assertFalse(workflows.analysis_files_in(self.workflow))
+
+        generate(self.workflow/'jobpairs.csv', self.workflow/'building.txt', self.workflow/'resource_limiter_template.txt')
+        prepared = self.workflow/'submit.sh.files'
+        copies = json.loads((prepared/'analysis-sources.json').read_text())
+        packaged = prepared / copies[str(script)]
+        updated_source = 'printf "metric\\n2\\n"\n'
+        script.write_text(updated_source)
+        self.assertEqual(packaged.read_text(), source)
+
+        bundle = self.bundle()
+        self.addCleanup(bundle.close)
+        script.unlink()
+        imported, _ = portable.import_bundle(bundle, 'with-analysis')
+        restored = workflows.decisions(imported)
+        analyzer, blank = selected(restored)
+        self.assertEqual(Path(analyzer).read_text(), updated_source)
+        self.assertEqual(blank, '')
+        self.assertEqual(workflows.copyable_solver_configurations(imported)[0]['analysis_script'], analyzer)
+        self.assertEqual(workflows.copyable_solver_configurations(imported)[0]['analysis_columns'], 'metric, optional')
+        restored['configurations'][0]['analysis_script'] = ''
+        restored['configurations'][0]['analysis_columns'] = ''
+        with patch.object(workflows, 'check_requested'):
+            workflows.save(restored, imported)
+        self.assertEqual(selected(workflows.decisions(imported)), ['', ''])
+
+    def test_legacy_workflow_analyzer_is_used_only_when_csv_column_is_absent(self):
+        pairs = self.workflow/'jobpairs.csv'
+        rows = workflows.imported_rows(pairs)
+        legacy = self.workflow/'analysis.sh'
+        legacy.write_text('printf "metric\\n1\\n"\n')
+        self.assertNotIn('analysis_script', read_pairs(pairs)[0])
+        rows[0].pop('analysis_script')
+        pairs.write_text(workflows.csv_text(rows, tuple(key for key in COLUMNS if key != 'analysis_script')))
+        self.assertEqual(read_pairs(pairs)[0]['analysis_script'], str(legacy))
+        self.assertEqual(workflows.copyable_solver_configurations(self.workflow)[0]['analysis_script'], str(legacy))
+
     def test_explicit_problem_selection_order_survives_portable_workflow(self):
         second=self.root/'AAA.p';second.write_text('cnf(b,axiom,q).')
         data=workflows.decisions(self.workflow)

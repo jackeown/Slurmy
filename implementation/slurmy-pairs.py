@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 import tempfile
 
+from analyze_run import workflow_script
 from slurmy import COLUMNS, PAIR_ORDERS, SlurmyError, order_jobpairs, path_at, read_pairs
 from slurmy_archives import expand_problem_pattern, expand_cluster_tptp_many
 
@@ -28,14 +29,18 @@ def expand(configurations: list[Path], patterns: list[str], output: Path,
     for filename in configurations:
         with filename.open(encoding="utf-8-sig", newline="") as stream:
             reader = csv.DictReader(stream)
-            required = set(COLUMNS) - {"solver_name", "problem", "threads_per_core", "exclusive_cpu", "exclusive_node", "omit_cpu_limit", "omit_wc_limit", "omit_mem_limit", "environment"}
+            required = set(COLUMNS) - {"solver_name", "problem", "threads_per_core", "exclusive_cpu", "exclusive_node", "omit_cpu_limit", "omit_wc_limit", "omit_mem_limit", "environment", "analysis_script", "analysis_columns"}
             headers = reader.fieldnames or []
             if len(set(headers)) != len(headers) or not required <= set(headers) or set(headers) - (set(COLUMNS) - {"problem"}):
                 raise SlurmyError(f"{filename}: configuration columns are {', '.join(c for c in COLUMNS if c != 'problem')}")
+            legacy_analysis = workflow_script(filename.parent) if 'analysis_script' not in headers else None
             for row in reader:
                 if None in row or any(not row.get(key, '').strip() for key in required):
                     raise SlurmyError(f"{filename}: malformed configuration row")
                 row['solver_directory'] = str(path_at(row['solver_directory'], filename.resolve().parent))
+                script = (row.get('analysis_script', str(legacy_analysis or '')) or '').strip()
+                if script:
+                    row['analysis_script'] = str(path_at(script, filename.resolve().parent))
                 for problem in problems:
                     rows.append({**row, "solver_name": row.get("solver_name", ""), "problem": str(problem)})
     if not rows:

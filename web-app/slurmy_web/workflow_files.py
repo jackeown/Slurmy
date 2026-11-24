@@ -8,11 +8,12 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from analyze_run import SCRIPT_NAMES
 from slurmy import read_builds
 from . import workflows
 
 FILES = ('workflow.json', 'jobpairs.csv', 'configurations.csv', 'problem-globs.txt', 'problem-selection.json', 'axiom-globs.txt',
-         'building.txt', 'resource_limiter_template.txt', 'Makefile')
+         'building.txt', 'resource_limiter_template.txt', *SCRIPT_NAMES, 'Makefile')
 SETTINGS = {'GET_COMPUTER_INFO': 'get_computer_info', 'BATCH_SIZE': 'batch_size', 'PAIR_ORDER': 'pair_order',
             'SLURMY_MAX_OUTSTANDING': 'max_outstanding', 'SLURMY_HOST': 'host',
             'SLURMY_PARTITION': 'partition', 'SLURMY_RESERVATION': 'reservation', 'SLURMY_ACCOUNT': 'account'}
@@ -20,7 +21,7 @@ ASSIGNMENTS = re.compile(r'(?m)^(' + '|'.join([*SETTINGS, 'REPO_ROOT', 'AXIOMS']
 
 
 def definition_file(directory, name):
-    if name not in FILES:
+    if name not in FILES and not workflows.is_analysis_file(name):
         raise ValueError('Choose one of the generated workflow files.')
     path = directory / name
     if not path.is_file() or path.is_symlink():
@@ -110,12 +111,16 @@ def replace(directory, name, content, progress=None):
             makefile_settings(data, source.read_text(), content)
         # No published files change until the editor's full validation passes.
         _, files, count = workflows.specification(data, directory, progress)
+        if workflows.is_analysis_file(name):
+            files[name] = content
         if name == 'Makefile' and makefile_commands(content) != makefile_commands(files['Makefile']):
             raise ValueError('This Makefile contains custom rules that the workflow editor cannot regenerate. Its files were kept unchanged.')
         if name == 'jobpairs.csv':
-            data['jobpairs'] = str(directory / 'jobpairs.csv')
-            files['workflow.json'] = json.dumps({key:value for key,value in data.items() if key!='host'}, indent=2, sort_keys=True) + '\n'
-    changed = set(FILES) | set(files) | {'submit.sh'}
+            normalized = json.loads(files['workflow.json'])
+            normalized['jobpairs'] = str(directory / 'jobpairs.csv')
+            files['workflow.json'] = json.dumps(normalized, indent=2, sort_keys=True) + '\n'
+    obsolete = ({*FILES, 'submit.sh'} - set(SCRIPT_NAMES)) - files.keys()
+    changed = set(files) | obsolete
     with tempfile.TemporaryDirectory(prefix='.replace-backup-', dir=directory) as folder:
         backup = Path(folder)
         existing = set()
@@ -132,9 +137,8 @@ def replace(directory, name, content, progress=None):
                 stage.write_text(body, encoding='utf-8'); stage.replace(target)
                 if target.suffix == '.sh': target.chmod(0o755)
             # Drop obsolete derivatives and prevent dispatching stale prepared input.
-            for filename in set(FILES) | {'submit.sh'}:
-                if filename not in files:
-                    (directory / filename).unlink(missing_ok=True)
+            for filename in obsolete:
+                (directory / filename).unlink(missing_ok=True)
         except BaseException:
             for filename in files:
                 (directory / ('.' + filename + '.slurmy-new')).unlink(missing_ok=True)

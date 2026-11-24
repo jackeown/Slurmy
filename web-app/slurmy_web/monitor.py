@@ -505,6 +505,56 @@ done
 printf ']}\n'
 '''
 
+# Read the metrics belonging to a particular saved result, even during a retry.
+REMOTE_ANALYSIS_READER = r'''
+import csv
+import json
+from pathlib import Path
+import re
+
+def read_analysis(results, task_id, archive, task_key):
+    match = re.fullmatch(r'batch_([0-9]+)_task_[A-Za-z0-9_.-]+\.tar\.gz', archive)
+    if not match:
+        return {}
+    path = results / f'batch_{int(match[1]):06d}_task_{int(task_id):09d}.csv'
+    try:
+        with path.open(encoding='utf-8', newline='') as stream:
+            row = next(csv.DictReader(stream), {})
+        if (row.get('archive'), row.get('task_id'), row.get('task_key')) != (archive, str(task_id), task_key):
+            return {}
+        values = json.loads(row.get('analysis') or '{}')
+        if isinstance(values, dict):
+            return {key: value for key, value in values.items()
+                    if isinstance(value, (str, int, float, bool)) or value is None}
+    except (OSError, ValueError, csv.Error):
+        pass
+    return {}
+'''
+
+REMOTE_TABLE_ANALYSIS_SCRIPT = REMOTE_ANALYSIS_READER + r'''
+import sys
+
+job = sys.argv[1]
+if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', job):
+    raise SystemExit('Invalid job ID.')
+results = Path.home() / 'slurmy' / 'jobs' / job / 'results'
+request = json.load(sys.stdin)
+selected = set(request['columns'])
+columns, rows = {}, {}
+for task_id, archive, task_key in request['tasks']:
+    values = read_analysis(results, task_id, archive, task_key)
+    columns.update(dict.fromkeys(values))
+    shown = {}
+    for name in selected.intersection(values):
+        value = values[name]
+        if isinstance(value, str) and len(value) > 200:
+            value = value[:199] + '…'
+        shown[name] = value
+    if shown:
+        rows[task_id] = shown
+print(json.dumps(dict(columns=list(columns), rows=rows)))
+'''
+
 # Task output is extracted only when the user asks for it. To keep a mistaken huge
 # output from flooding SSH or the terminal, each displayed member is capped at
 # 1 MiB, preserving both its beginning and end.
@@ -574,6 +624,19 @@ emit_member limiter_stdout limiter-stdout.log
 emit_member controller controller.log
 emit_member watcher watcher.log
 emit_member variables var
+
+if [[ "$ARCHIVE" == batch_* ]] && command -v python3 >/dev/null; then
+    python3 - "${archive_path%/*}" "$ARCHIVE" "$TASK_ID" "$TASK_KEY" <<'PYTHON'
+""" + REMOTE_ANALYSIS_READER + r"""
+import base64
+import sys
+
+path, archive, task_id, task_key = sys.argv[1:]
+values = read_analysis(Path(path), task_id, archive, task_key)
+if values:
+    sys.stdout.buffer.write(b'TASK_ANALYSIS\0' + base64.b64encode(json.dumps(values).encode()) + b'\0')
+PYTHON
+fi
 """
 
 
@@ -603,6 +666,7 @@ class TaskDefinition:
     command: str = ""
     limiter_command: str = ""
     solver_root: str = ""
+    analysis_columns: tuple[str, ...] = ()
 
 
 @dataclass
@@ -647,6 +711,7 @@ class TaskOutput:
     task_id: int
     archive: str
     streams: dict[str, OutputStream]
+    analysis: dict[str, str | int | float | bool | None] = field(default_factory=dict)
 
 
 @dataclass
@@ -1222,6 +1287,7 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
                     command=str(item.get("remote_command") or item.get("command", "")),
                     limiter_command=str(item.get("limiter_command", "")),
                     solver_root=str(item.get("solver_root", "")),
+                    analysis_columns=tuple(item.get('analysis_columns') or ()),
                 )
             for task_id, result in results.items():
                 definition = job.tasks.setdefault(task_id, TaskDefinition(task_id))
@@ -1267,6 +1333,7 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
 def parse_task_output(job_id: str, task_id: int, archive: str, data: bytes) -> TaskOutput:
     parts = data.split(b"\0")
     streams: dict[str, OutputStream] = {}
+    analysis = {}
     labels = {
         "solver": "Solver stdout (raw)",
         "solver_combined": "Runsolver output (stdout + stderr)",
@@ -1284,6 +1351,16 @@ def parse_task_output(job_id: str, task_id: int, archive: str, data: bytes) -> T
             if index >= len(parts):
                 raise RuntimeError("truncated task-output error from cluster")
             raise RuntimeError(parts[index].decode("utf-8", "replace"))
+        if kind == "TASK_ANALYSIS" and index < len(parts):
+            try:
+                values = json.loads(base64.b64decode(parts[index], validate=True))
+                if isinstance(values, dict):
+                    analysis = {key: value for key, value in values.items()
+                                if isinstance(value, (str, int, float, bool)) or value is None}
+            except ValueError:
+                pass  # An unreadable analysis field should not hide saved logs.
+            index += 1
+            continue
         if kind != "TASK_OUTPUT" or index + 4 > len(parts):
             raise RuntimeError(f"invalid task-output response from cluster: {kind!r}")
         stream_kind = parts[index].decode("utf-8", "replace")
@@ -1302,7 +1379,7 @@ def parse_task_output(job_id: str, task_id: int, archive: str, data: bytes) -> T
             truncated=truncated_text == "true",
             exists=size_text != "-1",
         )
-    return TaskOutput(job_id=job_id, task_id=task_id, archive=archive, streams=streams)
+    return TaskOutput(job_id=job_id, task_id=task_id, archive=archive, streams=streams, analysis=analysis)
 
 
 class RemoteCollector:
@@ -1448,6 +1525,20 @@ head -c 1048577 -- "$file"
             raise RuntimeError(process.stderr.decode('utf-8', 'replace').strip() or
                                'The packaged problem could not be read on the cluster.')
         return process.stdout[:1048576].decode('utf-8', 'replace'), len(process.stdout) > 1048576
+
+    def fetch_table_analysis(self, job_id, results, columns):
+        request = {'tasks': [(row.task_id, row.archive, row.task_key) for row in results], 'columns': columns}
+        command = ['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o',
+                   f'ConnectTimeout={max(1, int(self.timeout))}', '--', self.host,
+                   shlex.join(['python3', '-c', REMOTE_TABLE_ANALYSIS_SCRIPT, job_id])]
+        try:
+            result = subprocess.run(command, input=json.dumps(request), capture_output=True, text=True,
+                                    timeout=self.timeout + 20, check=False)
+            if result.returncode:
+                raise RuntimeError(result.stderr.strip() or 'Could not load analysis results from the cluster.')
+            return json.loads(result.stdout)
+        except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+            raise RuntimeError(f'Could not load analysis results: {exc}') from exc
 
     def fetch_task_output(self, job_id: str, result: ResultRecord) -> TaskOutput:
         if not result.archive or not result.task_key:

@@ -7,6 +7,7 @@ from threading import Barrier, Thread
 from unittest.mock import Mock, patch
 
 from slurmy_web import app as web
+from slurmy_web.monitor import ResultRecord
 
 
 class JobOperationTests(unittest.TestCase):
@@ -34,6 +35,18 @@ class JobOperationTests(unittest.TestCase):
     def action(self, action):
         return self.client.post('/api/jobs/test-job/action', json={'action': action}, headers=self.headers)
 
+    def test_table_analysis_fetches_only_requested_saved_pairs(self):
+        saved = ResultRecord(1, True, 'ok', archive='batch_0_task_000000001_abcdef_789_1234567890.tar.gz')
+        self.job.results = {1: saved, 2: ResultRecord(2, False, 'running')}
+        values = {'columns': ['steps', 'verified'], 'rows': {'1': {'steps': 0}}}
+        analysis = Mock(return_value=values)
+        self.app.config['COLLECTOR'] = lambda *args: SimpleNamespace(fetch=self.fetch, fetch_table_analysis=analysis)
+        response = self.client.post('/api/jobs/test-job/analysis', json={'task_ids': [1, 2, 1], 'columns': ['steps']},
+                                    headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {**values, 'attempts': {'1': saved.archive}})
+        analysis.assert_called_once_with('test-job', [saved], ['steps'])
+
     def test_repeated_stop_reuses_running_operation(self):
         first, second = self.action('stop'), self.action('stop')
         self.assertEqual(first.status_code, 202)
@@ -59,6 +72,16 @@ class JobOperationTests(unittest.TestCase):
         operation=self.client.get('/api/operations/'+response.json['id']).json
         self.assertEqual(operation['phase'],'Download StarExec-compatible results')
         self.assertEqual(self.action('stop').status_code,202)
+
+    def test_summary_download_starts_csv_only_mode(self):
+        response = self.action('sync_summary')
+        self.assertEqual(response.status_code, 202)
+        worker = web.threading.Thread.call_args.kwargs['target']
+        with patch.object(web.subprocess, 'run', return_value=SimpleNamespace(returncode=0)) as run:
+            worker()
+        self.assertIn('--summary-only', run.call_args.args[0])
+        operation = self.client.get('/api/operations/' + response.json['id']).json
+        self.assertEqual(operation['phase'], 'Download summary CSV')
 
     def test_starexec_download_can_be_stopped_while_running(self):
         self.assertEqual(self.action('sync_starexec').status_code,202)

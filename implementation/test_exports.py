@@ -73,6 +73,62 @@ class ExportTests(unittest.TestCase):
         sync.consolidate_solver_streams(self.root, self.records)
         self.assert_archives(self.root)
 
+    def test_analysis_export_unions_columns_and_preserves_legacy_rows(self):
+        metrics = [{'proof_size': 4, 'status': 'proved'}, {'note': 'line 1,\nline 2', 'proof_size': 0}]
+        manifest = self.root / 'manifest.jsonl'
+        definitions = [json.loads(line) for line in manifest.read_text().splitlines()]
+        definitions[-1]['analysis_columns'] = ['pending_metric']
+        manifest.write_text(''.join(json.dumps(row) + '\n' for row in definitions))
+        for task_id, values in enumerate(metrics):
+            path = self.root / 'results' / f'batch_000000_task_{task_id:09d}.csv'
+            with path.open('w', newline='') as output:
+                writer = csv.DictWriter(output, fieldnames=[*remote_export.RESULT_FIELDS, 'analysis'])
+                writer.writeheader()
+                writer.writerow({**self.records[task_id], 'analysis': json.dumps(values)})
+        remote_export.export(self.root)
+        with (self.root / 'exports/study_results-summary.csv').open(newline='') as source:
+            reader = csv.DictReader(source)
+            self.assertEqual(reader.fieldnames, [*remote_export.EXPORT_FIELDS, 'pending_metric', 'proof_size', 'analysis.status', 'note'])
+            rows = list(reader)
+        self.assertEqual([row['proof_size'] for row in rows], ['4', '0', '', ''])
+        self.assertEqual([row['analysis.status'] for row in rows], ['proved', '', '', ''])
+        self.assertTrue(all(row['pending_metric'] == '' for row in rows))
+        self.assertEqual(rows[1]['note'], 'line 1,\nline 2')
+        with patch.object(remote_export.tarfile, 'open', side_effect=AssertionError('CSV-only export opened an archive')):
+            remote_export.export(self.root, summary_only=True)
+        summary_dir = self.root / 'exports/summary'
+        with (summary_dir / 'study_results-summary.csv').open(newline='') as source:
+            summary_rows = list(csv.DictReader(source))
+        self.assertEqual(list(summary_dir.glob('*.tgz')), [])
+        self.assertEqual(summary_rows, [{**row, 'has_solver_stdout': '', 'has_solver_stderr': ''} for row in rows])
+        self.assert_archives(self.root / 'exports')
+
+    def test_summary_download_transfers_one_file_and_preserves_existing_logs(self):
+        remote_export.export(self.root, summary_only=True)
+        summary, stdout, stderr = remote_export.export_names({'job_name': 'study'})
+        destination = self.root / 'download'
+        destination.mkdir()
+        for name in (stdout, stderr):
+            (destination / name).write_bytes(b'earlier log archive')
+        process = Mock(stdout=io.StringIO(f'EXPORT_FILES|{summary}\n'))
+        process.wait.return_value = 0
+
+        def transfer(command, **kwargs):
+            self.assertEqual([part for part in command if part.startswith('test-host:')],
+                             [f'test-host:slurmy/jobs/study/exports/summary/{summary}'])
+            shutil.copyfile(self.root / 'exports/summary' / summary, Path(command[-1]) / summary)
+            return SimpleNamespace(returncode=0)
+
+        args = SimpleNamespace(host='test-host', job_id='study', ssh_timeout=10,
+                               output=str(destination), follow=False, summary_only=True)
+        with patch.object(sync.shutil, 'which', return_value='/test/tool'), \
+             patch.object(sync.subprocess, 'Popen', return_value=process) as popen, \
+             patch.object(sync.subprocess, 'run', side_effect=transfer):
+            self.assertEqual(sync.compact_sync_loop(args, 'study'), 0)
+        self.assertEqual(popen.call_args.args[0][-1], '--summary-only')
+        self.assertTrue((destination / summary).is_file())
+        self.assertTrue(all((destination / name).read_bytes() == b'earlier log archive' for name in (stdout, stderr)))
+
     def test_starexec_prefers_combined_capture_without_changing_standard_download(self):
         for task_id,row in self.records.items():
             path=self.root/'results'/row['archive']

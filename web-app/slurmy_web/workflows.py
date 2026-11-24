@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from slurmy_archives import expand_cluster_tptp_many
 import problem_selection
+from analyze_run import SCRIPT_NAMES, workflow_script
 
 import csv
 import io
@@ -15,7 +16,7 @@ import shutil
 import tempfile
 import time
 
-from slurmy import COLUMNS, PAIR_ORDERS, generate, order_jobpairs, path_at, positive, read_builds, read_pairs
+from slurmy import COLUMNS, PAIR_ORDERS, analysis_path, generate, order_jobpairs, path_at, positive, read_builds, read_pairs
 from slurmy_archives import expand_axiom_pattern, expand_axiom_source, expand_problem_pattern, expand_cluster_tptp
 from check_threads import check_requested
 
@@ -75,6 +76,7 @@ def imported_rows(filename, configurations=False, check_paths=True):
         expected = set(COLUMNS) - ({'problem'} if configurations else set())
         if not reader.fieldnames or len(set(reader.fieldnames)) != len(reader.fieldnames) or set(reader.fieldnames) - expected:
             raise ValueError('Unexpected or duplicate CSV columns.')
+        legacy_analysis = workflow_script(filename.parent) if 'analysis_script' not in reader.fieldnames else None
         rows = list(reader)
     if not rows:
         raise ValueError('The CSV contains no rows.')
@@ -83,6 +85,9 @@ def imported_rows(filename, configurations=False, check_paths=True):
             raise ValueError('Malformed CSV row.')
         row['solver_directory'] = str(existing(row.get('solver_directory'), 'directory', filename.parent)
                                       if check_paths else path_at(row.get('solver_directory', ''), filename.parent))
+        script = row.get('analysis_script', str(legacy_analysis or ''))
+        if script and script.strip():
+            row['analysis_script'] = str(analysis_path(script, filename.parent, check_paths))
         if not configurations:
             if str(row.get('problem') or '').startswith('tptp:'):
                 row['problem'] = str(row['problem'])
@@ -143,6 +148,7 @@ def specification(data, destination_override=None, progress=None):
     destination = destination_override or USER_RUNS / name
     if destination_override is None and destination.exists():
         raise ValueError(f'Workflow already exists: {destination}')
+    legacy_analysis = data.pop('analysis_script', '')
     from flask import has_request_context, request
     selected_host=(request.args.get('host') or os.environ.get('SLURMY_HOST','datalab')) if has_request_context() else data.get('host') or os.environ.get('SLURMY_HOST','datalab')
     host, partition = alias(selected_host), alias(data.get('partition'))
@@ -203,7 +209,6 @@ def specification(data, destination_override=None, progress=None):
         else:data.pop('_problem_order',None)
         if not problems:
             raise ValueError('Add at least one problem glob.')
-        rows = [{**row, 'problem': problem} for row in configs for problem in problems]
     else:
         raise ValueError('Choose how to define solver/problem calls.')
     if mode == 'jobpairs':
@@ -212,6 +217,14 @@ def specification(data, destination_override=None, progress=None):
         if progress:
             progress('phase', 'Checking selected partition’s thread topology', 0, 0)
         check_requested(host, partition, maximum)
+    for row in rows if mode == 'jobpairs' else configs:
+        selected = row.get('analysis_script', legacy_analysis)
+        if selected:
+            row['analysis_script'] = str(analysis_path(selected, destination))
+    if mode != 'jobpairs':
+        rows = [{**row, 'problem': problem} for row in configs for problem in problems]
+        if mode == 'interactive':
+            data['configurations'] = configs
     rows = order_jobpairs(rows, pair_order)
     axiom_patterns = []
     if data.get('axiom_mode') == 'custom' and not data.get('axiom_globs'):
@@ -336,6 +349,14 @@ def specification(data, destination_override=None, progress=None):
     return destination, files, len(rows)
 
 
+def is_analysis_file(name):
+    return name in SCRIPT_NAMES or re.fullmatch(r'analysis-[a-f0-9]{64}\.(py|sh)', name) is not None
+
+
+def analysis_files_in(directory):
+    return {path.name for path in directory.glob('analysis*') if is_analysis_file(path.name)}
+
+
 def write_definitions(source, files, destination=None):
     """Publish staged definitions, restoring originals on a failed save or rename."""
     destination = destination or source
@@ -432,7 +453,7 @@ def rename_and_save(data, source, progress=None):
     _, files, count = specification(data, source, progress)
     if progress:
         progress('committing', 'Saving workflow files', 0, 0)
-    data = relocate_paths(data, source, destination)
+    data = relocate_paths(json.loads(files['workflow.json']), source, destination)
     data['_previous_directories'] = [*previous, str(source)]
     files = {filename: relocate_paths(body, source, destination) for filename, body in files.items()}
     files['workflow.json'] = json.dumps({key:value for key,value in data.items() if key!='host'}, indent=2, sort_keys=True) + '\n'
@@ -464,12 +485,16 @@ def rename_workflow(source,name):
     def rewrite(body):
         return path_pattern.sub(lambda _:new.lstrip('/').encode(),body)
     candidates=[path for path in source.iterdir() if path.is_file() and not path.is_symlink()
+                and not is_analysis_file(path.name)
                 and (path.name=='Makefile' or path.suffix in {'.json','.jsonl','.csv','.txt','.mk','.sh'})]
     assets=source/'submit.sh.files'
     if assets.is_dir() and not assets.is_symlink():
         for folder,dirs,files in os.walk(assets,followlinks=False):
             dirs[:]=[item for item in dirs if not (Path(folder)/item).is_symlink()]
-            candidates.extend(Path(folder)/item for item in files if Path(item).suffix in {'.json','.jsonl','.csv','.txt','.mk','.sh'} and not (Path(folder)/item).is_symlink())
+            candidates.extend(Path(folder)/item for item in files
+                              if Path(item).suffix in {'.json','.jsonl','.csv','.txt','.mk','.sh'}
+                              and item not in SCRIPT_NAMES and not re.fullmatch(r'analysis-[0-9]+\.sh', item)
+                              and not (Path(folder)/item).is_symlink())
     updates={}
     for path in candidates:
         body=path.read_bytes();changed=rewrite(body)
@@ -695,6 +720,11 @@ def decisions(directory, check_paths=True):
     if manifest.is_file():
         data = json.loads(manifest.read_text(encoding='utf-8'))
         data['name'] = directory.name
+        legacy_analysis = data.pop('analysis_script', '')
+        for row in data.get('configurations', []):
+            script = row.get('analysis_script', legacy_analysis)
+            if script:
+                row['analysis_script'] = str(analysis_path(script, directory, check_paths))
         data = resource_roles(data)
         if any(item.get('role') == 'solver' and item.get('mode') == 'commands' for item in data.get('resources', [])):
             builds = {build.root: build for build in read_builds(directory / 'building.txt', check_paths=False)}
@@ -756,7 +786,7 @@ def copyable_solver_configurations(directory):
     resources = {str(path_at(item.get('root', ''), BASE)): item
                  for item in data.get('resources', []) if item.get('role') == 'solver'}
     fields = ('solver_name', 'solver_directory', 'command', 'wc_limit', 'cpu_limit', 'mem_limit',
-              'cores', 'threads_per_core', 'exclusive_cpu', 'exclusive_node', 'omit_cpu_limit', 'omit_wc_limit', 'omit_mem_limit', 'environment')
+              'cores', 'threads_per_core', 'exclusive_cpu', 'exclusive_node', 'omit_cpu_limit', 'omit_wc_limit', 'omit_mem_limit', 'environment', 'analysis_script', 'analysis_columns')
     seen = set()
     result = []
     for config in configs:

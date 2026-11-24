@@ -3,6 +3,7 @@ from ssh_transport import connection_options
 
 import subprocess
 
+from analyze_run import TIMEOUT_SECONDS, KILL_GRACE_SECONDS
 from slurmy import boolean, positive
 from . import workflows
 
@@ -133,6 +134,8 @@ def suggest(data):
     target = max(balance, fit['recommended_batch_size'] or 1)
     wall_limits = [int(config.get('wc_limit', 1)) for config in configurations]
     overhead = 80 if data.get('get_computer_info', True) else 30
+    if any(config.get('analysis_script') for config in configurations):
+        overhead += TIMEOUT_SECONDS + KILL_GRACE_SECONDS
     wall_limit = 6*60*60
     unknown = any(limit == 0 for limit in wall_limits)
     max_wall = max(wall_limits)

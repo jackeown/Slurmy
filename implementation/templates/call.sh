@@ -153,6 +153,30 @@ if [[ -z "$szs_status" ]]; then
         memory_out=true
     fi
 fi
+analysis_header=; analysis_value=
+if [[ -n ${ANALYSIS_SCRIPT:-} ]]; then
+    source "$JOB_DIR/analysis-settings.sh"
+    analysis_header=",$(csv_row analysis)"
+    analysis_value=",$(csv_row '')"
+    if (( ! interrupted )) && [[ -f "$SOLVER_LOG" || -f "$SOLVER_STDERR_LOG" ]]; then
+        setsid timeout --signal=TERM --kill-after="$ANALYSIS_KILL_GRACE" "$ANALYSIS_TIMEOUT" \
+            python3 "$JOB_DIR/analyze_run.py" "$JOB_DIR/$ANALYSIS_SCRIPT" "$ANALYSIS_COLUMNS" "$SOLVER_LOG" "$SOLVER_STDERR_LOG" \
+            > "$work/analysis.json" 2>> "$CONTROLLER_LOG" &
+        active=$!
+        analysis_code=0
+        wait "$active" || analysis_code=$?
+        if (( interrupted )); then
+            kill -KILL -- "-$active" 2>/dev/null || true
+            wait "$active" 2>/dev/null || true
+        elif (( analysis_code == 0 )); then
+            analysis_value=",$(csv_row "$(< "$work/analysis.json")")"
+        else
+            printf 'Analysis failed for solver-problem pair %s (exit %s).\n' "$TASK_ID" "$analysis_code" | tee -a "$CONTROLLER_LOG" >&2
+        fi
+        active=
+        rm -f -- "$work/analysis.json"
+    fi
+fi
 if (( interrupted )); then status=interrupted; complete=false
 elif [[ "$memory_out" == true ]]; then status=memory-limit
 elif [[ "$timed_out" == true ]]; then status=time-limit
@@ -166,11 +190,9 @@ archive="batch_${BATCH_ID}_${stem}_${SLURM_JOB_ID:-local}_$(date +%s).tar.gz"
 tar -czf "$JOB_DIR/results/.$archive.tmp" -C "$work" .
 mv "$JOB_DIR/results/.$archive.tmp" "$JOB_DIR/results/$archive"
 result=$(printf '%s/results/batch_%06d_task_%09d.csv' "$JOB_DIR" "$BATCH_ID" "$TASK_ID")
+header=$(csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output)
 result_row=$(csv_row "$TASK_ID" "$complete" "$status" "$code" "$wall" "$cpu" "$user" "$system" "$cpu_usage" "$max_vm" "$memory" "${timed_out:-false}" "${memory_out:-false}" "$TASK_KEY" "$archive" "$szs_status" "$szs_output")
-{
-    csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output
-    printf '%s\n' "$result_row"
-} > "$result.tmp"
+printf '%s%s\n' "$header" "$analysis_header" "$result_row" "$analysis_value" > "$result.tmp"
 mv "$result.tmp" "$result"
 # One small, atomically replaced index per sequential batch keeps monitoring
 # fast on NFS; individual result files remain available for sync and recovery.
@@ -181,7 +203,7 @@ if {
         # monitor index; otherwise it would be counted twice.
         awk -F, -v id="$TASK_ID" '{field=$1; gsub(/"/, "", field); if (NR==1 || field!=id) print}' "$index"
     else
-        csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output
+        printf '%s\n' "$header"
     fi
     printf '%s\n' "$result_row"
 } > "$index.tmp" && mv "$index.tmp" "$index"; then

@@ -20,12 +20,13 @@ import shutil
 import sys
 import tarfile
 import szs
+from analyze_run import parse_columns, workflow_script, TIMEOUT_SECONDS, KILL_GRACE_SECONDS
 from typing import Sequence
 from slurmy_archives import expand_axiom_pattern, expand_axiom_source, tptp_collection_root, TPTP_DEFAULT_ROOT, TPTP_ROOT
 
 VERSION = "1.0.0"
 COLUMNS = ("solver_name", "command", "solver_directory", "problem", "wc_limit", "cpu_limit", "mem_limit", "cores",
-           "threads_per_core", "cpus", "exclusive_cpu", "exclusive_node", "omit_cpu_limit", "omit_wc_limit", "omit_mem_limit", "environment")
+           "threads_per_core", "cpus", "exclusive_cpu", "exclusive_node", "omit_cpu_limit", "omit_wc_limit", "omit_mem_limit", "environment", "analysis_script", "analysis_columns")
 RESULT_COLUMNS = ("task_id", "complete", "status", "return_code", "wall_seconds",
                   "cpu_seconds", "user_seconds", "system_seconds", "cpu_usage_percent",
                   "max_virtual_memory_kib", "max_memory_kib", "timed_out", "memory_out",
@@ -63,6 +64,17 @@ def path_at(value: str, base: Path) -> Path:
     return Path(os.path.abspath(path if path.is_absolute() else base / path))
 
 
+def analysis_path(value: str, base: Path, check=True) -> Path:
+    if not isinstance(value, str):
+        raise ValueError('Enter the path to an analysis script.')
+    path = path_at(value.strip(), base)
+    if path.suffix not in {'.py', '.sh'}:
+        raise ValueError('Choose a Python (.py) or Bash (.sh) analysis script.')
+    if check and not path.is_file():
+        raise ValueError(f'Analysis script does not exist: {path}')
+    return path
+
+
 def positive(value: str, name: str) -> int:
     if not re.fullmatch(r"[1-9][0-9]*", str(value)):
         raise SlurmyError(f"{name}: expected a positive integer, got {value!r}")
@@ -95,12 +107,14 @@ def read_pairs(filename: Path, host=None, partition=None) -> list[dict]:
     tasks = []
     solver_directories={}
     local_problems={}
+    analysis_paths = {}
     with filename.open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         headers = reader.fieldnames or []
-        required = set(COLUMNS) - {"solver_name", "threads_per_core", "exclusive_cpu", "exclusive_node", "omit_cpu_limit", "omit_wc_limit", "omit_mem_limit", "environment"}
+        required = set(COLUMNS) - {"solver_name", "threads_per_core", "exclusive_cpu", "exclusive_node", "omit_cpu_limit", "omit_wc_limit", "omit_mem_limit", "environment", "analysis_script", "analysis_columns"}
         if len(headers) != len(set(headers)) or not required <= set(headers) or set(headers) - set(COLUMNS):
             raise SlurmyError(f"{filename}: columns must be {', '.join(COLUMNS)}; threads_per_core and exclusivity columns may be omitted")
+        legacy_analysis = workflow_script(filename.parent) if 'analysis_script' not in headers else None
         for row in reader:
             label = f"{filename}: row ending at line {reader.line_num}"
             if None in row or any(row.get(key) is None for key in required):
@@ -152,6 +166,22 @@ def read_pairs(filename: Path, host=None, partition=None) -> list[dict]:
             try:environment=solver_environment.parse(row.get('environment'))
             except ValueError as exc:raise SlurmyError(f'{label}: {exc}') from exc
             if environment:task['environment']=environment
+            script = (row.get('analysis_script', str(legacy_analysis or '')) or '').strip()
+            if script:
+                if script not in analysis_paths:
+                    try:
+                        analysis_paths[script] = str(analysis_path(script, filename.parent))
+                    except ValueError as exc:
+                        raise SlurmyError(f'{label}: {exc}') from exc
+                task['analysis_script'] = analysis_paths[script]
+            try:
+                columns = parse_columns(row.get('analysis_columns'))
+                if columns and not script:
+                    raise ValueError('Choose an analysis script before declaring its columns.')
+            except ValueError as exc:
+                raise SlurmyError(f'{label}: {exc}') from exc
+            if columns:
+                task['analysis_columns'] = columns
             task["task_key"] = hashlib.sha256(json.dumps(task, sort_keys=True).encode()).hexdigest()[:16]
             task.setdefault('environment',{})
             tasks.append(task)
@@ -342,6 +372,13 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
              materialize_calls: bool = True, host=None, partition=None,
              get_computer_info: bool = True) -> Path:
     tasks = read_pairs(jobpairs, host, partition)
+    scripts = {}
+    for task in tasks:
+        source = task.get('analysis_script')
+        if source and source not in scripts:
+            scripts[source] = f'analysis-{len(scripts)}{Path(source).suffix}'
+    call_buffer = 80 if get_computer_info else 30
+    analysis_buffer = TIMEOUT_SECONDS + KILL_GRACE_SECONDS
     positive(str(batch_size), 'batch size')
     positive(str(max_outstanding), 'maximum submitted SLURM tasks')
     if pair_order is not None and pair_order not in PAIR_ORDERS:
@@ -414,12 +451,15 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         (assets / "plans").mkdir()
         (assets / "builds").mkdir()
         metadata = {"slurmy_version": VERSION, "workflow_directory": str(jobpairs.parent), "task_count": len(tasks), "batch_count": len(batches),
-                    "batch_size": batch_size, "pair_order": pair_order, "local_calls_materialized": materialize_calls, "result_columns": RESULT_COLUMNS,
+                    "batch_size": batch_size, "pair_order": pair_order, "local_calls_materialized": materialize_calls,
+                    "result_columns": (*RESULT_COLUMNS, 'analysis') if scripts else RESULT_COLUMNS,
                     "planned_batch_tasks": [[t["task_id"] for t in batch] for batch in batches],
                     "batch_policy": "one solver-problem pair at a time per batch; all orderings group by matching core, socket, thread and sharing requests; batches may mix solver configurations",
                     "get_computer_info": get_computer_info,
                     "shared_axiom_root": shared_axioms,
-                    "buffers": {"per_call_seconds": 80 if get_computer_info else 30, "per_call_memory_mib": 128, "batch_seconds": 60}}
+                    "buffers": {"per_call_seconds": call_buffer, "per_call_memory_mib": 128, "batch_seconds": 60}}
+        if scripts:
+            metadata['buffers']['analysis_seconds'] = analysis_buffer
         (assets / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
         (assets / "manifest.jsonl").write_text("".join(json.dumps(t) + "\n" for t in tasks))
         (assets/'call-bundles').mkdir()
@@ -438,7 +478,8 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
                             target.write_bytes(payload);target.chmod(mode)
                     call = assets / "calls" / str(task["task_id"])
                     if materialize_calls:call.mkdir()
-                    if capture_combined:
+                    analysis = scripts.get(task.get('analysis_script'), '')
+                    if capture_combined or analysis:
                         solver_script = (
                             '#!/usr/bin/env bash\n'
                             '# Tee raw streams while runsolver measures their combined output live.\n'
@@ -480,6 +521,8 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
                         "cpus": task["cpus"], "wc_limit": task["wc_limit"],
                         "cpu_limit": task["cpu_limit"], "mem_limit_mib": math.ceil(task["mem_limit"] / 2**20),
                         "get_computer_info": int(get_computer_info),
+                        "analysis_script": analysis,
+                        "analysis_columns": json.dumps(task.get('analysis_columns', [])),
                         "computer_info_timestamp": int(computer_info_timestamp),
                             "solver_root_rel": task['solver_root'].lstrip("/"),
                             "tptp_root_rel": '.slurmy-tptp' if axioms else '',
@@ -495,7 +538,8 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             config += f"BATCH_ID={i}\nEXCLUSIVE_CPU={int(any(t['exclusive_cpu'] for t in batch))}\nEXCLUSIVE_NODE={int(any(t['exclusive_node'] for t in batch))}\n"
             memory = 0 if any(t["mem_limit"] == 0 for t in batch) else len(batch) * (max(math.ceil(t["mem_limit"] / 2**20) for t in batch) + 128)
             config += f"MEMORY_MIB={memory}\n"
-            wall = 604800 if any(t["wc_limit"] == 0 for t in batch) else 60 + sum(t["wc_limit"] + (80 if get_computer_info else 30) for t in batch)
+            wall = 604800 if any(t["wc_limit"] == 0 for t in batch) else 60 + sum(
+                t["wc_limit"] + call_buffer + (analysis_buffer if t.get('analysis_script') else 0) for t in batch)
             config += f"WALL_SECONDS={wall}\n"
             config += shell_array("TASK_THREADS_PER_CORE", [t["threads_per_core"] for t in batch])
             config += f"MAX_CORES={max(t['cores'] for t in batch)}\nMAX_CPUS={max(t['cpus'] for t in batch)}\n"
@@ -516,6 +560,13 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         shutil.copyfile(REPO / "implementation/job_names.py", assets / "job_names.py")
         shutil.copyfile(REPO / "implementation/tools/GetComputerInfo", assets / "GetComputerInfo")
         (assets / "szs.sh").write_text(szs.shell_library())
+        if scripts:
+            for source, name in scripts.items():
+                shutil.copyfile(source, assets / name)
+            (assets / 'analysis-sources.json').write_text(json.dumps(scripts), encoding='utf-8')
+            shutil.copyfile(REPO / 'implementation/analyze_run.py', assets / 'analyze_run.py')
+            (assets / 'analysis-settings.sh').write_text(
+                f'ANALYSIS_TIMEOUT={TIMEOUT_SECONDS}\nANALYSIS_KILL_GRACE={KILL_GRACE_SECONDS}\n', encoding='utf-8')
         # Reuse the local build driver. Remote recipes build in a disposable
         # copy of the declared root; downloaded files preserve that layout.
         shutil.copy2(REPO / "implementation/build/slurmy-build.py", assets / "builds/driver.py")

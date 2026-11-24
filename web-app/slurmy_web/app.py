@@ -661,7 +661,7 @@ def create_app():
         path = directory()
         from .workflow_files import FILES
         files = {name: (path / name).read_text() for name in
-                 FILES if (path / name).is_file()}
+                 dict.fromkeys((*FILES, *sorted(workflows.analysis_files_in(path)))) if (path / name).is_file()}
         name = path.name.removeprefix('example-') if path.parent == workflows.USER_RUNS else path.name
         created = created_label(path)
         return page('experiment.html', directory=str(path), name=name, created=created, files=files,
@@ -797,7 +797,34 @@ def create_app():
         page_number,per_page,sort,direction=call_page_args()
         rows,matched=task_page(job,page_number,per_page,sort,direction,query,selected_outcomes)
         if not hasattr(job,'_view_outcomes'):job._view_outcomes=outcome_breakdown(job)
-        return jsonify(**{**monitored_summary(job),"outcomes":job._view_outcomes},tasks=rows,matched=matched, refresh=g.snapshot_refresh)
+        has_analysis = 'analysis' in (job.metadata.get('result_columns') or ())
+        if has_analysis and not hasattr(job, '_view_analysis_columns'):
+            job._view_analysis_columns = list(dict.fromkeys(
+                name for task in job.tasks.values() for name in task.analysis_columns))
+        if has_analysis:
+            for row in rows:
+                if row['output']:
+                    row['analysis_attempt'] = job.results[row['id']].archive
+        return jsonify(**{**monitored_summary(job),"outcomes":job._view_outcomes},tasks=rows,matched=matched,
+                       has_analysis=has_analysis, analysis_columns=getattr(job, '_view_analysis_columns', []),
+                       refresh=g.snapshot_refresh)
+
+    @app.post('/api/jobs/<job_id>/analysis')
+    def table_analysis(job_id):
+        data = request.get_json()
+        task_ids = data.get('task_ids') if isinstance(data, dict) else None
+        columns = data.get('columns') if isinstance(data, dict) else None
+        if (not isinstance(task_ids, list) or len(task_ids) > 10000 or
+                any(type(task_id) is not int or task_id < 0 for task_id in task_ids) or
+                not isinstance(columns, list) or any(not isinstance(name, str) for name in columns)):
+            abort(400, 'Invalid analysis table request.')
+        job = job_snapshot(job_id)
+        results = [job.results[task_id] for task_id in dict.fromkeys(task_ids)
+                   if task_id in job.results and job.results[task_id].archive]
+        if not results:
+            return jsonify(columns=[], rows={}, attempts={})
+        value = app.config.get('COLLECTOR', RemoteCollector)(host(), 10).fetch_table_analysis(job_id, results, columns)
+        return jsonify(**value, attempts={row.task_id: row.archive for row in results})
 
     @app.post('/api/jobs/<job_id>/name')
     def rename_job(job_id):
@@ -1393,9 +1420,9 @@ def create_app():
                 stopping = next((op for op in active if op['label'] == 'stop'), None)
                 if stopping:
                     return jsonify(stopping), 202
-                active = [op for op in active if op['label'] not in {'sync', 'sync_verbose', 'sync_starexec', 'resume'}]
+                active = [op for op in active if op['label'] not in {'sync', 'sync_summary', 'sync_verbose', 'sync_starexec', 'resume'}]
             if active:
-                active_label = {'sync': 'download', 'sync_verbose': 'verbose download', 'sync_starexec': 'StarExec download'}.get(active[0]['label'], active[0]['label'])
+                active_label = {'sync': 'download', 'sync_summary': 'summary CSV download', 'sync_verbose': 'verbose download', 'sync_starexec': 'StarExec download'}.get(active[0]['label'], active[0]['label'])
                 abort(409, f"Wait for the active {active_label} operation to finish.")
             key = secrets.token_hex(12)
             STATE.mkdir(exist_ok=True)
@@ -1479,9 +1506,11 @@ def create_app():
         elif data.get('action') == 'resume':
             recovery_watch.resume(host(), safe_job(job_id))
         job = job_snapshot(job_id)
-        if data.get('action') in ('sync', 'sync_verbose', 'sync_starexec'):
+        if data.get('action') in ('sync', 'sync_summary', 'sync_verbose', 'sync_starexec'):
             argv = [sys.executable, str(REPO/'implementation/slurmy-sync.py'), job_id, '--host', host()]
-            if data['action'] == 'sync_verbose':
+            if data['action'] == 'sync_summary':
+                argv.append('--summary-only')
+            elif data['action'] == 'sync_verbose':
                 argv.append('--verbose')
             elif data['action'] == 'sync_starexec':
                 argv.append('--starexec')
@@ -1563,7 +1592,7 @@ def create_app():
                 announce_operation_job(operation, match.group(1), Path(operation['operation_cwd']),
                                        {'SLURMY_HOST': operation['operation_host']})
         op = operations[key]
-        phase = ({'sync': 'Download results', 'sync_verbose': 'Download complete/verbose results',
+        phase = ({'sync': 'Download results', 'sync_summary': 'Download summary CSV', 'sync_verbose': 'Download complete/verbose results',
                   'sync_starexec': 'Download StarExec-compatible results',
                   'stop': 'Stop job', 'resume': 'Resume unfinished solver-problem pairs',
                   'delete': 'Stop and delete job', 'cancel': 'Cancel SLURM task'}.get(op['label'])

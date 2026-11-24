@@ -18,7 +18,8 @@ import tarfile
 import tempfile
 import time
 
-from slurmy import order_jobpairs, path_at, read_pairs, read_builds, read_axioms
+from analyze_run import SCRIPT_NAMES
+from slurmy import analysis_path, order_jobpairs, path_at, read_pairs, read_builds, read_axioms
 from . import workflows
 from slurmy_archives import tptp_collection_root, TPTP_DEFAULT_ROOT
 
@@ -90,6 +91,10 @@ def export_bundle(directory, host):
     remote = set()
     for row in rows:
         row['solver_directory'] = str(path_at(row['solver_directory'], directory))
+        if row.get('analysis_script'):
+            script = analysis_path(row['analysis_script'], directory)
+            row['analysis_script'] = str(script)
+            paths.add(script)
         if row['problem'].startswith('tptp:'):
             remote.add(row['problem'][5:])
         else:
@@ -269,6 +274,11 @@ def import_bundle(stream, name, selected_host=None):
         default_axioms = staging / default_relative / 'Axioms'
         if default_axioms.is_dir():
             mapping[default_root] = str(destination / default_relative)
+        legacy_analysis = payload.get('analysis_script')
+        if legacy_analysis is not None:
+            if not isinstance(legacy_analysis, dict) or legacy_analysis.get('name') not in SCRIPT_NAMES or not isinstance(legacy_analysis.get('source'), str):
+                raise ValueError('Invalid analysis script in workflow archive.')
+            (staging / legacy_analysis['name']).write_text(legacy_analysis['source'], encoding='utf-8')
         normalized = []
         for row in rows:
             row = dict(row)
@@ -276,6 +286,10 @@ def import_bundle(stream, name, selected_host=None):
             row['problem'] = local(old); mapping[old] = row['problem']
             old_solver = row['solver_directory']; row['solver_directory'] = local(old_solver)
             mapping[old_solver] = row['solver_directory']
+            if row.get('analysis_script'):
+                row['analysis_script'] = local(row['analysis_script'])
+            elif 'analysis_script' not in row and legacy_analysis:
+                row['analysis_script'] = str(destination / legacy_analysis['name'])
             normalized.append(row)
         relocated_commands = {}
         for row in normalized:
@@ -334,7 +348,8 @@ def import_bundle(stream, name, selected_host=None):
         (staging/'resource_limiter_template.txt').write_text(limiter + '\n')
         # Validate local definitions before publication, without SSH or execution.
         validation_rows = [{**row, 'problem': row['problem'].replace(str(destination), str(staging), 1),
-                            'solver_directory': row['solver_directory'].replace(str(destination), str(staging), 1)}
+                            'solver_directory': row['solver_directory'].replace(str(destination), str(staging), 1),
+                            'analysis_script': (row.get('analysis_script') or '').replace(str(destination), str(staging), 1)}
                            for row in normalized]
         check_pairs = staging/'.validate-pairs.csv'
         check_pairs.write_text(workflows.csv_text(validation_rows))

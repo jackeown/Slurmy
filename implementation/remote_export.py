@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Create the three-file, user-facing export inside a remote Slurmy job."""
+"""Create user-facing exports inside a remote Slurmy job."""
 from __future__ import annotations
 
 import csv
+from contextlib import ExitStack
 import fcntl
 import hashlib
 import json
@@ -58,23 +59,47 @@ def records(root: Path) -> dict[int, dict[str, str]]:
     return found
 
 
-def export(root: Path, combined: bool = False) -> None:
-    # StarExec staging must not replace the standard three-file download.
-    directory = root / 'exports' / 'starexec' if combined else root / 'exports'
+def analysis_columns(definitions, results):
+    """Keep metrics associated with the published attempt for each pair."""
+    values = {task_id: json.loads(row['analysis']) for task_id, row in sorted(results.items())
+              if row.get('analysis')}
+    columns = {name: name for task_id in sorted(definitions)
+               for name in definitions[task_id].get('analysis_columns', ())}
+    columns.update({name: name for metrics in values.values() for name in metrics})
+    reserved = set(EXPORT_FIELDS)
+    used = reserved.union(columns)
+    for name in columns:
+        if name in reserved:
+            column = 'analysis.' + name
+            while column in used:
+                column = 'analysis.' + column
+            columns[name] = column
+            used.add(column)
+    return columns, values
+
+
+def export(root: Path, combined: bool = False, summary_only: bool = False) -> None:
+    directory = root / 'exports'
+    if combined or summary_only:
+        directory /= 'starexec' if combined else 'summary'
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (directory / '.lock').open('a+') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         source_files = [root / 'metadata.json', root / 'manifest.jsonl',
-                        *sorted((root / 'results').glob('batch_*_task_*.csv')),
-                        *sorted((root / 'results').glob('*.tar.gz'))]
-        signature = hashlib.sha256(('streams-v2' + str(combined) + szs.REGISTRY_VERSION + repr([(path.name, path.stat().st_size, path.stat().st_mtime_ns)
+                        *sorted((root / 'results').glob('batch_*_task_*.csv'))]
+        if not summary_only:
+            source_files.extend(sorted((root / 'results').glob('*.tar.gz')))
+        signature = hashlib.sha256(('streams-v4' + str(combined) + szs.REGISTRY_VERSION + repr([(path.name, path.stat().st_size, path.stat().st_mtime_ns)
                                          for path in source_files if path.is_file()])).encode()).hexdigest()
         signature_file = directory / '.signature'
         metadata = json.loads((root / 'metadata.json').read_text(encoding='utf-8'))
         names = export_names(metadata)
+        if summary_only:
+            names = names[:1]
         if all((directory / name).is_file() for name in names) and signature_file.is_file():
             if signature_file.read_text(encoding='ascii').strip() == signature:
-                print('Export unchanged; reusing the three existing files.', flush=True)
+                print('Export unchanged; reusing the existing CSV.' if summary_only else
+                      'Export unchanged; reusing the three existing files.', flush=True)
                 print('EXPORT_FILES|' + '|'.join(names), flush=True)
                 return
         definitions = {}
@@ -83,20 +108,22 @@ def export(root: Path, combined: bool = False) -> None:
                 item = json.loads(line)
                 definitions[int(item['task_id'])] = item
         results = records(root)
+        columns, analysis = ({}, {}) if combined else analysis_columns(definitions, results)
         count = max(int(metadata.get('task_count', 0)), max(definitions, default=-1) + 1)
         with tempfile.TemporaryDirectory(prefix='.export-', dir=directory) as staging_name:
             staging = Path(staging_name)
-            with tarfile.open(staging / names[1], 'w:gz') as stdout_tar, \
-                 tarfile.open(staging / names[2], 'w:gz') as stderr_tar, \
-                 (staging / names[0]).open('w', newline='', encoding='utf-8') as csv_file:
-                for archive, filename in ((stdout_tar, names[1]), (stderr_tar, names[2])):
+            with ExitStack() as stack:
+                csv_file = stack.enter_context((staging / names[0]).open('w', newline='', encoding='utf-8'))
+                archives = [stack.enter_context(tarfile.open(staging / name, 'w:gz')) for name in names[1:]]
+                for archive, filename in zip(archives, names[1:]):
                     directory_info = tarfile.TarInfo(filename.removesuffix('.tgz') + '/')
                     directory_info.type = tarfile.DIRTYPE
                     directory_info.mode = 0o700
                     archive.addfile(directory_info)
-                fields = STAREXEC_FIELDS if combined else EXPORT_FIELDS
+                fields = STAREXEC_FIELDS if combined else (*EXPORT_FIELDS, *columns.values())
                 writer = csv.DictWriter(csv_file, fieldnames=fields)
                 writer.writeheader()
+                progress = 'Exporting solver-problem pairs' if summary_only else 'Exporting solver-problem pairs and logs'
                 for task_id in range(count):
                     definition = definitions.get(task_id, {})
                     result = results.get(task_id, {})
@@ -109,12 +136,14 @@ def export(root: Path, combined: bool = False) -> None:
                                wc_limit=definition.get('wc_limit', ''),
                                cpu_limit=definition.get('cpu_limit', ''),
                                mem_limit=definition.get('mem_limit', ''),
-                               has_solver_stdout='false', has_solver_stderr='false',
+                               has_solver_stdout='' if summary_only else 'false',
+                               has_solver_stderr='' if summary_only else 'false',
                                has_combined_solver_output='false',
                                szs_status_code=szs.mnemonic(result.get('szs_status')),
                                szs_output_code=szs.data_mnemonic(result.get('szs_output')))
                     name = result.get('archive', '')
-                    if ARCHIVE.fullmatch(name) and (root / 'results' / name).is_file():
+                    if archives and ARCHIVE.fullmatch(name) and (root / 'results' / name).is_file():
+                        stdout_tar, stderr_tar = archives
                         with tarfile.open(root / 'results' / name, 'r:gz') as source:
                             members = source.getmembers() if combined else source
                             combined_member = (next((member for member in members if member.isfile()
@@ -143,9 +172,10 @@ def export(root: Path, combined: bool = False) -> None:
                                 info.mode = 0o600
                                 target.addfile(info, content)
                                 row[field] = 'true'
+                    row.update({columns[name]: value for name, value in analysis.get(task_id, {}).items()})
                     writer.writerow({field: row.get(field, '') for field in fields})
                     if (task_id + 1) % 1000 == 0 or task_id + 1 == count:
-                        print(f'Exporting solver-problem pairs and logs: {task_id + 1}/{count}', flush=True)
+                        print(f'{progress}: {task_id + 1}/{count}', flush=True)
             for name in names:
                 os.replace(staging / name, directory / name)
             (staging / '.signature').write_text(signature + '\n', encoding='ascii')
@@ -155,12 +185,12 @@ def export(root: Path, combined: bool = False) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) not in (2, 3) or not JOB_ID.fullmatch(sys.argv[1]) or (len(sys.argv) == 3 and sys.argv[2] != '--combined'):
+    if len(sys.argv) not in (2, 3) or not JOB_ID.fullmatch(sys.argv[1]) or (len(sys.argv) == 3 and sys.argv[2] not in {'--combined', '--summary-only'}):
         raise SystemExit('Expected a Slurmy job ID.')
     root = Path.home() / 'slurmy' / 'jobs' / sys.argv[1]
     if not root.is_dir() or root.is_symlink():
         raise SystemExit('Job directory not found or is a symlink.')
-    export(root, combined=len(sys.argv) == 3)
+    export(root, combined=sys.argv[2:] == ['--combined'], summary_only=sys.argv[2:] == ['--summary-only'])
     return 0
 
 

@@ -498,6 +498,13 @@ html[data-theme="dark"] .sort-button:hover, html[data-theme="dark"] .sort-button
 .job-title-row .job-rename-button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; padding: 7px; width: 34px; height: 34px; }
 .job-rename-button svg { width: 19px; height: 19px; }
 .job-results-heading { flex-wrap: wrap; }
+#analysis-results { margin-bottom: 18px; }
+#analysis-results td { white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top; }
+#task-analysis-options { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 8px; }
+#task-analysis-options label { flex-direction: row; align-items: center; margin: 0; overflow-wrap: anywhere; }
+#task-analysis-status:empty { display: none; }
+.task-analysis-column { text-transform: none; letter-spacing: normal; }
+.task-analysis-value { display: inline-block; max-width: 28ch; overflow-wrap: anywhere; white-space: pre-wrap; }
 .job-completion { margin: 0; font-size: 14px; color: var(--muted); }
 
 .workflow-group > summary .recovery-trigger { margin-left: auto; font-size: 11px; padding: 6px 9px; color: var(--muted); }

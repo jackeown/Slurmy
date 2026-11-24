@@ -699,8 +699,10 @@ def sync_loop(args: argparse.Namespace) -> int:
 
 
 def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
-    """Download only the cluster-built CSV and two solver-stream archives."""
+    """Download the cluster-built summary, with log archives by default."""
     job_id = resolved_job_id or resolve_job_id(args.host, args.job_id, args.ssh_timeout)
+    summary_only = getattr(args, 'summary_only', False)
+    export_description = 'summary CSV' if summary_only else 'three-file export'
     destination = Path(args.output).expanduser() if args.output else Path.cwd() / 'job-results' / job_id
     if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
         raise SyncError(f'output path is not a normal directory: {destination}')
@@ -721,13 +723,15 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
     if identity and (identity.get('host'), identity.get('job_id')) != (args.host, job_id):
         raise SyncError('This output directory belongs to a different host or job.')
     while True:
-        print(f'Preparing three-file export for {job_id} on {args.host}…', flush=True)
+        print(f'Preparing {export_description} for {job_id} on {args.host}…', flush=True)
         expected = None
         command = ['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o',
                    f'ConnectTimeout={max(1, int(args.ssh_timeout))}', '-o',
                    'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
                    '--', args.host, 'python3', '-u', '-', job_id]
-        if getattr(args, 'combined_solver_output', False):
+        if summary_only:
+            command.append('--summary-only')
+        elif getattr(args, 'combined_solver_output', False):
             command.append('--combined')
         try:
             with tempfile.TemporaryFile() as script:
@@ -740,7 +744,7 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
                     print(line, end='', flush=True)
                     if line.startswith('EXPORT_FILES|'):
                         candidate = line.strip().split('|')[1:]
-                        if (len(candidate) == 3 and
+                        if (len(candidate) == (1 if summary_only else 3) and
                                 all(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', name) for name in candidate) and
                                 candidate[0].endswith('.csv') and all(name.endswith('.tgz') for name in candidate[1:])):
                             expected = tuple(candidate)
@@ -750,22 +754,23 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
         if code:
             raise SyncError(f'Remote export failed (SSH exit {code}); existing local files were kept.')
         if expected is None:
-            raise SyncError('Remote export did not report its three output filenames.')
+            raise SyncError(f'Remote export did not report the expected filenames for the {export_description}.')
         # A previous concise download uses the old three filenames. Keep it
         # until the replacement download succeeds, rather than treating it as
         # a verbose result directory that must be moved out of the way.
         job_name = expected[0].removesuffix('_results-summary.csv')
         old_names = {f'{job_name}.csv', f'{job_name}_logs.tgz', f'{job_name}_errors.tgz'}
         previous_names = identity.get('files', [])
-        if (isinstance(previous_names, list) and len(previous_names) == 3 and
+        if not (isinstance(previous_names, list) and len(previous_names) in (1, 3) and
                 all(isinstance(name, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', name)
                     for name in previous_names)):
-            old_names.update(previous_names)
+            previous_names = []
+        old_names.update(previous_names)
         old_names.difference_update(expected)
         old_files = ([item for item in destination.iterdir() if item.name in old_names and item.is_file()]
-                     if destination.is_dir() else [])
+                     if not summary_only and destination.is_dir() else [])
         allowed_names = set(expected) | {item.name for item in old_files}
-        if destination.is_dir() and any(item.name not in allowed_names for item in destination.iterdir()):
+        if not summary_only and destination.is_dir() and any(item.name not in allowed_names for item in destination.iterdir()):
             if args.output:
                 raise SyncError('This output directory contains verbose files; choose an empty directory for the three-file download.')
             legacy = Path.cwd() / 'job-results' / 'verbose' / job_id
@@ -776,7 +781,9 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
             print(f'Moved older detailed results to {legacy}; no files were deleted.', flush=True)
         destination.mkdir(parents=True, exist_ok=True)
         remote = f'{args.host}:slurmy/jobs/{job_id}/exports/'
-        if getattr(args, 'combined_solver_output', False):
+        if summary_only:
+            remote += 'summary/'
+        elif getattr(args, 'combined_solver_output', False):
             remote += 'starexec/'
         # Stage all files first: failed transfers must keep the previous export.
         with tempfile.TemporaryDirectory(prefix='.slurmy-download-', dir=destination.parent) as temporary:
@@ -795,7 +802,7 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
             try:
                 result = subprocess.run(transfer, capture_output=True, text=True, timeout=3600, check=False)
             except (OSError, subprocess.TimeoutExpired) as exc:
-                raise SyncError(f'Could not transfer the three export files: {exc}') from exc
+                raise SyncError(f'Could not transfer the {export_description}: {exc}') from exc
             if result.returncode:
                 raise SyncError(result.stderr.strip() or f'{transfer[0]} exited with status {result.returncode}')
             if not all((stage / name).is_file() and not (stage / name).is_symlink() for name in expected):
@@ -807,7 +814,8 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
             for row in csv.DictReader(source):
                 total += 1
                 completed += row.get('complete', '').lower() == 'true'
-        identity = {'host': args.host, 'job_id': job_id, 'files': list(expected)}
+        identity = {'host': args.host, 'job_id': job_id,
+                    'files': previous_names if summary_only and len(previous_names) == 3 else list(expected)}
         fd, identity_temporary = tempfile.mkstemp(prefix='.export-identity-', dir=destination.parent)
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as stream:
@@ -879,6 +887,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help='download all raw per-solver-problem pair archives, SLURM logs, plans, and metadata')
     formats.add_argument('--starexec', action='store_true',
                          help='download StarExec-compatible info and output ZIPs')
+    formats.add_argument('--summary-only', action='store_true',
+                         help='download the results summary CSV without packaging or transferring solver logs')
     parser.add_argument(
         "--interval",
         type=float,

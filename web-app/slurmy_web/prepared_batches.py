@@ -3,6 +3,7 @@ import csv
 from functools import lru_cache
 import io
 import json
+from analyze_run import SCRIPT_NAMES, prepared_scripts_current
 from .batches import batch_members, batch_summaries
 from .monitor import JobSnapshot, TaskDefinition
 
@@ -32,8 +33,9 @@ def snapshot(directory):
     except FileNotFoundError as exc:
         raise ValueError('No prepared batch plan yet. Choose Prepare only, then open this section.') from exc
     job=_read(directory,(metadata.st_mtime_ns,metadata.st_size,metadata.st_ctime_ns),(manifest.st_mtime_ns,manifest.st_size,manifest.st_ctime_ns))
-    inputs=['Makefile','workflow.json','jobpairs.csv','configurations.csv','problem-globs.txt','problem-selection.json','axiom-globs.txt','building.txt','resource_limiter_template.txt']
+    inputs=['Makefile','workflow.json','jobpairs.csv','configurations.csv','problem-globs.txt','problem-selection.json','axiom-globs.txt','building.txt','resource_limiter_template.txt',*SCRIPT_NAMES]
     stale=any((directory/name).is_file() and (directory/name).stat().st_mtime_ns>prepared.st_mtime_ns for name in inputs)
+    stale = stale or not prepared_scripts_current(directory/'submit.sh.files')
     return job,dict(updated=max(metadata.st_mtime,manifest.st_mtime),stale=stale,refreshing=False)
 
 

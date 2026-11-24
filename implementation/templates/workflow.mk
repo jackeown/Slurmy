@@ -28,10 +28,13 @@ all: prepare
 prepare:
 	@if [ ! -f submit.sh ] || [ ! -d submit.sh.files ]; then \
 		rm -f -- submit.sh; rm -rf -- submit.sh.files; \
+	elif [ -f submit.sh.files/analysis-settings.sh ] && ! "$(SLURMY_PYTHON)" '$(REPO_ROOT)/implementation/analyze_run.py' --check-prepared submit.sh.files; then \
+		printf '♻️  Analysis inputs changed; refreshing generated submission files.\n'; \
+		rm -f -- submit.sh; rm -rf -- submit.sh.files; \
 	fi
 	@$(MAKE) --no-print-directory submit.sh
 
-submit.sh: $(REPO_ROOT)/implementation/szs.py $(REPO_ROOT)/implementation/local_dispatch.py $(REPO_ROOT)/implementation/slurm_api.py $(REPO_ROOT)/implementation/tools/GetComputerInfo Makefile $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES) $(REPO_ROOT)/implementation/slurmy.py $(REPO_ROOT)/implementation/job_names.py $(REPO_ROOT)/implementation/check_threads.py $(REPO_ROOT)/implementation/ssh_transport.py $(REPO_ROOT)/implementation/package_inputs.py $(REPO_ROOT)/implementation/prepare_axioms.py $(REPO_ROOT)/implementation/submit_coordinator.py $(REPO_ROOT)/implementation/build/slurmy-build.py $(REPO_ROOT)/implementation/templates/workflow.mk $(wildcard $(REPO_ROOT)/implementation/templates/*.sh)
+submit.sh: $(wildcard analysis.py analysis.sh) $(REPO_ROOT)/implementation/analyze_run.py $(REPO_ROOT)/implementation/szs.py $(REPO_ROOT)/implementation/local_dispatch.py $(REPO_ROOT)/implementation/slurm_api.py $(REPO_ROOT)/implementation/tools/GetComputerInfo Makefile $(JOBPAIRS) $(BUILDING) $(LIMITER) $(AXIOMS) $(BUILD_RECIPES) $(REPO_ROOT)/implementation/slurmy.py $(REPO_ROOT)/implementation/job_names.py $(REPO_ROOT)/implementation/check_threads.py $(REPO_ROOT)/implementation/ssh_transport.py $(REPO_ROOT)/implementation/package_inputs.py $(REPO_ROOT)/implementation/prepare_axioms.py $(REPO_ROOT)/implementation/submit_coordinator.py $(REPO_ROOT)/implementation/build/slurmy-build.py $(REPO_ROOT)/implementation/templates/workflow.mk $(wildcard $(REPO_ROOT)/implementation/templates/*.sh)
 	@if [ -e submit.sh ] || [ -d submit.sh.files ]; then \
 		printf '♻️  Inputs changed; refreshing generated submission files.\n'; \
 		rm -f -- submit.sh; rm -rf -- submit.sh.files; \

@@ -291,10 +291,20 @@ solver-problem pair's original result archive measures the entire per-solver-pro
 including the solver. Runsolver's measurements of the solver tree replace that
 fallback when available. Default download exports only `<job-name>_results-summary.csv`,
 `<job-name>_solver-stdout.tgz`, and `<job-name>_solver-stderr.tgz` into `job-results/JOB_ID/`.
+Use `slurmy-sync.py JOB_ID --summary-only` to download just the CSV into the same directory.
 Each archive extracts into a same-named top-level directory and contains logs
 named `<solver>___<original-problem-filename>___<solver-problem-pair-id>.log` (or
 `.stderr.log` for stderr). The full problem filename is preserved exactly,
-including its extension and characters such as `+` and `^`. Original archives
+including its extension and characters such as `+` and `^`. To configure
+analysis from the command line, set the optional `analysis_script` column in
+`configurations.csv` or `jobpairs.csv` to a `.py` or `.sh` path. Relative paths
+are resolved from the CSV's directory. Leave the field empty for solvers that
+do not need analysis. Use the optional `analysis_columns` field to declare a
+comma-separated list of output names for a solver. Slurmy packages each script and
+runs it on the compute node with the stdout and stderr log paths as positional
+arguments. Print a flat JSON object or a CSV header and one data row to stdout.
+The standard summary appends those columns and leaves missing cells blank.
+Original archives
 and diagnostics stay on the cluster. Use `slurmy-sync.py --verbose`
 for readable per-pair archives under `job-results/verbose/JOB_ID/solver-problem-pairs/`
 and original cluster files under `job-results/verbose/JOB_ID/diagnostics/`.
