@@ -67,3 +67,41 @@ class LocalDispatchTests(unittest.TestCase):
         self.assertEqual(ssh.call_count,2)
         self.assertEqual(status.call_count,2)
         self.assertEqual(sleep.call_count,2)
+
+
+    def test_new_array_bridge_counts_each_local_element_for_its_account_and_stops_individually(self):
+        with tempfile.TemporaryDirectory() as folder, \
+             patch.object(slurm_api, 'CONFIG', Path(folder)/'settings.json'), \
+             patch.object(slurm_api, 'credentials', return_value=dict(user='alice')):
+            slurm_api._submission_metadata.clear()
+            self.addCleanup(slurm_api._submission_metadata.clear)
+            with patch.object(slurm_api, 'request', return_value={'jobs': []}):
+                slurm_api.submission_queue('host')
+            message = dict(argv=['sbatch', '--array=2-5', '--account=research',
+                                 '--comment=public v2 arbitrary string',
+                                 '--export=ALL,SLURMY_BATCH_OFFSET=100', 'batch.sh'],
+                           script='true', cwd='/home/alice/job', environment={})
+            with patch.object(slurm_api, 'request', return_value={'job_id':123}) as request:
+                self.assertEqual(local_dispatch.rpc('host', message)['stdout'], '123\n')
+                payload = request.call_args.args[3]
+                self.assertEqual(payload['job']['array'], '2-5')
+                self.assertIn('SLURMY_BATCH_OFFSET=100', payload['job']['environment'])
+            states = [dict(job_id=123, state=['PENDING'])] + [
+                dict(job_id=f'123_{i}', state=['PENDING']) for i in range(2,6)]
+            query = dict(argv=['squeue', '-A', 'research', '-o', '%i|%Z|%k'])
+            with patch.object(slurm_api, 'request', return_value={'jobs':states}) as request:
+                lines = local_dispatch.rpc('host', query)['stdout'].splitlines()
+                self.assertEqual(lines, [f'123_{i}|/home/alice/job|public v2 arbitrary string'
+                                         for i in range(2,6)])
+                request.assert_called_once_with('host', 'jobs/state')
+                other = local_dispatch.rpc('host', dict(argv=['squeue','-A','other','-o','%Z']))
+                self.assertEqual(other['stdout'].strip(), '')
+            with patch.object(slurm_api, 'request', return_value={}) as request:
+                local_dispatch.rpc('host', dict(argv=['scancel', '123_3', '123_5']))
+                self.assertEqual([call.args for call in request.call_args_list],
+                                 [('host','job/123_3','DELETE'), ('host','job/123_5','DELETE')])
+            states[2]['state'] = ['CANCELLED']  # local index 3 has stopped
+            states[4]['state'] = ['CANCELLED']  # local index 5 has stopped
+            with patch.object(slurm_api, 'request', return_value={'jobs':states}):
+                lines = local_dispatch.rpc('host', query)['stdout'].splitlines()
+                self.assertEqual([line.split('|')[0] for line in lines], ['123_2','123_4'])

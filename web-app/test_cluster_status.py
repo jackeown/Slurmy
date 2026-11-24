@@ -136,3 +136,18 @@ class ClusterStatusTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ArrayCommentTests(unittest.TestCase):
+    def test_v2_public_comment_uses_local_element_with_large_offset(self):
+        output=snapshot().replace('slurmy:v1:calls=4:batches=1:batch=0',
+            'slurmy:v2:calls=4:batches=10002:cores=12:isolation=socket:batch_offset=10000')
+        output=output.replace('101_0','101_1').replace('/home/alice/slurmy/jobs/study_123|4|1','')
+        job=parse_status('test','all',output)['jobs'][0]
+        self.assertEqual((job['batch_index'],job['jobpairs'],job['batches']),(10001,4,10002))
+        self.assertEqual((job['solver_cores'],job['solver_isolation']),(12,'socket'))
+        self.assertEqual(job['metadata_source'],'SLURM comment')
+        # A parent/condensed descriptor has counts, but no single batch index.
+        job=parse_status('test','all',output.replace('101_1|alice','101_[0-1]|alice'))['jobs'][0]
+        self.assertNotIn('batch_index',job)
+        self.assertEqual(job['jobpairs'],4)

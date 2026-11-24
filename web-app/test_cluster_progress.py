@@ -34,3 +34,20 @@ class ClusterProgressTests(unittest.TestCase):
             self.assertTrue(result.stdout.startswith('1234_0|7|'))
             # Queue entries outside the connected user's direct job tree are never read.
             self.assertEqual(list(current_calls([line.replace(str(job),'/other/home/slurmy/jobs/example')],home)),[])
+
+    def test_local_elements_use_v2_offset_or_exact_ledger_row(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home=Path(folder);job=home/'slurmy/jobs/example';(job/'progress').mkdir(parents=True)
+            for batch in (10000,10001,10005):
+                (job/'progress'/f'batch_{batch:06d}.csv').write_text(f'running,{batch},1,2,0\n')
+            (job/'manifest.jsonl').write_text(''.join(json.dumps(dict(task_id=batch,solver='S',problem='P'))+'\n' for batch in (10000,10001,10005)))
+            (job/'submission.csv').write_text('slurm_job_id,offset,array_size,submitted_epoch,batch_id,array_task_id\n'
+                '1234,10000,1,1,10000,0\n1234,10000,1,1,10001,1\n2345,10005,1,2,10005,0\n')
+            for comment in ('', 'slurmy:v2:calls=3:batches=10006:cores=1:isolation=shared:batch_offset=10000'):
+                lines=[f'1234_{element}|tester|example|RUNNING|1|1|1|60|n1||{job}|{comment}' for element in (0,1)]
+                values=list(current_calls(lines,home))
+                self.assertEqual([(v[0],v[2]['batch_id']) for v in values],[('1234_0',10000),('1234_1',10001)])
+            line=f'2345_0|tester|example|RUNNING|1|1|1|60|n1||{job}|'
+            self.assertEqual(list(current_calls([line],home))[0][2]['batch_id'],10005)
+            # An unrecorded sibling must not borrow the first row for its parent.
+            self.assertEqual(list(current_calls([line.replace('2345_0','2345_1')],home)),[])

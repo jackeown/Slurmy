@@ -128,3 +128,194 @@ class ApiTests(unittest.TestCase):
             self.assertEqual([api.job_id(j) for j in second],['10_1','10_2','20'])
             self.assertEqual(sum(call.args[1]=='jobs' for call in request.call_args_list),1)
             self.assertEqual(sum(call.args[1]=='job/20' for call in request.call_args_list),1)
+
+
+    def test_array_payload_preserves_local_indices_offset_account_and_arbitrary_comment(self):
+        for specification in ('0-0', '0-5', '2-5', '2,3,5', '0-8:2%3'):
+            with self.subTest(specification=specification):
+                payload = api.batch_request([
+                    '--array='+specification, '--account=research',
+                    '--comment=slurmy:v2 arbitrary public comment',
+                    '--export=ALL,SLURMY_BATCH_OFFSET=120'], 'true', '/work/job', {})
+                self.assertEqual(payload['job']['array'], specification)
+                self.assertEqual(payload['job']['account'], 'research')
+                self.assertEqual(payload['job']['comment'], 'slurmy:v2 arbitrary public comment')
+                self.assertIn('SLURMY_BATCH_OFFSET=120', payload['job']['environment'])
+
+    def test_remembered_arrays_resolve_compact_states_without_parent_or_extra_reads(self):
+        for specification, indices in [('0-0', [0]), ('0-3', [0,1,2,3]),
+                                       ('2-5', [2,3,4,5]), ('2,3,5', [2,3,5]),
+                                       ('0-6:2%2', [0,2,4,6])]:
+            with self.subTest(specification=specification):
+                api._submission_metadata.clear()
+                with patch.object(api, 'request', return_value={'jobs': []}):
+                    api.submission_queue('host')
+                payload = api.batch_request(['--array='+specification, '--account=research',
+                                            '--comment=arbitrary v2 string'], 'true', '/work/job', {})
+                with patch.object(api, 'credentials', return_value=self.auth):
+                    api.remember_submission('host', 100, payload)
+                # Parent placeholder and duplicate element must not consume extra slots.
+                states = [dict(job_id=100, state=['PENDING'])] + [
+                    dict(job_id=f'100_{index}', state=['RUNNING' if index == indices[0] else 'PENDING'])
+                    for index in indices]
+                states.append(states[-1])
+                with patch.object(api, 'request', return_value={'jobs': states}) as request:
+                    queue = api.submission_queue('host')
+                request.assert_called_once_with('host', 'jobs/state')
+                self.assertEqual([api.job_id(j) for j in queue], [f'100_{i}' for i in indices])
+                self.assertTrue(all(j['account'] == 'research' and j['comment'] == 'arbitrary v2 string'
+                                    and j['current_working_directory'] == '/work/job' for j in queue))
+
+    def test_numeric_materialized_ids_and_grouped_states_use_element_identity(self):
+        master = dict(job_id=100, array_job_id=100, array_task_id={'set':False},
+                      array_task_string='2-5', account='research', user_name='alice',
+                      current_working_directory='/work/job')
+        element = dict(master, job_id=201, array_task_id=2, array_task_string='')
+        states = [dict(job_id=201, array_job_id=100, array_task_id=2, state=['RUNNING']),
+                  dict(job_id=100, array_job_id=100, array_task_id={'set':False},
+                       array_task_string='3-5', state=['PENDING'])]
+        with patch.object(api, 'request', side_effect=[{'jobs':states}, {'jobs':[master, element]}]):
+            queue = api.submission_queue('host')
+        self.assertEqual([api.job_id(j) for j in queue], ['100_2','100_3','100_4','100_5'])
+        # Some compact responses supply only the materialized numeric job ID.
+        with patch.object(api, 'request', return_value={'jobs':[dict(job_id=201, state=['RUNNING'])]}):
+            self.assertEqual([api.job_id(j) for j in api.submission_queue('host')], ['100_2'])
+
+    def test_explicit_terminal_element_overrides_pending_descriptor_in_either_order(self):
+        master = dict(job_id=100, array_job_id=100, array_task_string='2-5',
+                      user_name='alice', job_state=['PENDING'])
+        done = dict(master, job_id=201, array_task_id=3, job_state=['COMPLETED'])
+        for rows in ([done, master], [master, done]):
+            with patch.object(api, 'read', return_value={'jobs':rows}):
+                self.assertEqual([api.job_id(j) for j in api.active_jobs('host')],
+                                 ['100_2','100_4','100_5'])
+            api._submission_metadata.clear()
+            states = [dict(j, state=j['job_state']) for j in rows]
+            with patch.object(api, 'request', side_effect=[{'jobs':states}, {'jobs':[master]}]):
+                self.assertEqual(set(api.job_id(j) for j in api.submission_queue('host')),
+                                 {'100_2','100_4','100_5'})
+
+    def test_array_expansion_deduplicates_indices_and_rejects_invalid_ranges(self):
+        master = dict(job_id=100, array_job_id=100, array_task_string='2,2-6:2%3')
+        self.assertEqual([api.job_id(j) for j in api.array_elements(master)], ['100_2','100_4','100_6'])
+        for specification in ('4-2', '0-3:0', 'garbage'):
+            with self.assertRaises(RuntimeError):
+                api.array_elements(dict(master, array_task_string=specification))
+
+    def test_remembered_array_resolves_new_numeric_materialized_id_and_caches_it(self):
+        with patch.object(api, 'request', return_value={'jobs': []}):
+            api.submission_queue('host')
+        payload = api.batch_request(['--array=2-5','--account=research'], 'true', '/work/job', {})
+        with patch.object(api, 'credentials', return_value=self.auth):
+            api.remember_submission('host', 100, payload)
+        # Unlike parent_index compact IDs, a new numeric materialized ID cannot
+        # be inferred from the remembered parent. Resolve it once over REST.
+        states = [dict(job_id='201', state=['RUNNING']),
+                  dict(job_id='100_2', state=['PENDING'])]
+        materialized = dict(job_id=201, array_job_id=100, array_task_id=3,
+                            user_name='alice', account='research', current_working_directory='/work/job')
+        with patch.object(api, 'request', side_effect=[{'jobs':states}, {'jobs':[materialized]}]) as request:
+            queue = api.submission_queue('host')
+        self.assertEqual([call.args[1] for call in request.call_args_list], ['jobs/state','job/201'])
+        self.assertEqual([api.job_id(j) for j in queue], ['100_3','100_2'])
+        self.assertTrue(all(j['account'] == 'research' for j in queue))
+        with patch.object(api, 'request', return_value={'jobs':states}) as request:
+            self.assertEqual([api.job_id(j) for j in api.submission_queue('host')], ['100_3','100_2'])
+        request.assert_called_once_with('host', 'jobs/state')
+
+    def test_terminal_wildcard_is_ignored_but_unknown_active_identifiers_fail_closed(self):
+        master = dict(job_id=100, array_job_id=100, array_task_string='0-3',
+                      user_name='alice', account='research')
+        states = [dict(job_id='1136022_*', state=['CANCELLED']),
+                  dict(job_id='100_0', state=['RUNNING']),
+                  dict(job_id='100_1', state=['PENDING']),
+                  dict(job_id='100_2', state=['CANCELLED']),
+                  dict(job_id='100_3', state=['COMPLETED'])]
+        with patch.object(api, 'request', side_effect=[{'jobs':states}, {'jobs':[master]}]):
+            self.assertEqual([api.job_id(j) for j in api.submission_queue('host')], ['100_0','100_1'])
+        for identifier in ('1136022_*', '100_[0-3]', 'unexpected'):
+            for state in (['PENDING'], ['CANCELLED','COMPLETING']):
+                with self.subTest(identifier=identifier, state=state):
+                    with patch.object(api, 'request', return_value={'jobs':[dict(job_id=identifier, state=state)]}):
+                        with self.assertRaisesRegex(RuntimeError, 'Unrecognized SLURM state identifier'):
+                            api.submission_queue('host')
+        with patch.object(api, 'request', return_value={'jobs':[states[0]]}) as request:
+            self.assertEqual(api.submission_queue('host'), [])
+        request.assert_called_once_with('host', 'jobs/state')
+
+    def test_metadata_index_uses_snapshot_while_submission_is_remembered(self):
+        import threading
+        entered = threading.Event()
+        resume = threading.Event()
+        errors = []
+        result = []
+        class SlowID:
+            def __str__(self):
+                entered.set()
+                if not resume.wait(3):
+                    raise RuntimeError('metadata index synchronization timed out')
+                return '9'
+        config = api.settings('host')
+        key = ('host', config['url'], config['version'])
+        api._submission_metadata[key] = dict(time=time.monotonic(), jobs={
+            '9':dict(job_id=SlowID()),
+            '100':dict(job_id=100, array_job_id=100, array_task_string='0-3')})
+        def poll():
+            try:
+                result.extend(api.submission_queue('host'))
+            except Exception as error:
+                errors.append(error)
+        with patch.object(api, 'request', return_value={'jobs':[dict(job_id='100_0', state=['PENDING'])]}), \
+             patch.object(api, 'credentials', return_value=self.auth):
+            thread = threading.Thread(target=poll)
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(3))
+                api.remember_submission('host', 200, {'job':dict(
+                    current_working_directory='/work/job', account='research', array='0-3')})
+            finally:
+                resume.set()
+                thread.join(3)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(errors, errors)
+        self.assertEqual([api.job_id(j) for j in result], ['100_0'])
+        self.assertTrue(all(f'200_{i}' in api._submission_metadata[key]['jobs'] for i in range(4)))
+
+    def test_refresh_keeps_submission_remembered_during_full_jobs_request(self):
+        import threading
+        entered = threading.Event()
+        resume = threading.Event()
+        errors = []
+        result = []
+        config = api.settings('host')
+        key = ('host', config['url'], config['version'])
+        api._submission_metadata[key] = dict(time=time.monotonic()-301, jobs={})
+        def request(host, endpoint):
+            if endpoint == 'jobs/state':
+                return {'jobs':[dict(job_id='200_0', state=['PENDING'])]}
+            if endpoint == 'jobs':
+                entered.set()
+                if not resume.wait(3):
+                    raise RuntimeError('metadata refresh synchronization timed out')
+                return {'jobs':[]}  # Snapshot predates the new submission.
+            raise AssertionError(endpoint)
+        def poll():
+            try:
+                result.extend(api.submission_queue('host'))
+            except Exception as error:
+                errors.append(error)
+        with patch.object(api, 'request', side_effect=request), \
+             patch.object(api, 'credentials', return_value=self.auth):
+            thread = threading.Thread(target=poll)
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(3))
+                api.remember_submission('host', 200, {'job':dict(
+                    current_working_directory='/work/job', account='research', array='0-3')})
+            finally:
+                resume.set()
+                thread.join(3)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(errors, errors)
+        self.assertEqual([api.job_id(j) for j in result], ['200_0'])
+        self.assertTrue(all(f'200_{i}' in api._submission_metadata[key]['jobs'] for i in range(4)))

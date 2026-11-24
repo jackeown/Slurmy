@@ -124,7 +124,23 @@ def fair_targets(demands: dict[str, int], capacity: int, turn: int = 0) -> dict[
     return targets
 
 
+def array_request(arguments):
+    """Only generated contiguous arrays are resized; unknown syntax fails closed."""
+    options=[(index,value) for index,value in enumerate(arguments) if value.startswith('--array=')]
+    if not options:return None,0,1
+    if len(options)!=1:raise ValueError('Duplicate SLURM array options.')
+    index,value=options[0]
+    match=re.fullmatch(r'--array=(\d+)-(\d+)',value)
+    if not match:raise ValueError('Expected a contiguous SLURM array range.')
+    first,last=map(int,match.groups())
+    if first>last:raise ValueError('Invalid SLURM array range.')
+    return index,first,last-first+1
+
+
 def main() -> int:
+    if sys.argv[1:]==['capabilities']:
+        print('slurmy-arrays-v1')
+        return 0
     if len(sys.argv) < 3 or sys.argv[1] not in {"attempt", "release"}:
         raise SystemExit("usage: submit_coordinator.py attempt|release JOB_ID [MAX_OUTSTANDING -- sbatch options]")
     action, job_id = sys.argv[1:3]
@@ -193,8 +209,21 @@ def main() -> int:
             print(f"WAIT|{current} active for this job; fair share {target}; {total} user jobs; "
                   f"{'reported/observed limit ' + str(ceiling) if ceiling is not None else 'limit not reported'}")
             return 0
+        array_option, array_first, array_count = array_request(sbatch_args)
+        accepted_count = min(array_count, target-current,
+                             ceiling-total if ceiling is not None else array_count)
         try:
-            submitted = command(["sbatch", *sbatch_args], timeout=60)
+            while True:
+                if array_option is not None:
+                    sbatch_args[array_option]=f'--array={array_first}-{array_first+accepted_count-1}'
+                submitted = command(["sbatch", *sbatch_args], timeout=60)
+                rejection=(submitted.stdout+'\n'+submitted.stderr).casefold()
+                if submitted.returncode and accepted_count>1 and any(token.casefold() in rejection for token in LIMIT_ERRORS):
+                    # A stricter QOS can exist below the reported association
+                    # limit. A definite rejection is safe to retry more narrowly.
+                    accepted_count=max(1,accepted_count//2)
+                    continue
+                break
         except (OSError, subprocess.TimeoutExpired) as exc:
             print(f"ERROR|Could not confirm sbatch acceptance: {exc}. Inspect SLURM before retrying.")
             return 2
@@ -206,7 +235,7 @@ def main() -> int:
                 return 2
             capacity_record["turn"] = int(capacity_record.get("turn", 0)) + 1
             save_json(capacity_file, capacity_record)
-            print(f"ACCEPTED|{slurm_id}|{current + 1}/{target} fair share; {total + 1} user jobs"
+            print(f"ACCEPTED|{slurm_id}|accepted={accepted_count}; {current + accepted_count}/{target} fair share; {total + accepted_count} user jobs"
                   + (f"; submit limit {ceiling}" if ceiling is not None else ""))
             return 0
         if any(token.casefold() in message.casefold() for token in LIMIT_ERRORS):

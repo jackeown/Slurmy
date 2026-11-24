@@ -301,6 +301,117 @@ PY
 fi
 echo "Slurmy job ID: $1"
 echo "Submission progress: $submitted/$next_batch batches accepted (at most $MAX_OUTSTANDING submitted)"
+# Only batch arrays with exactly matching scheduling options. Local array indices
+# map to stable Slurmy batch IDs through SLURMY_BATCH_OFFSET, so even workflows
+# with more batches than MaxArraySize remain valid.
+MAX_ARRAY_TASKS=$(python3 - "$CONFIG" <<'PY'
+import re,sys
+config=sys.argv[1]
+size=re.search(r'^\s*MaxArraySize\s*=\s*(\d+)',config,re.M)
+limit=int(size[1]) if size else 1
+scheduler=re.search(r'\bmax_array_tasks=(\d+)',config)
+if scheduler:limit=min(limit,int(scheduler[1]))
+print(max(1,min(limit,1000)))
+PY
+)
+# Mixed-version helpers must fall back to single-element submissions, never
+# accept a multi-array with an old coordinator that only counts one slot.
+if [[ $(python3 "$JOB_DIR/submit_coordinator.py" capabilities 2>/dev/null || true) != slurmy-arrays-v1 ]]; then
+    MAX_ARRAY_TASKS=1
+fi
+ARRAY_MAPPING=offset
+if ! grep -q 'SLURMY_BATCH_OFFSET' batch.sh; then MAX_ARRAY_TASKS=1; ARRAY_MAPPING=legacy; fi
+# Add the element ID column without rewriting legacy offsets or identities.
+python3 - <<'PY'
+import csv,os
+from pathlib import Path
+path=Path('submission.csv')
+with path.open(newline='') as stream:
+    reader=csv.DictReader(stream);fields=reader.fieldnames;rows=list(reader)
+if 'array_task_id' not in fields:
+    temporary=path.with_suffix('.csv.tmp')
+    with temporary.open('w',newline='') as stream:
+        writer=csv.DictWriter(stream,fieldnames=[*fields,'array_task_id'])
+        writer.writeheader();writer.writerows(rows)
+    os.replace(temporary,path)
+PY
+GROUP_IDS=()
+GROUP_OPTIONS=()
+GROUP_SIGNATURE=
+GROUP_PUBLIC=
+submit_group() {
+    local remaining first count accepted id details row_batch index
+    local -a request_options
+    while (( ${#GROUP_IDS[@]} )); do
+        remaining=${#GROUP_IDS[@]}
+        first=${GROUP_IDS[0]}
+        request_options=("${GROUP_OPTIONS[@]}" --array="0-$((remaining-1))")
+        if [[ "$ARRAY_MAPPING" == legacy ]]; then
+            request_options+=(--export="ALL,SLURMY_BATCH_ID=$first")
+        else
+            request_options+=(--export="ALL,SLURMY_BATCH_OFFSET=$first")
+        fi
+        if (( remaining == 1 )); then
+            request_options+=(--comment="slurmy:v1:$GROUP_PUBLIC:batch=$first")
+        else
+            request_options+=(--comment="slurmy:v2:$GROUP_PUBLIC:batch_offset=$first")
+        fi
+        while :; do
+            [[ ! -f .stopped ]] || { echo 'Submission stopped before the next array.' >&2; exit 1; }
+            if [[ ${SLURMY_MANAGED_CONTROLLER:-0} == 1 ]] && (( $(date +%s) >= ${SLURMY_CONTROLLER_DEADLINE:-0} )); then
+                echo 'Submission waiting: yielding controller before its time limit'
+                exit 75
+            fi
+            if ! SUBMITTED=$(python3 "$JOB_DIR/submit_coordinator.py" attempt "$SLURMY_JOB_ID" "$MAX_OUTSTANDING" -- "${request_options[@]}" batch.sh); then
+                printf '%s\n' "$SUBMITTED" >&2
+                exit 1
+            fi
+            case "$SUBMITTED" in
+                ACCEPTED\|*) break ;;
+                WAIT\|*)
+                    echo "Submission waiting: ${SUBMITTED#WAIT|}; $submitted/$next_batch accepted"
+                    if [[ ${SLURMY_MANAGED_CONTROLLER:-0} == 1 ]]; then exit 75; fi
+                    sleep 5 ;;
+                *) printf 'Unexpected submit coordinator response: %s\n' "$SUBMITTED" >&2; exit 1 ;;
+            esac
+        done
+        id=${SUBMITTED#ACCEPTED|}; id=${id%%|*}
+        details=${SUBMITTED#*|*|}
+        # Old coordinators accepted one element and did not report a count.
+        accepted=1
+        if [[ "$details" =~ ^accepted=([0-9]+)\; ]]; then
+            accepted=${BASH_REMATCH[1]}
+        elif (( remaining > 1 )); then
+            echo "Cannot confirm the accepted array size: $SUBMITTED. Inspect SLURM before retrying." >&2; exit 1
+        fi
+        [[ "$id" =~ ^[0-9]+$ ]] && (( accepted >= 1 && accepted <= remaining )) || { echo "Invalid array acceptance: $SUBMITTED" >&2; exit 1; }
+        echo "Submission capacity: $details"
+        python3 - "$id" "$first" "$accepted" <<'PY'
+import csv,os,sys,time
+from pathlib import Path
+identifier,first,count=sys.argv[1],int(sys.argv[2]),int(sys.argv[3])
+with Path('submission.csv').open(newline='') as stream:fields=next(csv.reader(stream))
+with Path('submission.csv').open('a',newline='') as stream:
+    writer=csv.DictWriter(stream,fieldnames=fields)
+    for element in range(count):
+        writer.writerow(dict(slurm_job_id=identifier,offset=first,array_size=1,
+                             submitted_epoch=int(time.time()),batch_id=first+element,array_task_id=element))
+    stream.flush();os.fsync(stream.fileno())
+pending=Path('.resume-pending')
+if pending.exists():
+    accepted=set(range(first,first+count))
+    pending.write_text(''.join(line+'\n' for line in pending.read_text().splitlines() if line and int(line) not in accepted))
+PY
+        for ((index=0; index<accepted; index++)); do
+            row_batch=$((first+index))
+            if (( row_batch >= submitted )); then submitted=$((submitted+1)); fi
+            echo "Batch $row_batch: SLURM ${id}_$index ($submitted/$next_batch accepted)"
+        done
+        OUTSTANDING_IDS+=("$id")
+        printf 'submitting %s %s\n' "$submitted" "$next_batch" > submission.state
+        GROUP_IDS=("${GROUP_IDS[@]:accepted}")
+    done
+}
 for batch in batches/batch_*.sh; do
     SUBMISSION_PHASE="submitting ${batch##*/}"
     source "$batch"
@@ -309,64 +420,33 @@ for batch in batches/batch_*.sh; do
     PARALLEL=${PARALLEL:-${#TASK_IDS[@]}}
     SLOT_CORES=$MAX_CORES
     if (( EXCLUSIVE_CPU )); then SLOT_CORES=$((MAX_CPUS * CORES_PER_SOCKET)); fi
-    # A first-wave placement mismatch may be explicitly requeued five times by batch.sh.
-    # Append output so the log retains diagnostics from each placement attempt.
-    # Queue-visible metadata lets other Slurmy users see counts without access
-    # to this job's private directory. It contains no local paths or commands.
     ISOLATION=shared
     if (( EXCLUSIVE_CPU )); then ISOLATION=socket; fi
     if (( EXCLUSIVE_NODE )); then ISOLATION=node; fi
     OPTIONS=(--parsable --partition="$PARTITION" --job-name="$JOB_PREFIX"
-        --comment="slurmy:v1:calls=$TOTAL_CALLS:batches=$next_batch:cores=$MAX_CORES:isolation=$ISOLATION:batch=$BATCH_ID"
         --requeue --open-mode=append
         --nodes=1 --ntasks="$PARALLEL" --cpus-per-task="$((SLOT_CORES * MAX_THREADS_PER_CORE))"
         --threads-per-core="$MAX_THREADS_PER_CORE" --distribution=block:block
         --mem="${MEMORY_MIB}M" --time="$(( (WALL_SECONDS + 59) / 60 ))"
-        --array=0-0 --export="ALL,SLURMY_BATCH_ID=$BATCH_ID" --output=logs/slurm_%A_%a.out
-        --signal=B:TERM@30)
+        --output=logs/slurm_%A_%a.out --signal=B:TERM@30)
     if [[ -n "$RESERVATION" ]]; then OPTIONS+=(--reservation="$RESERVATION"); fi
     if [[ -n "$ACCOUNT" ]]; then OPTIONS+=(--account="$ACCOUNT"); fi
     if (( EXCLUSIVE_CPU )); then
-        # With CR_CORE, reject partially occupied sockets during selection.
-        # A socket-sized core count alone can otherwise span two partial sockets.
         OPTIONS+=(--ntasks-per-socket=1 --cores-per-socket="$CORES_PER_SOCKET"
             --sockets-per-node="$((PARALLEL * MAX_CPUS))")
     fi
     if (( EXCLUSIVE_NODE )); then OPTIONS+=(--exclusive); fi
-    while :; do
-        [[ ! -f .stopped ]] || { echo 'Submission stopped before the next batch.' >&2; exit 1; }
-        if [[ ${SLURMY_MANAGED_CONTROLLER:-0} == 1 ]] && (( $(date +%s) >= ${SLURMY_CONTROLLER_DEADLINE:-0} )); then
-            echo 'Submission waiting: yielding controller before its time limit'
-            exit 75
-        fi
-        if ! SUBMITTED=$(python3 "$JOB_DIR/submit_coordinator.py" attempt "$SLURMY_JOB_ID" "$MAX_OUTSTANDING" -- "${OPTIONS[@]}" batch.sh); then
-            printf '%s\n' "$SUBMITTED" >&2
-            exit 1
-        fi
-        case "$SUBMITTED" in
-            ACCEPTED\|*)
-                echo "Submission capacity: ${SUBMITTED#*|*|}"
-                break ;;
-            WAIT\|*)
-                echo "Submission waiting: ${SUBMITTED#WAIT|}; $submitted/$next_batch accepted"
-                if [[ ${SLURMY_MANAGED_CONTROLLER:-0} == 1 ]]; then exit 75; fi
-                sleep 5 ;;
-            *)
-                printf 'Unexpected submit coordinator response: %s\n' "$SUBMITTED" >&2
-                exit 1 ;;
-        esac
-    done
-    ID=${SUBMITTED#ACCEPTED|}
-    ID=${ID%%|*}
-    [[ "$ID" =~ ^[0-9]+$ ]] || { echo "Invalid sbatch ID: $SUBMITTED" >&2; exit 1; }
-    row=$(csv_row "$ID" "$BATCH_ID" 1 "$(date +%s)" "$BATCH_ID")
-    printf '%s\n' "$row" >> submission.csv
-    if [[ -f .resume-pending ]]; then sed -i "/^${BATCH_ID}$/d" .resume-pending; fi
-    OUTSTANDING_IDS+=("$ID")
-    if (( BATCH_ID >= submitted )); then submitted=$((submitted + 1)); fi
-    printf 'submitting %s %s\n' "$submitted" "$next_batch" > submission.state
-    echo "Batch $BATCH_ID: SLURM $ID ($submitted/$next_batch accepted)"
+    public="calls=$TOTAL_CALLS:batches=$next_batch:cores=$MAX_CORES:isolation=$ISOLATION"
+    printf -v signature '%q ' "${OPTIONS[@]}" "$public"
+    if (( ${#GROUP_IDS[@]} )) && { [[ "$signature" != "$GROUP_SIGNATURE" ]] || (( BATCH_ID != GROUP_IDS[${#GROUP_IDS[@]}-1]+1 || ${#GROUP_IDS[@]} >= MAX_ARRAY_TASKS )); }; then
+        submit_group
+    fi
+    if (( ${#GROUP_IDS[@]} == 0 )); then
+        GROUP_OPTIONS=("${OPTIONS[@]}"); GROUP_SIGNATURE=$signature; GROUP_PUBLIC=$public
+    fi
+    GROUP_IDS+=("$BATCH_ID")
 done
+submit_group
 printf 'complete %s %s\n' "$submitted" "$next_batch" > submission.state
 echo "Submission complete: $submitted/$next_batch batches accepted"
 echo "Remote directory: $JOB_DIR"

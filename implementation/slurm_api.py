@@ -206,7 +206,11 @@ def partition_nodes(host, partition):
 
 def active_jobs(host, max_age=5):
     active = {'PENDING', 'RUNNING', 'CONFIGURING', 'COMPLETING', 'SUSPENDED', 'RESIZING', 'STAGE_OUT'}
-    return [element for j in read(host, 'jobs', max_age=max_age)['jobs'] if set(j.get('job_state', [])) & active for element in array_elements(j)]
+    rows = read(host, 'jobs', max_age=max_age)['jobs']
+    elements = {job_id(e): e for j in rows for e in array_elements(j)}
+    elements.update({job_id(j): j for j in rows if number(j.get('array_task_id'), -1) >= 0})
+    parents = {str(number(j.get('array_job_id'))) for j in elements.values() if number(j.get('array_job_id'))}
+    return [j for identifier, j in elements.items() if identifier not in parents and set(j.get('job_state', [])) & active]
 
 
 def job_id(job):
@@ -315,45 +319,105 @@ def submission_queue(host):
     """
     config = settings(host)
     key = (host, config['url'], config['version'])
-    cached = _submission_metadata.get(key)
     states = request(host, 'jobs/state')['jobs']
-    if cached is None or time.monotonic()-cached['time'] > 300:
-        rows = request(host, 'jobs')['jobs']
-        cached = dict(time=time.monotonic(), jobs={job_id(j):j for j in rows})
-        _submission_metadata[key] = cached
-    def lookup(identifier):
-        return cached['jobs'].get(identifier) or cached['jobs'].get(identifier.split('_')[0])
-    unknown = [row for row in states if lookup(str(row['job_id'])) is None]
-    for row in unknown:
-        identifier = str(row['job_id'])
-        if lookup(identifier) is not None: continue
-        if not re.fullmatch(r'[0-9]+(?:_[0-9]+)?', identifier):
-            raise RuntimeError('Unrecognized SLURM state identifier; capacity is unknown.')
-        for job in request(host, 'job/'+identifier).get('jobs', []):
-            cached['jobs'][job_id(job)] = job
+    with _lock:
+        refresh_lock = _read_locks.setdefault(('submission-metadata', *key), threading.Lock())
+    with refresh_lock:
+        with _lock:
+            cached = _submission_metadata.get(key)
+            before = dict(cached['jobs']) if cached else {}
+            expired = cached is None or time.monotonic()-cached['time'] > 300
+        if expired:
+            rows = request(host, 'jobs')['jobs']
+            jobs = {job_id(j): j for j in rows}
+            with _lock:
+                # A submission can be remembered while the full GET is in flight.
+                # Preserve those additions/replacements when publishing the refresh.
+                current = _submission_metadata.get(key)
+                if current:
+                    jobs.update({identifier: job for identifier, job in current['jobs'].items()
+                                 if before.get(identifier) is not job})
+                _submission_metadata[key] = dict(time=time.monotonic(), jobs=jobs)
+        with _lock:
+            jobs = dict(_submission_metadata[key]['jobs'])
+
+    by_numeric = {}
+    by_parent = {}
+    def index_job(job):
+        by_numeric.setdefault(str(job['job_id']), job)
+        parent = number(job.get('array_job_id'))
+        if parent:
+            by_parent.setdefault(str(parent), job)
+    for job in jobs.values():
+        index_job(job)
+
+    def lookup(row):
+        identifier = job_id(row)
+        return (jobs.get(identifier) or by_numeric.get(str(row['job_id']))
+                or jobs.get(identifier.split('_')[0]) or by_parent.get(identifier.split('_')[0]))
+
     active = {'PENDING','RUNNING','CONFIGURING','COMPLETING','SUSPENDED','RESIZING','STAGE_OUT'}
-    result = []
+    normalized = {}
+    explicit = {}
     for row in states:
-        state = row.get('state', [])
+        identifier = str(row['job_id'])
+        if not re.fullmatch(r'[0-9]+(?:_[0-9]+)?', identifier):
+            # SLURM retains cancelled array summaries such as 1136022_*.
+            # They consume no slots; unknown active shapes still fail closed.
+            if not set(row.get('state', row.get('job_state', []))) & active:
+                continue
+            raise RuntimeError('Unrecognized SLURM state identifier; capacity is unknown.')
+        parent, separator, task = identifier.partition('_')
+        if separator:
+            row = {**row, 'array_job_id': int(parent), 'array_task_id': int(task)}
+        for element in array_elements(row):
+            normalized[job_id(element)] = element
+        if number(row.get('array_task_id'), -1) >= 0:
+            explicit[job_id(row)] = row
+    # Valid terminal elements override grouped pending rows in either order.
+    normalized.update(explicit)
+    parents = {str(number(r.get('array_job_id'))) for r in normalized.values()
+               if number(r.get('array_job_id'))}
+    result = {}
+    for identifier, row in normalized.items():
+        if identifier in parents: continue  # Parent placeholder is not an extra task.
+        state = row.get('state', row.get('job_state', []))
         if not set(state) & active: continue
-        job = lookup(str(row['job_id']))
+        job = lookup(row)
+        if job is None:
+            for resolved in request(host, 'job/'+identifier).get('jobs', []):
+                jobs[job_id(resolved)] = resolved
+                index_job(resolved)
+                with _lock:
+                    current = _submission_metadata.get(key)
+                    if current is not None:
+                        current['jobs'][job_id(resolved)] = resolved
+            job = lookup(row)
         if job is None:
             raise RuntimeError('Could not resolve an active SLURM task; submission capacity is unknown.')
-        task = str(row['job_id']).partition('_')[2]
-        result.append({**job, 'job_state':state, **({'array_task_id':dict(set=True, number=int(task))} if task else {})})
-    return result
+        element = {**job, 'job_state': state}
+        if number(row.get('array_job_id')):
+            element.update(array_job_id=row['array_job_id'], array_task_id=row.get('array_task_id'))
+        result[job_id(element)] = element
+    return list(result.values())
 
 
 def remember_submission(host, identifier, payload):
     config = settings(host)
-    cached = _submission_metadata.get((host, config['url'], config['version']))
-    if cached is None: return
+    key = (host, config['url'], config['version'])
+    with _lock:
+        if key not in _submission_metadata: return
     fields = payload['job']
     job = dict(job_id=int(identifier), user_name=credentials(host)['user'],
-               current_working_directory=fields['current_working_directory'], comment=fields.get('comment',''))
-    if fields.get('array') == '0-0':
-        job.update(array_job_id=dict(set=True, number=int(identifier)), array_task_id=dict(set=True, number=0))
-    cached['jobs'][job_id(job)] = job
+               current_working_directory=fields['current_working_directory'], comment=fields.get('comment',''),
+               account=fields.get('account', ''), name=fields.get('name', ''))
+    if fields.get('array'):
+        job.update(array_job_id=int(identifier), array_task_string=fields['array'])
+    elements = {job_id(element): element for element in array_elements(job)}
+    with _lock:
+        cached = _submission_metadata.get(key)
+        if cached is not None:
+            cached['jobs'].update(elements)
 
 
 def array_elements(job):
@@ -361,7 +425,7 @@ def array_elements(job):
     specification = job.get('array_task_string') or ''
     if not specification or number(job.get('array_task_id'), -1) >= 0 or not number(job.get('array_job_id')):
         return [job]
-    elements = []
+    elements = {}
     for part in specification.split('%', 1)[0].split(','):
         match = re.fullmatch(r'(\d+)(?:-(\d+)(?::(\d+))?)?', part)
         if not match: raise RuntimeError('Cannot interpret the pending SLURM array indices.')
@@ -370,5 +434,5 @@ def array_elements(job):
         if step < 1 or last < first or (last-first)//step > 100000:
             raise RuntimeError('Invalid or excessive SLURM array range.')
         for index in range(first, last+1, step):
-            elements.append({**job, 'array_task_id':dict(set=True, number=index)})
-    return elements
+            elements[index] = {**job, 'array_task_id':dict(set=True, number=index)}
+    return list(elements.values())

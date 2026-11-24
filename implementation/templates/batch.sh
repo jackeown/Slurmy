@@ -6,7 +6,13 @@ set -euo pipefail
 export JOB_DIR=${SLURM_SUBMIT_DIR:?}
 cd "$JOB_DIR"
 source ./csv.sh
-BATCH_ID=${SLURMY_BATCH_ID:-${SLURM_ARRAY_TASK_ID:?}}
+if [[ -n ${SLURMY_BATCH_OFFSET+x} ]]; then
+    [[ "$SLURMY_BATCH_OFFSET" =~ ^[0-9]+$ && "${SLURM_ARRAY_TASK_ID:-}" =~ ^[0-9]+$ ]] || { echo 'Invalid array batch mapping.' >&2; exit 1; }
+    BATCH_ID=$((SLURMY_BATCH_OFFSET + SLURM_ARRAY_TASK_ID))
+else
+    # Legacy one-element arrays exported the complete batch ID explicitly.
+    BATCH_ID=${SLURMY_BATCH_ID:-${SLURM_ARRAY_TASK_ID:?}}
+fi
 source "$(printf 'batches/batch_%06d.sh' "$BATCH_ID")"
 bundle=$(printf '%s/call-bundles/batch_%06d.tar.gz' "$JOB_DIR" "$BATCH_ID")
 if [[ -f "$bundle" ]]; then

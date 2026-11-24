@@ -224,13 +224,8 @@ def unfinished_call(job, task_id, progress, batch_records=None):
     if batch_id is None:
         batch_id = task_id // job.batch_size
     if batch_records is None:
-        records = [record for record in job.slurm
-                   if record.array_task_id.isdigit()
-                   and job.submission_offsets.get(record.array_job_id, 0) + int(record.array_task_id) == batch_id]
-        records.sort(key=lambda record: record.source != 'queue')
-        record = records[0] if records else None
-    else:
-        record=batch_records.get(batch_id)
+        batch_records=batch_allocations(job)
+    record=batch_records.get(batch_id)
     log = ''
     if record:
         log = job.logs.get(f'slurm_{record.array_job_id}_{record.array_task_id}.out', '')
@@ -269,7 +264,8 @@ def batch_allocations(job):
     cached=getattr(job,"_batch_allocations",None)
     if cached is not None:return cached
     batch_records={}
-    for record in sorted(job.slurm,key=lambda item:item.source!='queue'):
+    attempts={parent:index for index,parent in enumerate(job.submission_offsets)}
+    for record in sorted(job.slurm,key=lambda item:(item.source!='queue',-attempts.get(item.array_job_id,-1))):
         if record.array_task_id.isdigit():
             batch=job.submission_offsets.get(record.array_job_id,0)+int(record.array_task_id)
             batch_records.setdefault(batch,record)

@@ -1178,11 +1178,15 @@ def parse_snapshot(host: str, data: bytes) -> ClusterSnapshot:
             if submission_kind == "SUBMISSION_CSV"
             else [line.split("\t") for line in submission_payload.splitlines()]
         )
-        for fields in submission_rows[1:]:
-            if len(fields) >= 2 and fields[1].isdigit():
-                job.submission_offsets[fields[0]] = int(fields[1])
-                if len(fields) >= 5 and fields[4].isdigit():
-                    job.submitted_batches.add(int(fields[4]))
+        # Read by column name: new per-element rows share a parent and group offset;
+        # historical CSV/TSV rows retain their original offset semantics.
+        for row in (dict(zip(submission_rows[0], fields)) for fields in submission_rows[1:]):
+            parent, offset = row.get('slurm_job_id', ''), row.get('offset', '')
+            if parent and offset.isdigit():
+                job.submission_offsets[parent] = int(offset)
+                batch = row.get('batch_id', '')
+                if batch.isdigit():
+                    job.submitted_batches.add(int(batch))
 
         if job_id == detail_job:
             results = parse_tsv_results(detail_tsv.get(job_id, ""))

@@ -17,15 +17,24 @@ def current_calls(lines, home):
         if directory.parent!=root or directory.is_symlink(): continue
         match=re.search(r':batch=(\d+)(?:$|[:;])',comment)
         batch=int(match[1]) if match else None
+        parent,_,element=identifier.partition('_')
+        offset=re.search(r'^slurmy:v2:.*:batch_offset=(\d+)$',comment)
+        if offset and element.isdigit():
+            batch=int(offset[1])+int(element)
         if batch is None:
             if directory not in submissions:
                 try:
                     with (directory/'submission.csv').open(newline='') as stream: submissions[directory]=list(csv.DictReader(stream))
                 except OSError: submissions[directory]=[]
-            parent,_,element=identifier.partition('_')
             for item in submissions[directory]:
                 if item.get('slurm_job_id')==parent:
-                    batch=int(item.get('batch_id') or item.get('offset') or 0)+int(element or 0);break
+                    explicit=item.get('array_task_id', '')
+                    if explicit:
+                        if explicit != element: continue
+                        batch=int(item['batch_id'])
+                    else:
+                        batch=int(item.get('batch_id') or item.get('offset') or 0)+int(element or 0)
+                    break
         if batch is None: continue
         for path in [directory/'progress'/f'batch_{batch:06d}.csv',directory/'progress'/f'batch_{batch:06d}.tsv',directory/'progress'/f'chunk_{batch:06d}.tsv']:
             try:

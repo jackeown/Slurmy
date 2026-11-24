@@ -673,3 +673,30 @@ children receive them without changing other pairs, the resource limiter or buil
 jobs. Solver commands can reference them normally, such as `"$GREETING"`. They
 are preserved in `workflow.json`, the optional `environment` CSV column, copied
 configurations and portable workflow bundles. Older CSVs may omit the column.
+
+## Submitting Batches as SLURM Arrays
+
+Each Slurmy batch remains an independently scheduled SLURM array element. The
+submitter combines consecutive batches only when their complete generated SLURM
+requests match, including memory, wall time, cores, placement, account and
+reservation. Batch membership, commands, limits and result filenames are unchanged.
+Different requests and gaps in a resume worklist start separate arrays. Arrays
+are split at the cluster's `MaxArraySize` / `max_array_tasks` limits and at a
+conservative maximum of 1000 elements per submission.
+
+The coordinator counts **elements**, including pending elements, against the
+workflow window, account limits and fair-share targets. It trims the next array
+to fit currently available capacity. A definite submission-limit rejection may
+be retried as a smaller array; an ambiguous transport failure is not replayed.
+Arrays therefore reduce submission requests without bypassing the 50-job limit
+on the default account. The laptop must still remain available until all batches
+have been accepted; accepted elements continue independently of the laptop.
+
+`submission.csv` retains one row per accepted batch. The original five columns
+remain, with an additional `array_task_id` column recording the local element
+index. `offset + array_task_id` gives the stable Slurmy batch ID; several rows
+can share the same parent SLURM ID and offset. Old five-column rows remain valid.
+The unique scheduler identity and log name use the parent **and** element index
+(e.g. `12345_2`, `slurm_12345_2.out`). Batch progress, results, downloads and
+stop/resume continue to use each batch's original identity. Resume upgrades the
+small scheduler helper scripts for older jobs and preserves completed results.

@@ -201,10 +201,15 @@ def parse_status(host, partition, output):
                      solver_isolation=active_calls.get(job_id, {}).get('isolation') if slurmy else None)
         if comment == 'slurmy-controller:v1':
             entry.update(controller=True, name='Submission Controller')
-        public = re.fullmatch(r'slurmy:v1:calls=(?P<calls>\d+):batches=(?P<batches>\d+)(?::cores=(?P<cores>\d+))?(?::isolation=(?P<isolation>shared|socket|node))?:batch=(?P<batch>\d+)', comment)
-        if public and slurmy:
+        public = re.fullmatch(r'slurmy:(?P<version>v1|v2):calls=(?P<calls>\d+):batches=(?P<batches>\d+)(?::cores=(?P<cores>\d+))?(?::isolation=(?P<isolation>shared|socket|node))?:(?P<key>batch|batch_offset)=(?P<batch>\d+)', comment)
+        if public and slurmy and (public['version'], public['key']) in {('v1', 'batch'), ('v2', 'batch_offset')}:
             entry.update(jobpairs=int(public.group('calls')), batches=int(public.group('batches')),
-                         batch_index=int(public.group('batch')), metadata_source='SLURM comment')
+                         metadata_source='SLURM comment')
+            element = job_id.partition('_')[2]
+            if public['version'] == 'v1':
+                entry['batch_index'] = int(public['batch'])
+            elif element.isdigit():
+                entry['batch_index'] = int(public['batch']) + int(element)
             if public.group('cores'):
                 entry['solver_cores'] = int(public.group('cores'))
             if public.group('isolation'):
