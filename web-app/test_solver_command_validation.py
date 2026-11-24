@@ -43,3 +43,27 @@ class SolverCommandValidationTests(unittest.TestCase):
         self.assertIn('does not exist',response.json['error'])
         self.assertEqual(check("'./solver with spaces' {{problem}}").status_code,200)
         self.assertEqual(check('./missing {{problem}}',build_on_cluster=True).status_code,200)
+
+    def test_postprocessor_http_checks_interpreter_script_without_execution(self):
+        with patch.object(workflows,'migrate_user_runs'):
+            client=create_app().test_client()
+        with client.session_transaction() as session:session['csrf']='test'
+        script=self.root/'parser.py';script.write_text('raise RuntimeError("must not run")')
+        def check(command):
+            return client.post('/api/validate-postprocessor',json=dict(command=command,directory=str(self.root)),headers={'X-CSRF-Token':'test'})
+        self.assertEqual(check('python3 parser.py').status_code,200)
+        self.assertEqual(check('MODE=test python3 parser.py').status_code,200)
+        response=check('python3 missing.py')
+        self.assertEqual(response.status_code,400,response.json)
+        self.assertIn('existing file',response.json['error'])
+        self.assertEqual(check("'./solver with spaces'").status_code,200)
+        self.assertEqual(check('./missing').status_code,400)
+
+    def test_postprocessor_entrypoint_must_be_inside_folder_or_declared_resource(self):
+        temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
+        outside=Path(temp.name);script=outside/'parser.py';script.write_text('print("{}")')
+        with self.assertRaisesRegex(ValueError,'inside its folder'):
+            workflows.validate_postprocessor_command('python3 '+str(script),str(self.root))
+        workflows.validate_postprocessor_command('python3 '+str(script),str(self.root),allowed_roots=[str(outside)])
+        with self.assertRaisesRegex(ValueError,'list of directories'):
+            workflows.validate_postprocessor_command('python3 '+str(script),str(self.root),allowed_roots='/')

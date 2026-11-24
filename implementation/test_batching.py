@@ -199,7 +199,7 @@ fi
                 expected_memory=16000 if 0 in pair_memory else max(pair_memory)//2**20+128
                 self.assertEqual(output,'2 1 '+str(expected_memory))
                 pair_wall=[item.get('wc_limit',limits[0]) for item in (overrides or [{},{}])]
-                expected_time=(60+sum(value+80 for value in pair_wall)+59)//60 if all(pair_wall) else 10080
+                expected_time=(60+sum(value+80+35 for value in pair_wall)+59)//60 if all(pair_wall) else 10080
                 self.assertIn('--time='+str(expected_time),options)
                 self.assertIn('--mem='+str(expected_memory)+'M',options)
                 self.assertEqual(len(list((job/'batches').glob('batch_*.sh'))),1)

@@ -59,7 +59,10 @@ def main():
                     updates = {name: base64.b64encode(path.read_bytes()).decode('ascii') for name, path in (
                         ('submit_coordinator.py', templates.with_name('submit_coordinator.py')),
                         ('remote_submit.sh', templates/'remote_submit.sh'), ('call.sh', templates/'call.sh'),
-                        ('batch.sh', templates/'batch.sh'))}
+                        ('batch.sh', templates/'batch.sh'),
+                        ('postprocessing.py', templates.with_name('postprocessing.py')),
+                        ('default_postprocessor.py', templates.parent/'postprocessors/default_szs.py'),
+                        ('szs.py', templates.with_name('szs.py')))}
                     from szs import shell_library
                     updates['szs.sh'] = base64.b64encode(shell_library().encode()).decode('ascii')
                     stream.write(('set -euo pipefail\n'

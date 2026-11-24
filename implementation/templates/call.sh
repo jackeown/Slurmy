@@ -132,27 +132,58 @@ if [[ -f "$WATCHER_LOG" ]] && grep -Fq 'Maximum memory exceeded:' "$WATCHER_LOG"
     # limit breach and terminating the child. The watcher is authoritative.
     memory_out=true
 fi
-szs_status=
-szs_status=$(sed -nE 's/.*SZS[[:space:]]+status[[:space:]]+([A-Za-z][A-Za-z0-9_-]*(\([[:space:]]*[A-Za-z]+[[:space:]]*,[[:space:]]*[A-Za-z]+[[:space:]]*\))?).*/\1/Ip' \
-    "$SOLVER_LOG" "$SOLVER_STDERR_LOG" "$LIMITER_STDOUT_LOG" 2>/dev/null | tail -n 1 || true)
-szs_output=$(sed -nE 's/.*SZS[[:space:]]+output[[:space:]]+(start|end)[[:space:]]+([A-Za-z][A-Za-z0-9_-]*).*/\2/Ip' \
-    "$SOLVER_LOG" "$SOLVER_STDERR_LOG" "$LIMITER_STDOUT_LOG" 2>/dev/null | tail -n 1 || true)
-# Solver-enforced limits can fire before the external limiter. Vampire's
-# non-portfolio mode reports a termination reason without an SZS status.
-szs_status=$(szs_status_name "$szs_status")
-szs_output=$(szs_data_name "$szs_output")
-szs_kind=$(szs_execution "$szs_status")
+# Postprocessing sees only the raw prover streams and cannot overwrite metrics.
+# Its failures are saved independently from the solver's execution result.
+postprocess_data='{}'; postprocess_return_code=; postprocess_error=; postprocess_status=
+szs_status=; szs_output=; szs_kind=
+solver_interrupted=$interrupted
+if (( ! interrupted )) && [[ ${POSTPROCESSOR_MODE:-default} != none ]]; then
+    export POSTPROCESSOR_LOG="$work/$stem.postprocessor.log"
+    export POSTPROCESSOR_STDERR_LOG="$work/$stem.postprocessor-stderr.log"
+    [[ -f "$SOLVER_LOG" ]] || : > "$SOLVER_LOG"
+    [[ -f "$SOLVER_STDERR_LOG" ]] || : > "$SOLVER_STDERR_LOG"
+    post_timeout=${POSTPROCESSOR_TIMEOUT:-30}
+    if [[ -f "$CALL_DIR/postprocess.sh" ]]; then
+        post_command=(bash "$CALL_DIR/postprocess.sh" "$SOLVER_LOG" "$SOLVER_STDERR_LOG")
+    else
+        # Old prepared pairs have no per-pair launcher; the upgraded default
+        # still replaces hardcoded recognition when an old job is resumed.
+        post_command=(python3 "$JOB_DIR/default_postprocessor.py" "$SOLVER_LOG" "$SOLVER_STDERR_LOG")
+    fi
+    setsid timeout --signal=TERM --kill-after=5 "$post_timeout" "${post_command[@]}" > "$POSTPROCESSOR_LOG" 2> "$POSTPROCESSOR_STDERR_LOG" &
+    active=$!
+    # A stop can arrive between selecting the command and assigning its PID.
+    # Recheck after launch so that boundary cannot leave analysis running.
+    if (( interrupted )); then kill -TERM -- "-$active" 2>/dev/null || kill -TERM "$active" 2>/dev/null || true; fi
+    publish_progress postprocessing
+    postprocess_return_code=0
+    wait "$active" || postprocess_return_code=$?
+    if (( interrupted )); then
+        kill -KILL -- "-$active" 2>/dev/null || true
+        wait "$active" 2>/dev/null || true
+        postprocess_error='Postprocessing interrupted.'
+    elif (( postprocess_return_code == 124 || postprocess_return_code == 137 )); then
+        postprocess_error="Postprocessor timed out after $post_timeout seconds."
+    elif (( postprocess_return_code != 0 )); then
+        postprocess_error="Postprocessor exited with status $postprocess_return_code. See postprocessor stderr."
+    fi
+    active=
+    if python3 "$JOB_DIR/postprocessing.py" "$POSTPROCESSOR_LOG" > "$work/postprocess.fields" 2>> "$POSTPROCESSOR_STDERR_LOG"; then
+        mapfile -t post_fields < "$work/postprocess.fields"
+        postprocess_data=${post_fields[0]:-\{\}}
+        szs_status=${post_fields[1]:-}; szs_output=${post_fields[2]:-}; szs_kind=${post_fields[3]:-}
+        postprocess_status=${post_fields[4]:-}
+        printf '%s\n' "$postprocess_data" > "$work/$stem.postprocess.json"
+    else
+        postprocess_error="${postprocess_error:+$postprocess_error }Could not parse postprocessor data. See postprocessor stderr."
+    fi
+fi
+# Cancelling analysis must not erase an already finished prover result.
+if (( interrupted && ! solver_interrupted )); then interrupted=0; fi
 case "$szs_kind" in
     time-limit) timed_out=true ;;
     memory-limit) memory_out=true ;;
 esac
-if [[ -z "$szs_status" ]]; then
-    if grep -Eq '(^|[[:space:]])%[[:space:]]+Termination reason:[[:space:]]+Time limit[[:space:]]*$' "$SOLVER_LOG" "$SOLVER_STDERR_LOG" 2>/dev/null; then
-        timed_out=true
-    elif grep -Eq '(^|[[:space:]])%[[:space:]]+Termination reason:[[:space:]]+Memory limit[[:space:]]*$' "$SOLVER_LOG" "$SOLVER_STDERR_LOG" 2>/dev/null; then
-        memory_out=true
-    fi
-fi
 if (( interrupted )); then status=interrupted; complete=false
 elif [[ "$memory_out" == true ]]; then status=memory-limit
 elif [[ "$timed_out" == true ]]; then status=time-limit
@@ -166,9 +197,9 @@ archive="batch_${BATCH_ID}_${stem}_${SLURM_JOB_ID:-local}_$(date +%s).tar.gz"
 tar -czf "$JOB_DIR/results/.$archive.tmp" -C "$work" .
 mv "$JOB_DIR/results/.$archive.tmp" "$JOB_DIR/results/$archive"
 result=$(printf '%s/results/batch_%06d_task_%09d.csv' "$JOB_DIR" "$BATCH_ID" "$TASK_ID")
-result_row=$(csv_row "$TASK_ID" "$complete" "$status" "$code" "$wall" "$cpu" "$user" "$system" "$cpu_usage" "$max_vm" "$memory" "${timed_out:-false}" "${memory_out:-false}" "$TASK_KEY" "$archive" "$szs_status" "$szs_output")
+result_row=$(csv_row "$TASK_ID" "$complete" "$status" "$code" "$wall" "$cpu" "$user" "$system" "$cpu_usage" "$max_vm" "$memory" "${timed_out:-false}" "${memory_out:-false}" "$TASK_KEY" "$archive" "$szs_status" "$szs_output" "$postprocess_data" "$postprocess_return_code" "$postprocess_error" "$postprocess_status")
 {
-    csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output
+    csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output postprocess_data postprocess_return_code postprocess_error postprocess_status
     printf '%s\n' "$result_row"
 } > "$result.tmp"
 mv "$result.tmp" "$result"
@@ -179,9 +210,10 @@ if {
     if [[ -f "$index" ]]; then
         # A resumed call replaces its earlier incomplete row in the compact
         # monitor index; otherwise it would be counted twice.
-        awk -F, -v id="$TASK_ID" '{field=$1; gsub(/"/, "", field); if (NR==1 || field!=id) print}' "$index"
+        csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output postprocess_data postprocess_return_code postprocess_error postprocess_status
+        awk -F, -v id="$TASK_ID" '{field=$1; gsub(/"/, "", field); if (NR>1 && field!=id) print}' "$index"
     else
-        csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output
+        csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output postprocess_data postprocess_return_code postprocess_error postprocess_status
     fi
     printf '%s\n' "$result_row"
 } > "$index.tmp" && mv "$index.tmp" "$index"; then

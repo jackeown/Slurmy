@@ -70,6 +70,18 @@ class StarExecExportTests(unittest.TestCase):
             self.assertEqual(export(source,target,'test-job')[0],names)
             self.assertEqual(len(list(source.iterdir())),3)
 
+    def test_custom_status_and_fourth_archive_preserve_starexec_semantics(self):
+        row = summary_row(dict(complete='true', status='custom status', execution_status='memory-limit'), 'problem')
+        self.assertEqual(row['status'], 'memout')
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = self.fixture(root)
+            with tarfile.open(source / 'test_postprocessing.tgz', 'w:gz'):
+                pass
+            names, done, total = export(source, root / 'out', 'four-files')
+            self.assertEqual((done, total), (3, 4))
+            self.assertEqual(len(names), 2)
+
     def test_native_eof_and_space_separated_timestamps_are_preserved(self):
         native=b'0.00/0.01   # SZS status Theorem\n0.00/0.01\t# SZS output start CNFRefutation\n0.01/0.02\tEOF\n'
         with tempfile.TemporaryDirectory() as folder:

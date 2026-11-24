@@ -24,6 +24,57 @@ class WorkflowFileTests(unittest.TestCase):
         workflow_files.replace(self.directory,'configurations.csv',workflows.csv_text(rows,tuple(rows[0])))
         self.assertEqual(json.loads((self.directory/'workflow.json').read_text())['configurations'][0]['cpu_limit'],'8')
 
+    def test_postprocessor_persists_across_json_csv_and_http_replacement(self):
+        post=self.root/'postprocessing';post.mkdir()
+        (post/'parse.py').write_text('print("{}")')
+        definition=json.loads((self.directory/'workflow.json').read_text())
+        definition['configurations'][0].update(postprocessor_override=True,postprocessor_mode='custom',postprocessor_directory=str(post),
+            postprocessor_command='python3 parse.py',postprocessor_timeout=42)
+        client=create_app().test_client()
+        with client.session_transaction() as session:session['csrf']='post-token'
+        response=client.post('/api/workflows/files/replace',query_string={'directory':str(self.directory)},
+            headers={'X-CSRF-Token':'post-token'},data={'file':'workflow.json',
+                'replacement':(io.BytesIO(json.dumps(definition).encode()),'workflow.json')})
+        self.assertEqual(response.status_code,200,response.get_json())
+        self.assertEqual(self.rows('configurations.csv')[0]['postprocessor_command'],'python3 parse.py')
+        self.assertEqual(self.rows('jobpairs.csv')[0]['postprocessor_timeout'],'42')
+        rows=self.rows('configurations.csv');rows[0].update(postprocessor_mode='none',postprocessor_timeout='30')
+        workflow_files.replace(self.directory,'configurations.csv',workflows.csv_text(rows,tuple(rows[0])))
+        self.assertEqual(workflows.decisions(self.directory)['configurations'][0]['postprocessor_mode'],'none')
+        self.assertEqual(self.rows('jobpairs.csv')[0]['postprocessor_mode'],'none')
+
+    def test_workflow_default_resolves_csv_and_override_survives_regeneration(self):
+        post=self.root/'post';post.mkdir();(post/'parse.py').write_text('print("{}")')
+        data=workflows.decisions(self.directory)
+        data['postprocessor']=dict(mode='custom',directory=str(post),command='python3 parse.py',timeout=50)
+        first=data['configurations'][0];first['postprocessor_override']=False
+        data['configurations'].append({**first,'solver_name':'Override','postprocessor_override':True,
+                                      'postprocessor_mode':'none','postprocessor_timeout':30})
+        workflows.save(data,self.directory)
+        rows=self.rows('configurations.csv')
+        self.assertEqual([r['postprocessor_mode'] for r in rows],['custom','none'])
+        self.assertEqual(rows[0]['postprocessor_timeout'],'50')
+        self.assertNotIn('postprocessor_override',rows[0])
+        saved=workflows.decisions(self.directory)
+        self.assertFalse(saved['configurations'][0]['postprocessor_override'])
+        self.assertTrue(saved['configurations'][1]['postprocessor_override'])
+        saved['postprocessor']['timeout']=80;workflows.save(saved,self.directory)
+        self.assertEqual(self.rows('jobpairs.csv')[0]['postprocessor_timeout'],'80')
+        self.assertEqual(workflows.copyable_solver_configurations(self.directory)[0]['postprocessor_timeout'],'80')
+        self.assertTrue(workflows.copyable_solver_configurations(self.directory)[0]['postprocessor_override'])
+        # Importing resolved CSV treats every row as an explicit override.
+        workflow_files.replace(self.directory,'configurations.csv',(self.directory/'configurations.csv').read_text())
+        self.assertTrue(all(c['postprocessor_override'] for c in workflows.decisions(self.directory)['configurations']))
+
+    def test_invalid_postprocessor_never_replaces_definition(self):
+        original=self.snapshot()
+        data=workflows.decisions(self.directory)
+        data['configurations'][0].update(postprocessor_override=True,postprocessor_mode='custom',postprocessor_directory=str(self.root),
+                                       postprocessor_command='python3 missing.py')
+        with self.assertRaisesRegex(ValueError,'existing file'):
+            workflows.save(data,self.directory)
+        self.assertEqual(self.snapshot(),original)
+
     def test_legacy_hidden_json_is_read_and_new_saves_publish_visible_json(self):
         path=self.directory/'workflow.json';legacy=self.directory/'.slurmy-workflow.json'
         path.rename(legacy)

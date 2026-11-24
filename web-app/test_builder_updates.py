@@ -30,6 +30,10 @@ class BuilderUpdateTests(unittest.TestCase):
         self.assertIn(b'id="batch-explanation-dialog"',response.data)
         self.assertNotIn(b'name="axiom_mode"',response.data)
         self.assertNotIn(b'Custom axiom globs',response.data)
+        self.assertIn(b'id="workflow-postprocessing"',response.data)
+        self.assertIn(b'name="workflow_postprocessor_mode"',response.data)
+        self.assertIn(b'name="postprocessor_override"',response.data)
+        self.assertIn(b'data-postprocessor-override hidden',response.data)
         self.assertIn(b'tptp://TPTP-v10.0.0/Axioms/**/*.ax',response.data)
         self.assertIn(b'Add another axiom source',response.data)
 
@@ -63,6 +67,16 @@ class BuilderUpdateTests(unittest.TestCase):
                 response=self.client.get('/api/axiom-sources',query_string=dict(directory=str(self.workflow)))
             self.assertEqual(response.status_code,200)
             self.assertEqual(response.json['globs'],expected)
+
+    def test_suggestion_resolves_workflow_postprocessor_before_budgeting(self):
+        node=dict(sockets=2,cores_per_socket=32,threads_per_core=1)
+        config=dict(cores=1,threads_per_core=1,wc_limit=100,postprocessor_override=False,
+                    postprocessor_mode='default',postprocessor_timeout=30)
+        with patch.object(batch,'partition_nodes',return_value=[node]),patch.object(workflows,'problem_glob',return_value=('pattern',['a'])):
+            result=batch.suggest(dict(host='datalab',partition='CPU-amd',mode='interactive',configurations=[config],globs=['pattern'],
+                postprocessor=dict(mode='custom',directory='/parser',command='python3 parse.py',timeout=600)))
+        self.assertEqual(result['max_postprocessor_seconds'],605)
+        self.assertEqual(result['max_pair_budget_seconds'],785)
 
     def test_unified_suggestion_uses_both_balancing_and_actual_batch_groups(self):
         node=dict(sockets=2,cores_per_socket=32,threads_per_core=1)

@@ -19,6 +19,28 @@ spec.loader.exec_module(sync)
 
 
 class SyncRegressions(unittest.TestCase):
+    def test_appended_postprocess_fields_survive_verbose_reader(self):
+        for kind in ('csv', 'jsonl', 'tsv'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                (root / 'results').mkdir()
+                row = dict.fromkeys(RESULT_FIELDS, '')
+                row.update(task_id='0', complete='true', status='ok',
+                           postprocess_data=json.dumps({'status': 'sat', 'metric': 'quoted,value'}),
+                           postprocess_return_code='0', postprocess_error='diagnostic', postprocess_status='sat')
+                path = root / 'results' / ('pair.' + kind)
+                if kind == 'jsonl':
+                    path.write_text(json.dumps(row) + '\n')
+                else:
+                    with path.open('w', newline='') as stream:
+                        writer = csv.DictWriter(stream, fieldnames=RESULT_FIELDS,
+                                                delimiter='\t' if kind == 'tsv' else ',')
+                        writer.writeheader()
+                        writer.writerow(row)
+                record = sync.read_result_records(root)[0]
+                for key in RESULT_FIELDS[17:]:
+                    self.assertEqual(record[key], row[key])
+
     def test_job_id_rejected_before_ssh_or_shell_expansion(self):
         for value in ('$(touch marker)', 'job;true', 'a b', '../job', ''):
             with self.subTest(value=value), patch.object(sync.subprocess, 'run') as run:

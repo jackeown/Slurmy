@@ -47,6 +47,105 @@ class ExportTests(unittest.TestCase):
                 writer.writerow(row)
         (self.root / 'manifest.jsonl').write_text(''.join(json.dumps(row) + '\n' for row in definitions))
 
+    def add_postprocessing(self, task_id, data, raw=b'arbitrary,output\nnot JSON\x00\xff'):
+        row = self.records[task_id]
+        row.update(postprocess_data=json.dumps(data), postprocess_return_code='7',
+                   postprocess_error='diagnostic, with\nnewline')
+        path = self.root / 'results' / row['archive']
+        with tarfile.open(path) as archive:
+            contents = [(m.name, archive.extractfile(m).read()) for m in archive if m.isfile()]
+        with tarfile.open(path, 'w:gz') as archive:
+            for name, content in contents + [(f'task_{task_id}.postprocessor.log', raw),
+                                             (f'task_{task_id}.postprocessor-stderr.log', b'diagnostic\n')]:
+                member = tarfile.TarInfo(name)
+                member.size = len(content)
+                archive.addfile(member, io.BytesIO(content))
+        csv_path = self.root / 'results' / f'batch_000000_task_{task_id:09d}.csv'
+        with csv_path.open('w', newline='') as stream:
+            writer = csv.DictWriter(stream, fieldnames=remote_export.RESULT_FIELDS)
+            writer.writeheader()
+            writer.writerow(row)
+        return raw
+
+    def test_postprocess_csv_union_quoting_status_and_collisions(self):
+        self.add_postprocessing(0, {'status': 'custom,\n"status"', 'solver': 'custom solver',
+                                  'postprocess.solver': 'literal prefix',
+                                  'postprocess.solver.2': 'literal suffix',
+                                  'postprocess_data': 'custom raw name',
+                                  'execution_status': 'custom execution',
+                                  'metric': 'quoted,\n"value"'})
+        self.add_postprocessing(1, {'second': 42})
+        remote_export.export(self.root)
+        with (self.root / 'exports/study_results-summary.csv').open(newline='') as stream:
+            reader = csv.DictReader(stream)
+            rows = list(reader)
+            self.assertEqual(len(reader.fieldnames), len(set(reader.fieldnames)))
+        row = rows[0]
+        self.assertNotIn('postprocess_data', row)
+        self.assertEqual(row['status'], 'custom,\n"status"')
+        self.assertEqual(row['execution_status'], 'ok')
+        self.assertEqual(row['solver'], 'E_solver + strategy')
+        self.assertEqual(row['postprocess.solver'], 'literal prefix')
+        self.assertEqual(row['postprocess.solver.2'], 'literal suffix')
+        self.assertEqual(row['postprocess.solver.3'], 'custom solver')
+        self.assertEqual(row['postprocess.postprocess_data'], 'custom raw name')
+        self.assertEqual(row['postprocess.execution_status'], 'custom execution')
+        self.assertEqual(row['metric'], 'quoted,\n"value"')
+        self.assertEqual(row['postprocess_return_code'], '7')
+        self.assertEqual(row['postprocess_error'], 'diagnostic, with\nnewline')
+        self.assertEqual(rows[1]['second'], '42')
+        self.assertEqual(rows[2]['second'], '')
+        self.assertEqual(rows[2]['status'], 'ok')
+
+    def test_raw_status_column_fallback_and_data_precedence(self):
+        self.assertEqual(remote_export.RESULT_FIELDS[20], 'postprocess_status')
+        self.add_postprocessing(0, {'status': 'sat'})
+        for task_id, raw_status in ((0, 'Theorem'), (1, 'sat')):
+            row = self.records[task_id]
+            row['postprocess_status'] = raw_status
+            path = self.root / 'results' / f'batch_000000_task_{task_id:09d}.csv'
+            with path.open('w', newline='') as stream:
+                writer = csv.DictWriter(stream, fieldnames=remote_export.RESULT_FIELDS)
+                writer.writeheader()
+                writer.writerow(row)
+        remote_export.export(self.root)
+        with (self.root / 'exports/study_results-summary.csv').open(newline='') as stream:
+            rows = list(csv.DictReader(stream))
+        self.assertEqual([row['status'] for row in rows[:2]], ['sat', 'sat'])
+        self.assertEqual([row['execution_status'] for row in rows[:2]], ['ok', 'ok'])
+
+    def test_postprocessing_archive_preserves_arbitrary_streams_compact_and_verbose(self):
+        raw = self.add_postprocessing(0, {})
+        remote_export.export(self.root)
+        sync.consolidate_solver_streams(self.root, self.records)
+        for directory in (self.root, self.root / 'exports'):
+            with tarfile.open(directory / 'study_postprocessing.tgz') as archive:
+                stem = 'study_postprocessing/E_solver + strategy___' + self.problems[0] + '___000000000'
+                self.assertEqual(archive.getnames(), ['study_postprocessing', stem + '.log', stem + '.stderr.log'])
+                self.assertEqual(archive.extractfile(stem + '.log').read(), raw)
+                self.assertEqual(archive.extractfile(stem + '.stderr.log').read(), b'diagnostic\n')
+        destination = self.root / 'verbose'
+        destination.mkdir()
+        sync.publish_verbose_pairs(destination, self.root)
+        pair = next((destination / 'solver-problem-pairs').glob('*000000000.tgz'))
+        with tarfile.open(pair) as archive:
+            member = next(m for m in archive if m.name.endswith('.postprocessor.log'))
+            self.assertEqual(archive.extractfile(member).read(), raw)
+
+    def test_legacy_and_invalid_metadata_have_empty_postprocessing_archive(self):
+        for value in ('', 'not-json', '[]', 'null'):
+            with self.subTest(value=value):
+                row = self.records[0]
+                row['postprocess_data'] = value
+                path = self.root / 'results/batch_000000_task_000000000.csv'
+                with path.open('w', newline='') as stream:
+                    writer = csv.DictWriter(stream, fieldnames=remote_export.RESULT_FIELDS)
+                    writer.writeheader()
+                    writer.writerow(row)
+                remote_export.export(self.root)
+                with tarfile.open(self.root / 'exports/study_postprocessing.tgz') as archive:
+                    self.assertEqual(archive.getnames(), ['study_postprocessing'])
+
     def assert_archives(self, directory):
         for stream, suffix in (('stdout', '.log'), ('stderr', '.stderr.log')):
             archive_root = f'study_solver-{stream}'
@@ -62,7 +161,7 @@ class ExportTests(unittest.TestCase):
         remote_export.export(self.root)
         directory = self.root / 'exports'
         self.assertEqual({path.name for path in directory.iterdir() if not path.name.startswith('.')}, {
-            'study_results-summary.csv', 'study_solver-stdout.tgz', 'study_solver-stderr.tgz'})
+            'study_results-summary.csv', 'study_solver-stdout.tgz', 'study_solver-stderr.tgz', 'study_postprocessing.tgz'})
         self.assert_archives(directory)
         with (directory / 'study_results-summary.csv').open(newline='') as source:
             rows = list(csv.DictReader(source))
@@ -166,7 +265,7 @@ class ExportTests(unittest.TestCase):
     def test_sync_replaces_old_download_names_only_after_success(self):
         remote_export.export(self.root)
         source = self.root / 'exports'
-        expected = ('study_results-summary.csv', 'study_solver-stdout.tgz', 'study_solver-stderr.tgz')
+        expected = ('study_results-summary.csv', 'study_solver-stdout.tgz', 'study_solver-stderr.tgz', 'study_postprocessing.tgz')
         for fail in (True, False):
             with self.subTest(transfer_fails=fail):
                 destination = self.root / ('failed-download' if fail else 'download')
@@ -211,7 +310,7 @@ class ExportTests(unittest.TestCase):
                 for name in expected:
                     (destination / name).write_bytes(b'previous export')
                 process = Mock(stdout=io.StringIO('EXPORT_FILES|' + '|'.join(
-                    ['study_results-summary.csv', 'study_solver-stdout.tgz', 'study_solver-stderr.tgz']) + '\n'))
+                    ['study_results-summary.csv', 'study_solver-stdout.tgz', 'study_solver-stderr.tgz', 'study_postprocessing.tgz']) + '\n'))
                 process.wait.return_value = 0
 
                 def transfer(command, **kwargs):

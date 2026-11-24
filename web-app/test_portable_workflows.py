@@ -46,6 +46,72 @@ class PortableWorkflowTests(unittest.TestCase):
         with patch.object(portable.subprocess,'run',side_effect=remote):
             return portable.export_bundle(self.workflow,'test-host')
 
+    def test_custom_postprocessor_folder_and_external_script_survive_move_and_copy(self):
+        import shlex
+        post = self.root/'post folder';post.mkdir()
+        script = self.root/'external parser.py';script.write_text('print("{}")')
+        (post/'settings.json').write_text('{}')
+        rows = workflows.imported_rows(self.workflow/'jobpairs.csv', check_paths=False)
+        rows[0].update(postprocessor_mode='custom', postprocessor_directory=str(post),
+                       postprocessor_command=shlex.join(['python3', str(script), '--settings', str(post/'settings.json')]),
+                       postprocessor_timeout=47)
+        (self.workflow/'jobpairs.csv').write_text(workflows.csv_text(rows))
+        bundle=self.bundle();self.addCleanup(bundle.close)
+        shutil.rmtree(post);script.unlink()
+        imported,_=portable.import_bundle(bundle,'post-import')
+        row=workflows.imported_rows(imported/'jobpairs.csv')[0]
+        self.assertEqual(row['postprocessor_timeout'],47)
+        self.assertTrue((Path(row['postprocessor_directory'])/'settings.json').is_file())
+        words=shlex.split(row['postprocessor_command'])
+        self.assertTrue(Path(words[1]).is_file())
+        builds=read_builds(imported/'building.txt')
+        self.assertTrue(any(Path(words[1]).is_relative_to(build.root) for build in builds))
+        data=workflows.decisions(imported)
+        with patch.object(workflows,'check_requested'):
+            workflows.save(data,imported)
+        self.assertEqual(workflows.imported_rows(imported/'jobpairs.csv')[0]['postprocessor_command'],row['postprocessor_command'])
+        self.assertTrue(Path(words[3]).is_file())
+        copy=workflows.copyable_solver_configurations(imported)[0]
+        self.assertEqual(copy['postprocessor_command'],row['postprocessor_command'])
+        self.assertEqual(copy['postprocessor_timeout'],'47')
+        duplicate=workflows.duplicate(imported,'post-copy')
+        copied=workflows.imported_rows(duplicate/'jobpairs.csv')[0]
+        self.assertTrue(Path(copied['postprocessor_directory']).is_relative_to(duplicate))
+        self.assertNotIn(str(imported),copied['postprocessor_command'])
+        self.assertTrue(Path(shlex.split(copied['postprocessor_command'])[1]).is_file())
+
+    def test_workflow_postprocessor_and_inheritance_are_portable(self):
+        post=self.root/'workflow parser';post.mkdir();(post/'parse.py').write_text('print("{}")')
+        data=workflows.decisions(self.workflow)
+        row=workflows.imported_rows(self.workflow/'jobpairs.csv')[0]
+        row.pop('problem');row['postprocessor_override']=False
+        data.update(mode='interactive',configurations=[row],globs=[str(self.problem)],
+                    postprocessor=dict(mode='custom',directory=str(post),command='python3 parse.py',timeout=71))
+        (self.workflow/'workflow.json').write_text(json.dumps(data))
+        bundle=self.bundle();self.addCleanup(bundle.close)
+        shutil.rmtree(post)
+        imported,_=portable.import_bundle(bundle,'inherited-post')
+        restored=workflows.decisions(imported)
+        self.assertEqual(restored['postprocessor']['mode'],'custom')
+        self.assertTrue(Path(restored['postprocessor']['directory']).is_relative_to(imported))
+        self.assertFalse(restored['configurations'][0]['postprocessor_override'])
+        self.assertEqual(restored['configurations'][0]['postprocessor_timeout'],71)
+        self.assertTrue((Path(restored['postprocessor']['directory'])/'parse.py').is_file())
+
+    def test_old_csv_without_postprocessor_settings_inherits_workflow_default(self):
+        row=workflows.imported_rows(self.workflow/'jobpairs.csv')[0]
+        self.assertFalse(row['postprocessor_override'])
+        effective=workflows.effective_postprocessor(row,{'postprocessor':{'mode':'none'}},check_paths=False)
+        self.assertEqual(effective['postprocessor_mode'],'none')
+
+    def test_old_configuration_defaults_to_bundled_postprocessor(self):
+        row=workflows.imported_rows(self.workflow/'jobpairs.csv')[0]
+        self.assertEqual(row['postprocessor_mode'],'default')
+        self.assertEqual(row['postprocessor_timeout'],30)
+        card=workflows.copyable_solver_configurations(self.workflow)[0]
+        self.assertEqual(card['postprocessor_mode'],'default')
+        self.assertEqual(card['postprocessor_timeout'],'30')
+
     def test_environment_survives_portable_export_and_configuration_copy(self):
         rows=workflows.imported_rows(self.workflow/'jobpairs.csv',check_paths=False)
         rows[0]['environment']='X=Y\nHello = "World with spaces"'

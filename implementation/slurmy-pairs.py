@@ -28,7 +28,7 @@ def expand(configurations: list[Path], patterns: list[str], output: Path,
     for filename in configurations:
         with filename.open(encoding="utf-8-sig", newline="") as stream:
             reader = csv.DictReader(stream)
-            required = set(COLUMNS) - {"solver_name", "problem", "threads_per_core", "exclusive_cpu", "exclusive_node", "omit_cpu_limit", "omit_wc_limit", "omit_mem_limit", "environment"}
+            required = set(COLUMNS) - {"solver_name", "problem", "threads_per_core", "exclusive_cpu", "exclusive_node", "omit_cpu_limit", "omit_wc_limit", "omit_mem_limit", "environment", "postprocessor_mode", "postprocessor_directory", "postprocessor_command", "postprocessor_timeout"}
             headers = reader.fieldnames or []
             if len(set(headers)) != len(headers) or not required <= set(headers) or set(headers) - (set(COLUMNS) - {"problem"}):
                 raise SlurmyError(f"{filename}: configuration columns are {', '.join(c for c in COLUMNS if c != 'problem')}")
@@ -36,6 +36,7 @@ def expand(configurations: list[Path], patterns: list[str], output: Path,
                 if None in row or any(not row.get(key, '').strip() for key in required):
                     raise SlurmyError(f"{filename}: malformed configuration row")
                 row['solver_directory'] = str(path_at(row['solver_directory'], filename.resolve().parent))
+                if row.get('postprocessor_directory'):row['postprocessor_directory']=str(path_at(row['postprocessor_directory'],filename.resolve().parent))
                 for problem in problems:
                     rows.append({**row, "solver_name": row.get("solver_name", ""), "problem": str(problem)})
     if not rows:

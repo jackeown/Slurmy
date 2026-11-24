@@ -140,8 +140,7 @@ for directory in "${job_dirs[@]}"; do
         if [[ "$job" != "$DETAIL" ]] || (( ! modern_results )); then
         if (( ${#csv_results[@]} )); then
             printf 'SUMMARY\0%s\0' "$job"
-            # Slurmy quotes every CSV field. The summary uses only numeric and enum
-            # columns, which cannot themselves contain commas.
+            # One CSV pass, including quoted commas/newlines and raw custom statuses.
             summary_payload=$(awk -F, '
 __SZS_AWK__
                 function value(field) {
@@ -152,13 +151,37 @@ __SZS_AWK__
                     }
                     return field
                 }
-                { if (index($0,"(")) $0=protect_csv($0) }
+                BEGIN {
+                    for (n=1; n<32; n++) json_control[sprintf("%c", n)]=sprintf("\\u%04x", n)
+                }
+                function json_quote(text, output, i, char) {
+                    output="\""
+                    for (i=1; i<=length(text); i++) {
+                        char=substr(text, i, 1)
+                        if (char=="\\" || char=="\"") output=output "\\" char
+                        else if (char in json_control) output=output json_control[char]
+                        else output=output char
+                    }
+                    return output "\""
+                }
+                {
+                    # Doubled quotes contribute an even count. Assemble multiline
+                    # quoted fields before splitting, without rereading any file.
+                    record=record (record=="" ? "" : "\n") $0
+                    physical=$0
+                    quoted=(quoted + gsub(/"/, "", physical)) % 2
+                    if (quoted) next
+                    sub(/\r$/, "", record)
+                    $0=protect_csv(record)
+                    record=""
+                }
                 NF >= 3 && value($1) ~ /^[0-9]+$/ {
                     id = value($1)
                     complete[id] = value($2)
                     result_status[id] = value($3)
                     if (result_status[id] == "solver-error" && value($4) == "143" && value($16) == "")
                         suspect_archive[id] = value($15)
+                    custom_status[id] = NF >= 21 ? value($21) : ""
                     szs[id] = szs_canonical(value($16))
                     result_status[id] = szs_normalize(result_status[id], szs[id], value($4))
                     wall[id] = value($5)
@@ -168,7 +191,10 @@ __SZS_AWK__
                         if (complete[id] == "true") {
                             completed++
                             count[result_status[id]]++
-                            outcomes[result_status[id] "\t" szs[id]]++
+                            if (custom_status[id]!="") {
+                                custom_key=json_quote(result_status[id]) "," json_quote(custom_status[id])
+                                custom_outcomes[custom_key]++
+                            } else outcomes[result_status[id] "\t" szs[id]]++
                             if (wall[id] ~ /^[0-9]+([.][0-9]+)?$/) {
                                 wall_sum += wall[id]
                                 if (wall[id] > wall_max) wall_max = wall[id]
@@ -179,6 +205,7 @@ __SZS_AWK__
                     }
                     printf "completed\t%d\nwall_sum\t%.9f\nwall_max\t%.9f\n", completed, wall_sum, wall_max
                     for (outcome in outcomes) printf "outcome\t%s\t%d\n", outcome, outcomes[outcome]
+                    for (outcome in custom_outcomes) printf "postprocess_outcome\t[%s,%d]\n", outcome, custom_outcomes[outcome]
                     for (status in count) printf "status\t%s\t%d\n", status, count[status]
                     for (status in unresolved) printf "unresolved\t%s\t%d\n", status, unresolved[status]
                     for (id in suspect_archive) printf "candidate\t%s\t%s\n", id, suspect_archive[id]
@@ -567,6 +594,8 @@ emit_member() {
     printf '\0'
 }
 
+emit_member postprocessor postprocessor.log
+emit_member postprocessor_stderr postprocessor-stderr.log
 emit_member solver solver.log
 emit_member solver_combined solver-combined.log
 emit_member solver_stderr solver-stderr.log
@@ -592,6 +621,10 @@ class ResultRecord:
     szs_output: str = ""
     problem: str = ""
     command: str = ""
+    postprocess_data: dict = field(default_factory=dict)
+    postprocess_return_code: str = ""
+    postprocess_error: str = ""
+    postprocess_status: str = ""
 
 
 @dataclass
@@ -890,6 +923,25 @@ def inferred_solver_name(command: str) -> str:
     return 'Unknown solver'
 
 
+def canonical_szs(value):
+    return szs.canonical(value) if szs.mnemonic(value) else ''
+
+
+def parse_postprocess_data(value):
+    if isinstance(value, dict):
+        return value
+    try:
+        data = json.loads(value)
+    except (ValueError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def result_status(result):
+    value = result.postprocess_status or result.postprocess_data.get('status')
+    return value if isinstance(value, str) and value else canonical_szs(result.szs_status)
+
+
 def parse_result_rows(rows: Any) -> dict[int, ResultRecord]:
     results: dict[int, ResultRecord] = {}
     for fields in rows:
@@ -906,8 +958,12 @@ def parse_result_rows(rows: Any) -> dict[int, ResultRecord]:
             max_memory_kib=as_float(fields[10]),
             task_key=fields[13],
             archive=fields[14],
-            szs_status=szs.canonical(fields[15]) if len(fields) > 15 else '',
+            szs_status=canonical_szs(fields[15]) if len(fields) > 15 else '',
             szs_output=szs.data_form(fields[16]) if len(fields) > 16 else '',
+            postprocess_data=parse_postprocess_data(fields[17]) if len(fields) > 17 else {},
+            postprocess_return_code=fields[18] if len(fields) > 18 else '',
+            postprocess_error=fields[19] if len(fields) > 19 else '',
+            postprocess_status=fields[20] if len(fields) > 20 else '',
         )
     return results
 
@@ -940,12 +996,18 @@ def parse_jsonl_results(payload: str) -> dict[int, ResultRecord]:
             archive=str(item.get("archive", "")),
             problem=str(item.get("problem", "")),
             command=str(item.get("command", "")),
+            szs_status=canonical_szs(item.get("szs_status", "")),
+            szs_output=szs.data_form(item.get("szs_output", "")),
+            postprocess_data=parse_postprocess_data(item.get("postprocess_data", {})),
+            postprocess_return_code=str(item.get("postprocess_return_code", "")),
+            postprocess_error=str(item.get("postprocess_error", "")),
+            postprocess_status=str(item.get("postprocess_status", "")),
         )
     return results
 
 
 def normalize_szs_result(result: ResultRecord) -> None:
-    result.szs_status = szs.canonical(result.szs_status)
+    result.szs_status = canonical_szs(result.szs_status)
     result.szs_output = szs.data_form(result.szs_output)
     result.status = szs.normalize_execution(result.status, result.szs_status, result.return_code)
 
@@ -957,9 +1019,13 @@ def summarize_results(job: JobSnapshot, results: dict[int, ResultRecord]) -> Non
     job.wall_max = max((result.wall_seconds or 0.0 for result in completed), default=0.0)
     counts: dict[str, int] = {}
     unresolved: dict[str, int] = {}
+    job.outcome_counts = {}
     for result in results.values():
         target = counts if result.complete else unresolved
         normalize_szs_result(result)
+        if result.complete:
+            key = (result.status, result_status(result))
+            job.outcome_counts[key] = job.outcome_counts.get(key, 0) + 1
         status = result.status
         target[status] = target.get(status, 0) + 1
     job.status_counts = counts
@@ -977,6 +1043,10 @@ def parse_summary(job: JobSnapshot, payload: str) -> None:
             job.wall_max = float(fields[1])
         elif len(fields) == 3 and fields[0] == "status":
             job.status_counts[fields[1]] = int(fields[2])
+        elif len(fields) == 2 and fields[0] == "postprocess_outcome":
+            status, custom, count = json.loads(fields[1])
+            key = (status, custom)
+            job.outcome_counts[key] = job.outcome_counts.get(key, 0) + count
         elif len(fields) == 4 and fields[0] == "outcome":
             key = (fields[1], szs.canonical(fields[2]))
             job.outcome_counts[key] = job.outcome_counts.get(key, 0) + int(fields[3])
@@ -1272,6 +1342,8 @@ def parse_task_output(job_id: str, task_id: int, archive: str, data: bytes) -> T
     parts = data.split(b"\0")
     streams: dict[str, OutputStream] = {}
     labels = {
+        "postprocessor": "Postprocessor stdout",
+        "postprocessor_stderr": "Postprocessor stderr",
         "solver": "Solver stdout (raw)",
         "solver_combined": "Runsolver output (stdout + stderr)",
         "solver_stderr": "Solver stderr",

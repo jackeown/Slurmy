@@ -69,8 +69,8 @@ def summary_row(row, benchmark):
         state, mnemonic, output = 'incomplete', '-', '-'
     else:
         state = {'time-limit': 'timeout (cpu)' if result=='CPUTimeout' else 'timeout (wallclock)' if result=='WCTimeout' else 'timeout (cpu)' if Decimal(number(row.get('cpu_seconds'))) >= Decimal(number(row.get('cpu_limit'))) > 0 else 'timeout (wallclock)',
-                 'memory-limit': 'memout', 'solver-error': 'error', 'resource-limiter-error': 'error', 'worker-error': 'error', 'interrupted': 'incomplete'}.get(row.get('status'), 'complete')
-        mnemonic = szs.mnemonic(szs.base(result)) or szs.mnemonic({'time-limit':'Timeout', 'memory-limit':'MemoryOut', 'resource-limit':'ResourceOut', 'solver-error':'Error', 'resource-limiter-error':'Error'}.get(row.get('status'))) or 'UNK'
+                 'memory-limit': 'memout', 'solver-error': 'error', 'resource-limiter-error': 'error', 'worker-error': 'error', 'interrupted': 'incomplete'}.get((row.get('execution_status') or row.get('status')), 'complete')
+        mnemonic = szs.mnemonic(szs.base(result)) or szs.mnemonic({'time-limit':'Timeout', 'memory-limit':'MemoryOut', 'resource-limit':'ResourceOut', 'solver-error':'Error', 'resource-limiter-error':'Error'}.get((row.get('execution_status') or row.get('status')))) or 'UNK'
         output = szs.data_mnemonic(row.get('szs_output')) or 'Non'
     solver = row.get('solver') or 'solver'
     return dict(zip(FIELDS, (benchmark, solver, solver, state,

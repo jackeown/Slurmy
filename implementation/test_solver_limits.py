@@ -19,6 +19,8 @@ class SolverLimitTests(unittest.TestCase):
             for name in ['calls/0','rootfs/runtime','results/index','progress']:(root/name).mkdir(parents=True)
             shutil.copy2(TEMPLATES/'csv.sh',root/'csv.sh')
             (root/'szs.sh').write_text(szs.shell_library())
+            for source,target in [('postprocessing.py','postprocessing.py'),('szs.py','szs.py'),('postprocessors/default_szs.py','default_postprocessor.py')]:
+                shutil.copy2(TEMPLATES.parent/source,root/target)
             (root/'calls/0/config.sh').write_text('TASK_ID=0\nTASK_KEY=abcdef\nCORES=1\nTHREADS_PER_CORE=1\nWC_LIMIT='+str(wall_limit)+'\nSOLVER_ROOT_REL=runtime\n')
             with (root/'calls/0/config.sh').open('a') as config:
                 config.write(f'GET_COMPUTER_INFO={int(computer_info)}\nCOMPUTER_INFO_TIMESTAMP={int(timestamp)}\nCPU_LIMIT=2\nMEM_LIMIT_MIB=100\n')

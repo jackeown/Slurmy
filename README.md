@@ -223,9 +223,10 @@ might not expose counts.
 In **Job history**, follow progress and open a job to inspect solver-problem pair outcomes,
 solver comparisons, problems, output streams, and diagnostics. Select solver-problem pair
 outcomes to filter the solver-problem pairs table by multiple statuses; the 3D plot compares outcome
-counts across solvers. **Download** saves three files under
+counts across solvers. **Download** saves four files under
 `job-results/JOB_ID/`: `<job-name>_results-summary.csv`,
-`<job-name>_solver-stdout.tgz`, and `<job-name>_solver-stderr.tgz`.
+`<job-name>_solver-stdout.tgz`, `<job-name>_solver-stderr.tgz`, and
+`<job-name>_postprocessing.tgz`.
 Each archive extracts into its own directory, with one log per solver-problem pair named
 `<solver>___<original-problem-filename>___<solver-problem-pair-id>.log` (or `.stderr.log`
 for stderr). Problem filenames, including their extensions and characters such

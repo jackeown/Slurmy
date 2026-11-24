@@ -78,6 +78,8 @@ def collect_rows(directory, data, host):
 def export_bundle(directory, host):
     data = workflows.decisions(directory)
     rows = collect_rows(directory, data, host)
+    rows = [{**row, **workflows.effective_postprocessor(row, data, directory, check_paths=True)} for row in rows]
+    global_post = workflows.workflow_postprocessor(data, directory)
     builds = read_builds(directory / 'building.txt')
     limiter = (directory / 'resource_limiter_template.txt').read_text().strip()
     if not Path(shlex.split(limiter)[0]).is_absolute():
@@ -87,6 +89,16 @@ def export_bundle(directory, host):
     for build in builds:
         paths.update(p for p in (build.root, build.source, build.recipe) if p is not None)
     paths.update(path_at(row['solver_directory'], directory) for row in rows)
+    command_assets = set()
+    for row in [*rows, {'postprocessor_' + key: value for key, value in global_post.items()}]:
+        row.update(workflows.postprocessor_settings(row, directory))
+        if row['postprocessor_mode'] == 'custom':
+            paths.add(Path(row['postprocessor_directory']))
+            for word in shlex.split(row['postprocessor_command']):
+                value = word.split('=', 1)[-1]
+                candidate = Path(value)
+                if candidate.is_absolute() and candidate.exists() and not value.startswith(('/usr/bin/', '/bin/')):
+                    paths.add(candidate); command_assets.add(str(candidate))
     remote = set()
     for row in rows:
         row['solver_directory'] = str(path_at(row['solver_directory'], directory))
@@ -119,7 +131,7 @@ def export_bundle(directory, host):
             raise ValueError('Unsupported shared problem path.')
         remote_roots.add(root)
     shared_roots = remote_roots if not axioms else set()
-    payload = dict(problem_order=data.get('_problem_order',[]),format=FORMAT, name=directory.name, rows=rows, editor_mode=data['mode'], pair_order=data.get('pair_order') or 'solver-major',
+    payload = dict(postprocessor=global_post,command_assets=sorted(command_assets),problem_order=data.get('_problem_order',[]),format=FORMAT, name=directory.name, rows=rows, editor_mode=data['mode'], pair_order=data.get('pair_order') or 'solver-major',
                    builds=[{k: str(v) if isinstance(v, Path) else v for k, v in asdict(build).items()} for build in builds],
                    limiter=limiter, axioms=axioms, shared_roots=sorted(shared_roots), default_tptp_root=TPTP_DEFAULT_ROOT,
                    settings={key: data.get(key, default) for key, default in
@@ -269,25 +281,51 @@ def import_bundle(stream, name, selected_host=None):
         default_axioms = staging / default_relative / 'Axioms'
         if default_axioms.is_dir():
             mapping[default_root] = str(destination / default_relative)
+        for asset in payload.get('command_assets', []):
+            mapping[asset] = local(asset)
+        global_post = workflows.workflow_postprocessor({'postprocessor': payload.get('postprocessor', {})}, check_paths=False)
+        if global_post['mode'] == 'custom':
+            old_post = global_post['directory']
+            global_post['directory'] = local(old_post)
+            mapping[old_post] = global_post['directory']
         normalized = []
         for row in rows:
             row = dict(row)
+            row.setdefault('postprocessor_override', True)
+            row.update(workflows.postprocessor_settings(row, check_paths=False))
+            if row['postprocessor_mode'] == 'custom':
+                old_post = row['postprocessor_directory']
+                row['postprocessor_directory'] = local(old_post)
+                mapping[old_post] = row['postprocessor_directory']
             old = row['problem'].removeprefix('tptp:')
             row['problem'] = local(old); mapping[old] = row['problem']
             old_solver = row['solver_directory']; row['solver_directory'] = local(old_solver)
             mapping[old_solver] = row['solver_directory']
             normalized.append(row)
+        global_post['command'] = command_paths(global_post['command'], mapping)
         relocated_commands = {}
         for row in normalized:
             command = row['command']
             if command not in relocated_commands:
                 relocated_commands[command] = command_paths(command, mapping)
             row['command'] = relocated_commands[command]
+            if row['postprocessor_mode'] == 'custom':
+                row['postprocessor_command'] = command_paths(row['postprocessor_command'], mapping)
         resources = []
         for build in builds:
             resources.append({**build, 'legacy': bool(build.get('recipe') and not build.get('artifact')), **{key: local(build[key]) if build.get(key) else '' for key in ('root','source','recipe')}})
         for root in shared_roots:
             resources.append(dict(root=mapping[root], source='', recipe='', artifact=''))
+        # Standalone command inputs need declared runtime roots for core upload.
+        declared = [Path(build['root']) for build in resources]
+        post_roots = [Path(row['postprocessor_directory']) for row in normalized if row['postprocessor_mode'] == 'custom']
+        if global_post['mode'] == 'custom':
+            post_roots.append(Path(global_post['directory']))
+        for asset in payload.get('command_assets', []):
+            path = Path(mapping[asset]); root = path if (staging / path.relative_to(destination)).is_dir() else path.parent
+            if not any(path.is_relative_to(parent) for parent in [*declared, *post_roots]):
+                resources.append(dict(root=str(root), source='', recipe='', artifact=''))
+                declared.append(root)
         limiter = command_paths(payload['limiter'], mapping)
         # Each imported shared problem needs its own collection version's includes.
         for row, original in zip(normalized, rows):
@@ -334,7 +372,9 @@ def import_bundle(stream, name, selected_host=None):
         (staging/'resource_limiter_template.txt').write_text(limiter + '\n')
         # Validate local definitions before publication, without SSH or execution.
         validation_rows = [{**row, 'problem': row['problem'].replace(str(destination), str(staging), 1),
-                            'solver_directory': row['solver_directory'].replace(str(destination), str(staging), 1)}
+                            'solver_directory': row['solver_directory'].replace(str(destination), str(staging), 1),
+                            'postprocessor_directory': row.get('postprocessor_directory', '').replace(str(destination), str(staging), 1),
+                            'postprocessor_command': row.get('postprocessor_command', '').replace(str(destination), str(staging))}
                            for row in normalized]
         check_pairs = staging/'.validate-pairs.csv'
         check_pairs.write_text(workflows.csv_text(validation_rows))
@@ -350,7 +390,7 @@ def import_bundle(stream, name, selected_host=None):
             (staging/'axiom-globs.txt').write_text('\n'.join(axiom_lines)+'\n');makefile += 'AXIOMS := axiom-globs.txt\n'
         makefile += 'include $(REPO_ROOT)/implementation/templates/workflow.mk\n'
         (staging/'Makefile').write_text(makefile)
-        data = dict(get_computer_info=computer_info, name=name, host=host, partition=partition, reservation=reservation, account=account, batch_size=batch, max_outstanding=maximum, pair_order=pair_order,
+        data = dict(postprocessor=global_post,get_computer_info=computer_info, name=name, host=host, partition=partition, reservation=reservation, account=account, batch_size=batch, max_outstanding=maximum, pair_order=pair_order,
                     mode='jobpairs', jobpairs=str(destination/'jobpairs.csv'), building_mode='existing', building_file=str(destination/'building.txt'),
                     limiter_mode='inline', limiter=limiter, axiom_mode='custom' if axiom_lines else 'cluster', axiom_globs=axiom_lines, _created_at=time.time())
         if payload.get('editor_mode') in {'interactive', 'configurations'} and len(shared_roots) <= 1:

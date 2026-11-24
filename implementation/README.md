@@ -289,8 +289,9 @@ Each solver-problem pair's result CSV includes `szs_status` and `szs_output`; fo
 `SZS output end Proof` records `Proof` in `szs_output`. The `time` member of a
 solver-problem pair's original result archive measures the entire per-solver-problem pair limiter invocation,
 including the solver. Runsolver's measurements of the solver tree replace that
-fallback when available. Default download exports only `<job-name>_results-summary.csv`,
-`<job-name>_solver-stdout.tgz`, and `<job-name>_solver-stderr.tgz` into `job-results/JOB_ID/`.
+fallback when available. Default download exports `<job-name>_results-summary.csv`,
+`<job-name>_solver-stdout.tgz`, `<job-name>_solver-stderr.tgz`, and
+`<job-name>_postprocessing.tgz` into `job-results/JOB_ID/`.
 Each archive extracts into a same-named top-level directory and contains logs
 named `<solver>___<original-problem-filename>___<solver-problem-pair-id>.log` (or
 `.stderr.log` for stderr). The full problem filename is preserved exactly,
@@ -321,7 +322,7 @@ selected full-collection axiom glob takes precedence over that environment setti
 | Script | Purpose |
 | --- | --- |
 | `slurmy-pairs.py` | Expand configurations × all selected problem globs into an explicit `jobpairs.csv`; supports problem-major, solver-major, or reproducible random order. |
-| `slurmy-sync.py` | Download the three-file job export into `job-results/JOB_ID/`; `--verbose` downloads raw files, and `--follow` keeps updating. |
+| `slurmy-sync.py` | Download the summary and three log archives into `job-results/JOB_ID/`; `--verbose` downloads raw files, and `--follow` keeps updating. |
 | `slurmy-cancel.py` | Choose an active SLURM allocation to cancel, or provide its ID non-interactively. |
 | `slurmy-job.py` | Stop or resume an entire Slurmy job by ID (`stop` or `resume`); resume keeps completed calls. |
 | `check_threads.py` | Check requested threads per core against the selected partition before preparation or dispatch. |
@@ -707,3 +708,54 @@ The unique scheduler identity and log name use the parent **and** element index
 (e.g. `12345_2`, `slurm_12345_2.out`). Batch progress, results, downloads and
 stop/resume continue to use each batch's original identity. Resume upgrades the
 small scheduler helper scripts for older jobs and preserves completed results.
+
+
+## Postprocessing Solver Output
+
+In **Solvers → Workflow Postprocessing**, select the bundled SZS parser, a custom
+postprocessor, or **None**. Solvers inherit this workflow setting unless you check
+**Override workflow postprocessing for this solver**. Custom software is specified
+by its local folder and entrypoint command, for example `python3 parse.py`,
+`bash parse.sh`, or `./parser`. The folder is uploaded with the workflow's other
+resources. Commands run from that folder on the compute node after the prover
+finishes. Slurmy appends two quoted filename arguments: raw prover stdout first,
+then raw prover stderr. The files exist even when a stream is empty.
+
+Postprocessor stdout may contain any report text. Lines of this form also define
+result fields; whitespace around `=` is optional:
+
+```text
+SZS data status = sat
+SZS data score = 42
+SZS data note = quotes, commas and = signs are literal values
+```
+
+Names start with a letter or underscore and may then contain letters, numbers,
+underscores, dots or hyphens (up to 128 characters). Values are text, and the last
+assignment to a name wins. `status` supplies the solver-problem pair's displayed
+outcome, preserving custom names such as SMT-LIB `sat` or `unsat`. Other fields
+appear under **Result details** and become columns in the standard CSV, with
+blank cells for pairs that do not supply them. The CSV retains `execution_status`
+separately. Custom names colliding with protected CSV columns receive a
+`postprocess.` prefix rather than replacing measurements or identifiers.
+
+Stdout and stderr from postprocessing are inspectable with each pair's other
+output streams. Standard downloads include a fourth file,
+`<job-name>_postprocessing.tgz`, containing the raw reports and diagnostics inside
+a same-named directory, using the same solver/problem/pair filename convention.
+Verbose downloads retain these files in the individual pair archives as well.
+
+The bundled example lives at `implementation/postprocessors/default_szs.py`. It
+recognizes SZS statuses and output forms (including official three-letter names)
+and emits `SZS data status=Theorem` and, when present, `SZS data output=Proof`.
+Prover-output recognition is implemented there rather than hardcoded in the
+worker. Existing SZS conversions and StarExec downloads remain available.
+
+The default postprocessor timeout is 30 seconds, configurable from 1 to 600.
+Batch wall-time planning includes that timeout plus a five-second cleanup
+allowance for each active postprocessor. Solver CPU/wall/memory measurements
+exclude postprocessing. A failing, timed-out or cancelled postprocessor keeps the
+finished solver result and original logs, while exposing its exit code and
+error separately. Disabling postprocessing adds no processing allowance.
+Workflow definitions, generated CSVs, duplication and portable export/import
+retain the effective processor and any solver overrides.

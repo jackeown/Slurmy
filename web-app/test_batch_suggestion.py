@@ -166,6 +166,25 @@ class BatchSuggestionTests(unittest.TestCase):
         self.assertTrue(result['selected_size_exceeds_wall'])
         self.assertLessEqual(60+5*(3600+80),21600)
 
+    def test_postprocessing_budget_combines_each_config_and_none_is_zero(self):
+        configurations=[config(1,wc_limit=100,postprocessor_mode='custom',postprocessor_directory='/unused',
+                               postprocessor_command='python3 parser.py',postprocessor_timeout=600),
+                        config(1,wc_limit=500,postprocessor_mode='none')]
+        with patch.object(batch,'partition_nodes',return_value=self.nodes),patch.object(batch.workflows,'problem_glob',return_value=('pattern',['a'])):
+            result=batch.suggest(dict(host='datalab',partition='CPU-amd',mode='interactive',configurations=configurations,globs=['pattern'],get_computer_info=False))
+        self.assertEqual(result['configuration_postprocessor_seconds'],[605,0])
+        self.assertEqual(result['max_pair_budget_seconds'],735)
+        self.assertEqual(result['wall_time_capacity'],(21600-60)//735)
+
+    def test_default_postprocessing_budget_and_timeout_validation(self):
+        with patch.object(batch,'partition_nodes',return_value=self.nodes),patch.object(batch.workflows,'problem_glob',return_value=('pattern',['a'])):
+            result=batch.suggest(dict(host='datalab',partition='CPU-amd',mode='interactive',configurations=[config(1,wc_limit=100)],globs=['pattern']))
+        self.assertEqual(result['max_postprocessor_seconds'],35)
+        self.assertEqual(result['max_pair_budget_seconds'],215)
+        for timeout in (0,-1,601,'NaN',float('inf')):
+            with self.subTest(timeout=timeout),self.assertRaises(ValueError):
+                batch.workflows.postprocessor_settings({'postprocessor_timeout':timeout},check_paths=False)
+
     def test_unbounded_wall_limits_are_not_given_a_false_six_hour_guarantee(self):
         with patch.object(batch,'partition_nodes',return_value=self.nodes),patch.object(batch.workflows,'problem_glob',return_value=('pattern',['a','b'])):
             result=batch.suggest(dict(host='datalab',partition='CPU-amd',mode='interactive',configurations=[config(1,wc_limit=0)],globs=['pattern']))

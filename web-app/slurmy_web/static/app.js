@@ -18,7 +18,7 @@ function memory(value){if(value==null)return '—';let i=0;const units=['B','KiB
 const outcomeColors={'not finished':'#87938f','theorem':'#278866','unsatisfiable':'#4479b5','satisfiable':'#9367ac','countersatisfiable':'#219a98','counter satisfiable':'#219a98','timeout':'#e7b251','time limit':'#ca842c','memory limit':'#bb684a','resourceout':'#9f5241','resource out':'#9f5241','error':'#bb555b','solver error':'#bb555b'};
 const szsCatalog=Object.assign(Object.create(null),JSON.parse(document.querySelector('#szs-catalog')?.textContent||'{}'));
 for(const [alias,info] of Object.entries(szsCatalog))outcomeColors[alias.toLowerCase()]=outcomeColors[info.name.toLowerCase()]||({'solver-error':'#bb555b','time-limit':'#e7b251','memory-limit':'#bb684a','resource-limit':'#9f5241'}[info.category]||(info.ontology==='Success'?'#278866':'#b58d48'));
-function szsLabel(value){const parts=value.match(/^Assumed\(([^,]+),([^()]+)\)$/);const info=szsCatalog[parts?'Assumed':value];if(!info)return value;const code=parts?`ASS(${parts.slice(1).map(name=>szsCatalog[name]?.code||name).join(',')})`:info.code;return `${parts?value:info.name} (${code})`;}
+function szsLabel(value){const parts=value.match(/^Assumed\(([^,]+),([^()]+)\)$/);const info=szsCatalog[parts?'Assumed':value];if(!info||(!parts&&info.name!==value))return value;const code=parts?`ASS(${parts.slice(1).map(name=>szsCatalog[name]?.code||name).join(',')})`:info.code;return `${parts?value:info.name} (${code})`;}
 const otherOutcomeColors=['#6d70b7','#a66b8b','#628b51','#ac7650','#568d9c','#a5a047'];
 let selectedOutcomes=[];
 const outcomeSelected=item=>selectedOutcomes.some(selected=>selected.label===item.label&&selected.source===item.source);
@@ -278,6 +278,21 @@ function taskStatus(task){
  status.addEventListener('keydown',event=>{if(event.key==='Escape')hide();});
  return status;
 }
+function taskResult(task){
+ const cell=el('div');cell.append(taskStatus(task));
+ const data=task.postprocess_data||{};
+ if(Object.keys(data).length||task.postprocess_error||task.postprocess_return_code){
+  const failed=Boolean(task.postprocess_error)||(task.postprocess_return_code!==''&&task.postprocess_return_code!=null&&String(task.postprocess_return_code)!=='0');
+  const detail=el('details'),summary=el('summary',failed?'Result details · postprocessing failed':'Result details');detail.append(summary);
+  const table=el('table');
+  table.append(tableRow(['Solver execution',task.execution_status||'—']));
+  for(const [key,value] of Object.entries(data))table.append(tableRow([key,typeof value==='string'?value:JSON.stringify(value)]));
+  if(task.postprocess_return_code)table.append(tableRow(['Postprocessor exit code',task.postprocess_return_code]));
+  if(task.postprocess_error)table.append(tableRow(['Postprocessing error',task.postprocess_error]));
+  detail.append(table);cell.append(detail);
+ }
+ return cell;
+}
 function jobCompletionLabel(job){
  const total=job.total||0, completed=job.completed||0;
  if(total&&completed>=total)return `Complete · ${total.toLocaleString()} solver-problem pairs finished`;
@@ -431,7 +446,7 @@ async function fetchJob(fresh=false){
  renderJobCompletion(data);
  renderOutcomes(data.outcomes);
  const tasks=$('#tasks-body');if(jobStatusTooltip)jobStatusTooltip.hidden=true;tasks.replaceChildren();
- for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):(task.diagnostic||task.diagnostic_available)?button('Inspect log →',()=>openDiagnostic(task)):'—';tasks.append(tableRow([String(task.id),task.solver||'—',problem,taskStatus(task),taskPlacement(task,jobId),duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
+ for(const task of data.tasks){const problem=link(task.problem.split('/').pop(),`/jobs/${encodeURIComponent(jobId)}/problems/${task.id}?`+params({}));problem.title=task.problem;const inspect=task.output?button('Inspect →',()=>openOutput(task)):(task.diagnostic||task.diagnostic_available)?button('Inspect log →',()=>openDiagnostic(task)):'—';tasks.append(tableRow([String(task.id),task.solver||'—',problem,taskResult(task),taskPlacement(task,jobId),duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
  if(!data.tasks.length)tasks.append(tableRow(['No matching solver-problem pairs.','','','','','','','','']));
  text('#page-label',`${data.matched} matching solver-problem pairs ·`);$('#task-page').value=taskPage+1;$('#task-page').max=lastPage+1;text('#task-page-count',lastPage+1);$('#previous').disabled=taskPage===0;$('#next').disabled=(taskPage+1)*perPage>=data.matched;
  const selected=new URLSearchParams(location.search).get('call');if(selected&&data.tasks.some(task=>String(task.id)===selected)){const url=new URL(location.href);url.searchParams.delete('call');history.replaceState(null,'',url);openOutput(data.tasks.find(task=>String(task.id)===selected));}
@@ -461,7 +476,7 @@ async function fetchProblem(fresh=false){
  else source.textContent=data.text;
  const truncated=$('#problem-truncated');if(truncated)truncated.hidden=!data.truncated;
  const body=$('#problem-tasks-body');if(jobStatusTooltip)jobStatusTooltip.hidden=true;body.replaceChildren();
- for(const task of data.tasks){const inspect=task.output?link('Inspect →',`/jobs/${encodeURIComponent(jobId)}?`+params({call:task.id})):(task.diagnostic||task.diagnostic_available)?link('Inspect log →',`/jobs/${encodeURIComponent(jobId)}?`+params({diagnostic:task.id})):'—';body.append(tableRow([String(task.id),task.solver||'—',taskStatus(task),duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
+ for(const task of data.tasks){const inspect=task.output?link('Inspect →',`/jobs/${encodeURIComponent(jobId)}?`+params({call:task.id})):(task.diagnostic||task.diagnostic_available)?link('Inspect log →',`/jobs/${encodeURIComponent(jobId)}?`+params({diagnostic:task.id})):'—';body.append(tableRow([String(task.id),task.solver||'—',taskResult(task),duration(task.cpu),duration(task.wall),memory(task.memory),inspect]));}
  text('#problem-page-label',`${data.matched} solver-problem pairs ·`);$('#problem-page').value=problemPage+1;$('#problem-page').max=lastPage+1;text('#problem-page-count',lastPage+1);
  $('#problem-previous').disabled=problemPage===0;$('#problem-next').disabled=(problemPage+1)*perPage>=data.matched;
  text('#connection',refreshLabel(data));

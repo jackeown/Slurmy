@@ -28,7 +28,7 @@ from flask import Flask, Request, Response, abort, g, jsonify, redirect, render_
 from werkzeug.exceptions import HTTPException
 from slurmy_archives import is_archive, TPTP_DEFAULT_VERSION, TPTP_DEFAULT_ROOT
 
-from .monitor import RemoteCollector, summarize_results, ResultRecord
+from .monitor import RemoteCollector, summarize_results, ResultRecord, result_status
 from .cluster import fetch_status
 from .launcher import web_version
 from . import workflows
@@ -125,7 +125,7 @@ def call_outcome(result):
                 'memory-limit': 'Memory limit'}
     if result is None:
         return 'Not finished', ''
-    answer = szs.canonical(result.szs_status)
+    answer = result_status(result)
     if answer:
         return answer, 'solver'
     label = fallback.get(result.status, result.status.replace('-', ' ').capitalize())
@@ -143,7 +143,7 @@ def history_outcomes(job):
     if outcomes:
         for (status, szs), count in outcomes.items():
             if count > 0:
-                counts[call_outcome(ResultRecord(0, True, status, szs_status=szs))] += count
+                counts[call_outcome(ResultRecord(0, True, status, postprocess_status=szs))] += count
     elif job.results:
         for result in job.results.values():
             if result.complete:
@@ -234,6 +234,8 @@ def unfinished_call(job, task_id, progress, batch_records=None):
     if record and record.source == 'queue':
         code = record.state.upper().split()[0]
         if code in {'RUNNING', 'COMPLETING'}:
+            if progress and progress.state == 'postprocessing':
+                return 'postprocessing', 'Postprocessing', 'The solver finished; its postprocessor is reading stdout and stderr before the result is published.', log
             if progress and progress.state == 'running':
                 return 'running', 'Running', f'Solver-problem pair started in SLURM batch {batch_id}; no result saved yet.', log
             return 'batch starting', 'Yes', f'SLURM batch {batch_id} is {code.lower()}, but this solver-problem pair has not recorded a start yet.{suffix}', log
@@ -287,10 +289,10 @@ def task_rows(job,task_ids=None):
         batch_id = job.task_batches.get(task_id, task_id // job.batch_size)
         allocation=batch_records.get(batch_id)
         if result:
-            state, wall = szs.canonical(result.szs_status) or result.status.replace('-', ' '), result.wall_seconds
-            if result.status in {'resource-limiter-error', 'worker-error', 'interrupted'}:
+            state, wall = result_status(result) or result.status.replace('-', ' '), result.wall_seconds
+            if not result_status(result) and result.status in {'resource-limiter-error', 'worker-error', 'interrupted'}:
                 state = result.status.replace('-', ' ')
-            elif result.status == 'error' and not result.szs_status:
+            elif result.status == 'error' and not result_status(result):
                 state = 'execution error'
         else:
             if not progress:
@@ -310,6 +312,10 @@ def task_rows(job,task_ids=None):
                    memory=result.max_memory_kib * 1024 if result and result.max_memory_kib is not None else None,
                    return_code=result.return_code if result else '',
                    execution_status=result.status if result else '',
+                   postprocess_data=result.postprocess_data if result else {},
+                   postprocess_status=result.postprocess_status if result else '',
+                   postprocess_return_code=result.postprocess_return_code if result else '',
+                   postprocess_error=result.postprocess_error if result else '',
                    szs_status=szs.canonical(result.szs_status) if result else '',
                    szs_code=szs.mnemonic(result.szs_status) if result else '',
                    szs_ontology=szs.ontology(result.szs_status) if result else '',
@@ -347,10 +353,19 @@ def task_page(job,page,per_page,field,direction,query='',outcomes=None,task_ids=
     candidate=query.strip()
     if len(candidate)==3 and szs.mnemonic(candidate)==candidate.upper():
         answer=szs.canonical(candidate)
-        ids=[task_id for task_id in ids if szs.base(getattr(job.results.get(task_id),'szs_status',''))==answer]
+        ids=[task_id for task_id in ids if szs.base(getattr(job.results.get(task_id),'szs_status',''))==answer or (task_id in job.results and (job.results[task_id].postprocess_status or job.results[task_id].postprocess_data.get('status')) == candidate)]
         query=''
-    if outcomes:outcomes={(szs.canonical(label) if source=='solver' else label,source) for label,source in outcomes}
-    if outcomes:ids=[task_id for task_id in ids if call_outcome(job.results.get(task_id)) in outcomes]
+    if outcomes:outcomes=set(outcomes)
+    if outcomes:
+        def matches_outcome(task_id):
+            result = job.results.get(task_id)
+            outcome = call_outcome(result)
+            if outcome in outcomes:
+                return True
+            if result and (result.postprocess_status or result.postprocess_data.get('status')):
+                return False
+            return outcome in {(szs.canonical(label) if source == 'solver' else label, source) for label, source in outcomes}
+        ids=[task_id for task_id in ids if matches_outcome(task_id)]
     start=page*per_page;end=start+per_page
     if query or field in {'state','will_run','node','reason'}:
         # These fields include derived scheduler diagnostics. Searching all
@@ -1030,6 +1045,12 @@ def create_app():
         from solver_environment import parse
         values = parse((request.get_json() or {}).get('environment'))
         return jsonify(count=len(values),message=f'{len(values)} environment variable(s) ready.' if values else 'No additional environment variables.')
+
+    @app.post('/api/validate-postprocessor')
+    def validate_postprocessor():
+        data = request.get_json() or {}
+        return jsonify(workflows.validate_postprocessor_command(data.get('command'), data.get('directory'),
+                                                                 allowed_roots=data.get('allowed_roots', [])))
 
     @app.post('/api/validate-solver-command')
     def validate_solver_command():

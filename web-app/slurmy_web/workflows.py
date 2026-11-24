@@ -65,7 +65,7 @@ def csv_text(rows, columns=COLUMNS):
     stream = io.StringIO(newline='')
     writer = csv.DictWriter(stream, fieldnames=columns)
     writer.writeheader()
-    writer.writerows([{**row, 'solver_name': row.get('solver_name', '')} for row in rows])
+    writer.writerows([{key: row.get(key, '') for key in columns} for row in rows])
     return stream.getvalue()
 
 
@@ -83,6 +83,9 @@ def imported_rows(filename, configurations=False, check_paths=True):
             raise ValueError('Malformed CSV row.')
         row['solver_directory'] = str(existing(row.get('solver_directory'), 'directory', filename.parent)
                                       if check_paths else path_at(row.get('solver_directory', ''), filename.parent))
+        explicit_postprocessor=any(row.get(key) not in (None,'') for key in POSTPROCESSOR_DEFAULTS)
+        row.update(postprocessor_settings(row, filename.parent, check_paths))
+        row['postprocessor_override'] = explicit_postprocessor
         if not configurations:
             if str(row.get('problem') or '').startswith('tptp:'):
                 row['problem'] = str(row['problem'])
@@ -130,11 +133,89 @@ def validate_solver_command(command, directory, build_on_cluster=False):
     return dict(path=str(path), message='Found executable: '+str(path))
 
 
+POSTPROCESSOR_DEFAULTS = dict(postprocessor_mode='default', postprocessor_directory='',
+                              postprocessor_command='', postprocessor_timeout=30)
+
+
+def postprocessor_settings(row, base=None, check_paths=True):
+    """Normalize optional CSV/editor fields, preserving legacy built-in behavior."""
+    mode = row.get('postprocessor_mode') or 'default'
+    if mode not in {'default', 'custom', 'none'}:
+        raise ValueError('Choose default, custom, or none for postprocessing.')
+    timeout = str(row.get('postprocessor_timeout') if row.get('postprocessor_timeout') not in (None, '') else 30)
+    if not timeout.isdecimal() or not 1 <= int(timeout) <= 600:
+        raise ValueError('Postprocessor timeout must be a whole number from 1 to 600 seconds.')
+    result = dict(POSTPROCESSOR_DEFAULTS, postprocessor_mode=mode, postprocessor_timeout=int(timeout))
+    if mode == 'custom':
+        directory = row.get('postprocessor_directory') or ''
+        if not directory.strip():
+            raise ValueError('Choose a custom postprocessor folder.')
+        root = existing(directory, 'directory', base) if check_paths else path_at(directory, base or BASE)
+        command = row.get('postprocessor_command') or ''
+        if not command.strip():
+            raise ValueError('Enter a custom postprocessor command.')
+        if check_paths:
+            validate_postprocessor_command(command, str(root), allow_external=True)
+        result.update(postprocessor_directory=str(root), postprocessor_command=command)
+    return result
+
+
+def workflow_postprocessor(data, base=None, check_paths=True):
+    settings = data.get('postprocessor') or {}
+    if not isinstance(settings, dict):
+        raise ValueError('Workflow postprocessor must be an object.')
+    normalized = postprocessor_settings({'postprocessor_' + key: value for key, value in settings.items()}, base, check_paths)
+    return {key.removeprefix('postprocessor_'): value for key, value in normalized.items()}
+
+
+def effective_postprocessor(row, data, base=None, check_paths=False):
+    # Legacy rows with explicit postprocessor fields retain their own settings.
+    override = row.get('postprocessor_override', any(key in row for key in POSTPROCESSOR_DEFAULTS))
+    if not isinstance(override, bool):
+        raise ValueError('Postprocessor override must be true or false.')
+    source = row if override else {'postprocessor_' + key: value for key, value in workflow_postprocessor(data, base, check_paths).items()}
+    return {**postprocessor_settings(source, base, check_paths), 'postprocessor_override': override}
+
+
+def validate_postprocessor_command(command, directory, allowed_roots=(), allow_external=False):
+    """Inspect executable and interpreter script paths without running them."""
+    result = validate_solver_command(command, directory)
+    root = Path(directory).resolve()
+    if not isinstance(allowed_roots, (list, tuple)):
+        raise ValueError('Postprocessor runtime resources must be a list of directories.')
+    allowed_roots = [existing(str(item), 'directory') for item in allowed_roots]
+    def contained(value):
+        path = Path(value).resolve()
+        if not allow_external and not any(path.is_relative_to(base) for base in [root, *(Path(item).resolve() for item in allowed_roots)]):
+            raise ValueError('Keep the postprocessor entrypoint and script inside its folder (or a declared runtime resource).')
+    words = shlex.split(command or '')
+    while words and (re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', words[0]) or words[0] == 'exec'):
+        words.pop(0)
+    if words and Path(words[0]).name in {'python', 'python3', 'bash', 'sh', 'zsh', 'perl', 'ruby'}:
+        args = words[1:]
+        if args and args[0] in {'-c', '-m'}:
+            return result
+        script = next((word for word in args if not word.startswith('-')), None)
+        if script:
+            contained(existing(script, base=Path(directory)))
+    else:
+        contained(result['path'])
+    return result
+
+
 def specification(data, destination_override=None, progress=None):
     data = dict(data)
     if not isinstance(data.get('get_computer_info', True), bool):
         raise ValueError('Computer information setting must be true or false.')
     data.setdefault('get_computer_info', True)
+    data['postprocessor'] = workflow_postprocessor(data)
+    post_roots = [item.get('root') for item in data.get('resources', []) if item.get('root')]
+    if data.get('building_mode') == 'existing' and data.get('building_file'):
+        post_roots.extend(build.root for build in read_builds(existing(data['building_file'])))
+    def validate_post(row):
+        if row['postprocessor_mode'] == 'custom':
+            validate_postprocessor_command(row['postprocessor_command'], row['postprocessor_directory'], allowed_roots=post_roots)
+    validate_post({'postprocessor_' + key: value for key, value in data['postprocessor'].items()})
     data['resources'] = [{**entry, 'role': 'solver' if entry.get('role') == 'prover' else entry.get('role')}
                          for entry in data.get('resources', [])]
     name = data.get('name', '')
@@ -162,6 +243,9 @@ def specification(data, destination_override=None, progress=None):
         filename = existing(data.get('jobpairs'))
         read_pairs(filename,host,partition)
         rows = imported_rows(filename)
+        for row in rows:
+            row.update(effective_postprocessor(row,data,filename.parent,check_paths=True))
+            validate_post(row)
     elif mode in {'interactive', 'configurations'}:
         if mode == 'configurations':
             configs = imported_rows(existing(data.get('configurations_file')), True)
@@ -182,6 +266,11 @@ def specification(data, destination_override=None, progress=None):
             names = [row['solver_name'].casefold() for row in configs]
             if len(names) != len(set(names)):
                 raise ValueError('Give each solver configuration a distinct name.')
+        for row in configs:
+            row.update(effective_postprocessor(row, data, check_paths=True))
+            validate_post(row)
+        if mode == 'interactive':
+            data['configurations'] = configs
         # Validate against the selected cluster before expanding large archives
         # or constructing the Cartesian product of configurations and problems.
         maximum = max(positive(str(row.get('threads_per_core') or 1), 'threads per core')
@@ -695,6 +784,9 @@ def decisions(directory, check_paths=True):
     if manifest.is_file():
         data = json.loads(manifest.read_text(encoding='utf-8'))
         data['name'] = directory.name
+        data['postprocessor'] = workflow_postprocessor(data, directory, check_paths=False)
+        for row in data.get('configurations', []):
+            row.update(effective_postprocessor(row, data, directory))
         data = resource_roles(data)
         if any(item.get('role') == 'solver' and item.get('mode') == 'commands' for item in data.get('resources', [])):
             builds = {build.root: build for build in read_builds(directory / 'building.txt', check_paths=False)}
@@ -756,12 +848,14 @@ def copyable_solver_configurations(directory):
     resources = {str(path_at(item.get('root', ''), BASE)): item
                  for item in data.get('resources', []) if item.get('role') == 'solver'}
     fields = ('solver_name', 'solver_directory', 'command', 'wc_limit', 'cpu_limit', 'mem_limit',
-              'cores', 'threads_per_core', 'exclusive_cpu', 'exclusive_node', 'omit_cpu_limit', 'omit_wc_limit', 'omit_mem_limit', 'environment')
+              'cores', 'threads_per_core', 'exclusive_cpu', 'exclusive_node', 'omit_cpu_limit', 'omit_wc_limit', 'omit_mem_limit', 'environment', *POSTPROCESSOR_DEFAULTS)
     seen = set()
     result = []
     for config in configs:
+        config = {**config, **effective_postprocessor(config, data, directory)}
         card = {name: str(config.get(name) if config.get(name) is not None else ('false' if name in {'exclusive_cpu', 'exclusive_node', 'omit_cpu_limit', 'omit_wc_limit', 'omit_mem_limit'} else ''))
                 for name in fields}
+        card['postprocessor_override'] = True
         card['threads_per_core'] = card['threads_per_core'] or '1'
         if not card['solver_name']:
             card['solver_name'] = Path(shlex.split(card['command'])[0]).name if card['command'].strip() else 'Solver'

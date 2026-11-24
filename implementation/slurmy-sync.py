@@ -212,11 +212,11 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
     # Load legacy TSV first so a CSV record wins if both formats are present.
     for path in sorted(results_dir.glob("*.tsv")):
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except OSError:
+            with path.open(encoding="utf-8", newline="") as source:
+                rows = list(csv.reader(source, delimiter="\t"))
+        except (OSError, UnicodeError, csv.Error):
             continue
-        for line in lines:
-            fields = line.split("\t")
+        for fields in rows:
             if len(fields) < 15 or not fields[0].isdigit():
                 continue
             task_id = int(fields[0])
@@ -232,6 +232,10 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
                 "archive": fields[14],
                 "szs_status": fields[15] if len(fields) > 15 else "",
                 "szs_output": fields[16] if len(fields) > 16 else "",
+                "postprocess_data": fields[17] if len(fields) > 17 else "",
+                "postprocess_return_code": fields[18] if len(fields) > 18 else "",
+                "postprocess_error": fields[19] if len(fields) > 19 else "",
+                "postprocess_status": fields[20] if len(fields) > 20 else "",
             }
     for path in sorted(results_dir.glob("*.csv")):
         try:
@@ -255,6 +259,10 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
                 "archive": fields[14],
                 "szs_status": fields[15] if len(fields) > 15 else "",
                 "szs_output": fields[16] if len(fields) > 16 else "",
+                "postprocess_data": fields[17] if len(fields) > 17 else "",
+                "postprocess_return_code": fields[18] if len(fields) > 18 else "",
+                "postprocess_error": fields[19] if len(fields) > 19 else "",
+                "postprocess_status": fields[20] if len(fields) > 20 else "",
             }
     for path in sorted(results_dir.glob("*.jsonl")):
         try:
@@ -279,6 +287,10 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
                 "archive": str(item.get("archive", "")),
                 "szs_status": str(item.get("szs_status", "")),
                 "szs_output": str(item.get("szs_output", "")),
+                "postprocess_data": item.get("postprocess_data", ""),
+                "postprocess_return_code": item.get("postprocess_return_code", ""),
+                "postprocess_error": item.get("postprocess_error", ""),
+                "postprocess_status": item.get("postprocess_status", ""),
             }
     return records
 
@@ -497,8 +509,8 @@ def consolidate_solver_streams(destination: Path, records: dict[int, dict[str, A
         if path.is_file():
             stat = path.stat()
             sources.append((task_id, path, stat.st_size, stat.st_mtime_ns))
-    fingerprint = hashlib.sha256(repr([(task_id, path.name, size, mtime)
-                                       for task_id, path, size, mtime in sources]).encode()).hexdigest()
+    fingerprint = hashlib.sha256(('postprocessing-v1' + repr([(task_id, path.name, size, mtime)
+                                       for task_id, path, size, mtime in sources])).encode()).hexdigest()
     marker = destination / 'solver-streams.json'
     try:
         metadata = json.loads((destination / 'metadata.json').read_text(encoding='utf-8'))
@@ -523,8 +535,9 @@ def consolidate_solver_streams(destination: Path, records: dict[int, dict[str, A
             fd, name = tempfile.mkstemp(prefix=f'.{target.name}.', suffix='.tmp', dir=destination)
             os.close(fd)
             temporary.append(Path(name))
-        with tarfile.open(temporary[0], 'w:gz') as stdout_tar, tarfile.open(temporary[1], 'w:gz') as stderr_tar:
-            for archive, target in ((stdout_tar, outputs[0]), (stderr_tar, outputs[1])):
+        with tarfile.open(temporary[0], 'w:gz') as stdout_tar, tarfile.open(temporary[1], 'w:gz') as stderr_tar, \
+             tarfile.open(temporary[2], 'w:gz') as postprocess_tar:
+            for archive, target in ((stdout_tar, outputs[0]), (stderr_tar, outputs[1]), (postprocess_tar, outputs[2])):
                 directory_info = tarfile.TarInfo(target.name.removesuffix('.tgz') + '/')
                 directory_info.type = tarfile.DIRTYPE
                 directory_info.mode = 0o700
@@ -536,17 +549,19 @@ def consolidate_solver_streams(destination: Path, records: dict[int, dict[str, A
                             continue
                         stdout = TASK_LOG_RE.search(member.name)
                         stderr = TASK_ERROR_RE.search(member.name)
-                        if not stdout and not stderr:
+                        postprocess = member.name.endswith(('.postprocessor.log', '.postprocessor-stderr.log'))
+                        if not stdout and not stderr and not postprocess:
                             continue
                         stream = call_tar.extractfile(member)
                         if stream is None:
                             continue
                         definition = definitions.get(task_id, {})
-                        archive_root = outputs[0 if stdout else 1].name.removesuffix('.tgz')
-                        info = tarfile.TarInfo(f'{archive_root}/{stream_name(definition, task_id, not stdout)}')
+                        archive_root = outputs[2 if postprocess else 0 if stdout else 1].name.removesuffix('.tgz')
+                        is_error = member.name.endswith('.postprocessor-stderr.log') if postprocess else not stdout
+                        info = tarfile.TarInfo(f'{archive_root}/{stream_name(definition, task_id, is_error)}')
                         info.size = member.size
                         info.mode = 0o600
-                        (stdout_tar if stdout else stderr_tar).addfile(info, stream)
+                        (postprocess_tar if postprocess else stdout_tar if stdout else stderr_tar).addfile(info, stream)
                 if index % 1000 == 0 or index == len(sources):
                     print(f'Consolidating solver logs: {index}/{len(sources)} solver-problem pair archives', flush=True)
         for source, target in zip(temporary, outputs):
@@ -637,6 +652,7 @@ def publish_verbose_pairs(destination: Path, raw: Path) -> None:
         'SLURM logs, batch plans, manifests and result indexes. Archive references in\n'
         'these indexes are relative to diagnostics/results/.\n'
         '*_solver-stdout.tgz and *_solver-stderr.tgz: consolidated solver streams.\n'
+        '*_postprocessing.tgz: original postprocessor stdout and stderr.\n'
         'sync-metadata.json: download completeness, statistics and warnings.\n'
         'Unfinished solver-problem pairs may have no archive yet.\n')
 
@@ -699,7 +715,7 @@ def sync_loop(args: argparse.Namespace) -> int:
 
 
 def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
-    """Download only the cluster-built CSV and two solver-stream archives."""
+    """Download only the cluster-built CSV and three stream archives."""
     job_id = resolved_job_id or resolve_job_id(args.host, args.job_id, args.ssh_timeout)
     destination = Path(args.output).expanduser() if args.output else Path.cwd() / 'job-results' / job_id
     if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
@@ -709,7 +725,7 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
         raise SyncError('SSH is required to download results. Install OpenSSH and retry.')
     if shutil.which('rsync') is None and shutil.which('scp') is None:
         raise SyncError('Downloads require rsync or scp. Install OpenSSH (which includes scp) and retry.')
-    # Keep ownership outside the three-file export, keyed by its absolute path.
+    # Keep ownership outside the four-file export, keyed by its absolute path.
     identity_path = destination.parent / ('.slurmy-export-identity-' + hashlib.sha256(
         os.fsencode(destination.resolve())).hexdigest() + '.json')
     try:
@@ -721,7 +737,7 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
     if identity and (identity.get('host'), identity.get('job_id')) != (args.host, job_id):
         raise SyncError('This output directory belongs to a different host or job.')
     while True:
-        print(f'Preparing three-file export for {job_id} on {args.host}…', flush=True)
+        print(f'Preparing four-file export for {job_id} on {args.host}…', flush=True)
         expected = None
         command = ['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o',
                    f'ConnectTimeout={max(1, int(args.ssh_timeout))}', '-o',
@@ -740,7 +756,7 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
                     print(line, end='', flush=True)
                     if line.startswith('EXPORT_FILES|'):
                         candidate = line.strip().split('|')[1:]
-                        if (len(candidate) == 3 and
+                        if (len(candidate) in (3, 4) and
                                 all(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', name) for name in candidate) and
                                 candidate[0].endswith('.csv') and all(name.endswith('.tgz') for name in candidate[1:])):
                             expected = tuple(candidate)
@@ -750,14 +766,14 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
         if code:
             raise SyncError(f'Remote export failed (SSH exit {code}); existing local files were kept.')
         if expected is None:
-            raise SyncError('Remote export did not report its three output filenames.')
+            raise SyncError('Remote export did not report its output filenames.')
         # A previous concise download uses the old three filenames. Keep it
         # until the replacement download succeeds, rather than treating it as
         # a verbose result directory that must be moved out of the way.
         job_name = expected[0].removesuffix('_results-summary.csv')
         old_names = {f'{job_name}.csv', f'{job_name}_logs.tgz', f'{job_name}_errors.tgz'}
         previous_names = identity.get('files', [])
-        if (isinstance(previous_names, list) and len(previous_names) == 3 and
+        if (isinstance(previous_names, list) and len(previous_names) in (3, 4) and
                 all(isinstance(name, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', name)
                     for name in previous_names)):
             old_names.update(previous_names)
@@ -767,7 +783,7 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
         allowed_names = set(expected) | {item.name for item in old_files}
         if destination.is_dir() and any(item.name not in allowed_names for item in destination.iterdir()):
             if args.output:
-                raise SyncError('This output directory contains verbose files; choose an empty directory for the three-file download.')
+                raise SyncError('This output directory contains verbose files; choose an empty directory for the four-file download.')
             legacy = Path.cwd() / 'job-results' / 'verbose' / job_id
             if legacy.exists():
                 raise SyncError(f'Both concise and verbose result directories exist; move the old files from {destination} manually before syncing.')
@@ -795,7 +811,7 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
             try:
                 result = subprocess.run(transfer, capture_output=True, text=True, timeout=3600, check=False)
             except (OSError, subprocess.TimeoutExpired) as exc:
-                raise SyncError(f'Could not transfer the three export files: {exc}') from exc
+                raise SyncError(f'Could not transfer the export files: {exc}') from exc
             if result.returncode:
                 raise SyncError(result.stderr.strip() or f'{transfer[0]} exited with status {result.returncode}')
             if not all((stage / name).is_file() and not (stage / name).is_symlink() for name in expected):

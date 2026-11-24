@@ -28,7 +28,7 @@ if(document.body.dataset.page==='new'){
   throw new Error('The progress stream ended before the workflow operation completed.');
  }
  function prefillExamples(root){root.querySelectorAll('input[placeholder],textarea[placeholder]').forEach(input=>{if(!input.value && !['glob','account'].includes(input.name))input.value=input.placeholder;});}
- function add(template,target){const node=$('#'+template).content.firstElementChild.cloneNode(true);prefillExamples(node);if(node.matches('.configuration'))node.querySelector('[name="solver_name"]').value='';$('.remove',node).addEventListener('click',()=>{node.remove();if(target==='globs'||target==='axiom-globs')updateProblemStatus();if(target==='limiter-resources')updateLimiterStatus();updateStepStates();});$('#'+target).append(node);setupBrowsers(node);shellEditors(node);window.initCollapsibles?.();if(node.matches('.configuration')){updateSolverStatus(node);queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}if(target==='globs'||target==='axiom-globs')updateProblemStatus();if(target==='limiter-resources')updateLimiterStatus();updateStepStates();return node;}
+ function add(template,target){const node=$('#'+template).content.firstElementChild.cloneNode(true);prefillExamples(node);if(node.matches('.configuration'))node.querySelector('[name="solver_name"]').value='';$('.remove',node).addEventListener('click',()=>{node.remove();if(target==='globs'||target==='axiom-globs')updateProblemStatus();if(target==='limiter-resources')updateLimiterStatus();updateStepStates();});$('#'+target).append(node);setupBrowsers(node);shellEditors(node);node.querySelectorAll('textarea[name="postprocessor_command"]').forEach(shellEditor);window.initCollapsibles?.();if(node.matches('.configuration')){updateSolverStatus(node);queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}if(target==='globs'||target==='axiom-globs')updateProblemStatus();if(target==='limiter-resources')updateLimiterStatus();updateStepStates();return node;}
  $('#add-configuration').addEventListener('click',()=>{const card=add('configuration-template','configurations');$('#builder-error').hidden=true;visibility();card.scrollIntoView({behavior:'smooth',block:'start'});});
  $('#add-glob').addEventListener('click',()=>add('glob-template','globs'));
  $('#add-axiom-glob').addEventListener('click',()=>add('axiom-glob-template','axiom-globs'));
@@ -53,7 +53,8 @@ if(document.body.dataset.page==='new'){
   if(mode.value==='files')row.querySelector('.problem-names-status').textContent='Using the saved names from imported files. Select files to replace them.';
   mode.refreshShell?.();
  }
- function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field){if(name==='cores')setCoreRequest(field,value??'1');else field.value=name==='problem_selection'&&Array.isArray(value)?value.join('\n'):name.startsWith('omit_')?String(value||false).toLowerCase():(value??'');field.refreshShell?.();}}if(node.matches('.glob-row'))initializeProblemNames(node,values);if(node.matches('.configuration')){configurationTitle(node);updateSolverStatus(node);queueMicrotask(()=>validateSolverCommand(node));queueMicrotask(()=>validateEnvironment(node));queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}}
+ function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field){if(field.type==='checkbox')field.checked=value===true;else if(name==='cores')setCoreRequest(field,value??'1');else field.value=name==='problem_selection'&&Array.isArray(value)?value.join('\n'):name.startsWith('omit_')?String(value||false).toLowerCase():(value??'');field.refreshShell?.();}}if(node.matches('.glob-row'))initializeProblemNames(node,values);if(node.matches('.configuration')){configurationTitle(node);updateSolverStatus(node);queueMicrotask(()=>validateSolverCommand(node));queueMicrotask(()=>validatePostprocessor(node));queueMicrotask(()=>validateEnvironment(node));queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}}
+ fill($('#workflow-postprocessing'),Object.fromEntries(Object.entries(initial.postprocessor||{mode:'default',timeout:30}).map(([key,value])=>['workflow_postprocessor_'+key,value])));
  for(const name of ['name','partition','account','reservation','batch_size','max_outstanding','pair_order','mode','jobpairs','configurations_file','limiter_mode','limiter_file','limiter']){const field=form.querySelector(`[name="${name}"]`);if(field&&initial[name]!==undefined)field.value=initial[name];}
  $('[name="get_computer_info"]').checked=initial.get_computer_info!==false;
  const accountField=$('#slurm-account-field'),accountSelect=form.querySelector('[name="account"]'),accountLoading=$('#slurm-account-loading'),accountStatus=$('#slurm-account-status'),accountRetry=$('#slurm-account-retry');
@@ -187,13 +188,14 @@ if(document.body.dataset.page==='new'){
  // Repeated card fields are read from their card, never from a flattened form.
  function rootValue(name){return name==='host'?document.body.dataset.host:form.querySelector(`[name="${name}"]`).value;}
  function updateStepStates(){
+  syncGlobalPostprocessor();
   const readyPath=input=>input&&input.value.trim()&&input.dataset.validated===input.value;
   const cards=[...document.querySelectorAll('#configurations .configuration')];
   const names=cards.map(card=>card.querySelector('[name="solver_name"]').value.trim().toLocaleLowerCase());
   cards.forEach((card,index)=>{card.dataset.state=names[index]&&names.filter(name=>name===names[index]).length===1&&[...card.querySelectorAll('.solver-card-section')].every(section=>section.dataset.state==='valid')?'valid':'invalid';});
   const mode=rootValue('mode');
   const basics=['name','partition'].every(name=>form.querySelector(`[name="${name}"]`)?.validity.valid&&rootValue(name).trim());
-  const solvers=mode==='interactive'?cards.length>0&&cards.every(card=>card.dataset.state==='valid'):
+  const solvers=mode==='interactive'?$('#workflow-postprocessing').dataset.state==='valid'&&cards.length>0&&cards.every(card=>card.dataset.state==='valid'):
    mode==='jobpairs'?readyPath(form.querySelector('[name="jobpairs"]')):
    mode==='configurations'?readyPath(form.querySelector('[name="configurations_file"]')):false;
   const problems=['problem-selection','axiom-selection'].every(id=>$('#'+id)?.dataset.state==='valid');
@@ -346,12 +348,20 @@ if(document.body.dataset.page==='new'){
   const runtimeReady=environmentReady&&root.startsWith('/')&&!root.includes('/path/to/')&&pathReady('solver_directory')&&
    value('command')&&value('command')!==card.querySelector('[name="command"]').placeholder&&
    card.querySelector('[name="command"]').dataset.commandValidated===solverCommandKey(card);
+  const postMode=value('postprocessor_mode');
+  card.querySelector('[data-postprocessor-custom]').hidden=postMode!=='custom';
+  card.querySelector('[data-postprocessor-default]').hidden=postMode!=='default';
+  card.querySelector('[data-postprocessor-active]').hidden=postMode==='none';
+  const override=card.querySelector('[name="postprocessor_override"]').checked;
+  card.querySelector('[data-postprocessor-override]').hidden=!override;
+  const postReady=!override||postMode==='none'||(positiveTimeout(card)&& (postMode==='default'||(pathReady('postprocessor_directory')&&card.querySelector('[name="postprocessor_command"]').dataset.commandValidated===postprocessorKey(card))));
   const buildReady=!buildSelected||((!value('build_source')||pathReady('build_source'))&&pathReady('build_script'));
   const positive=name=>{const input=card.querySelector(`[name="${name}"]`);return input.value.trim()!==''&&input.validity.valid&&Number(input.value)>0;};
   const limitsReady=card.querySelector('[name="threads_per_core"]').dataset.threadValid==='true'&&['wc_limit','cpu_limit'].every(name=>/^(0|[1-9][0-9]*)$/.test(value(name)))&&positive('threads_per_core')&&positive('cores')&&card.querySelector('[name="cores"]').dataset.coreValid==='true'&&
    /^\s*(?:\d+(?:\.\d+)?)(?:\s*(?:[kmgpt]i?b?|b))?\s*$/i.test(value('mem_limit'))&&
    ['exclusive_cpu','exclusive_node'].every(name=>['true','false'].includes(value(name)));
   for(const [section,ready,good,bad] of [
+   ['postprocessing',postReady,!override?'Uses workflow setting':postMode==='none'?'Disabled':postMode==='default'?'Built-in SZS parser':'Custom parser ready','Set folder, command and timeout'],
    ['runtime',runtimeReady,'Runtime ready','Set root and command'],
    ['build',buildReady,buildSelected?'Build ready':'No build selected','Set a valid source (or leave blank) and build script'],
    ['limits',limitsReady,'Limits ready','Set limits and placement']]){
@@ -378,6 +388,35 @@ if(document.body.dataset.page==='new'){
  form.addEventListener('input',event=>{if(event.target.name!=='environment')return;const card=event.target.closest('.configuration');event.target.setCustomValidity('');delete event.target.dataset.environmentValidated;clearTimeout(environmentTimers.get(card));environmentTimers.set(card,setTimeout(()=>validateEnvironment(card),300));});
  form.addEventListener('focusout',event=>{if(event.target.name==='environment')validateEnvironment(event.target.closest('.configuration'));});
  for(const card of document.querySelectorAll('.configuration'))queueMicrotask(()=>validateEnvironment(card));
+ function postField(card,name){return card.querySelector(`[name="${card.id==='workflow-postprocessing'?'workflow_':''}postprocessor_${name}"]`);}
+ function positiveTimeout(card){const input=postField(card,'timeout');return /^[1-9][0-9]*$/.test(input.value)&&Number(input.value)<=600;}
+ function postprocessorData(card){return {directory:postField(card,'directory').value,command:postField(card,'command').value};}
+ function postprocessorKey(card){return JSON.stringify(postprocessorData(card));}
+ function syncGlobalPostprocessor(){
+  const card=$('#workflow-postprocessing');if(!card)return;
+  const mode=postField(card,'mode').value,root=postField(card,'directory'),command=postField(card,'command');
+  card.querySelector('[data-postprocessor-custom]').hidden=mode!=='custom';card.querySelector('[data-postprocessor-default]').hidden=mode!=='default';card.querySelector('[data-postprocessor-active]').hidden=mode==='none';
+  const ready=mode==='none'||(positiveTimeout(card)&&(mode==='default'||(root.value.trim()&&root.dataset.validated===root.value&&command.dataset.commandValidated===postprocessorKey(card))));
+  card.dataset.state=ready?'valid':'invalid';card.querySelector('.solver-section-status').textContent=ready?(mode==='none'?'Disabled':mode==='default'?'Built-in SZS parser':'Custom parser ready'):'Set folder, command and timeout';
+ }
+ function refreshPostprocessing(card){if(card.id==='workflow-postprocessing'){syncGlobalPostprocessor();updateStepStates();}else updateSolverStatus(card);}
+ async function validatePostprocessor(card){
+  if(card.id!=='workflow-postprocessing'&&!card.querySelector('[name="postprocessor_override"]').checked)return true;
+  if(postField(card,'mode').value!=='custom')return true;
+  const input=postField(card,'command'),status=card.querySelector('.postprocessor-validation'),key=postprocessorKey(card),data=postprocessorData(card);
+  if(input.dataset.commandValidated===key)return true;
+  if(!data.directory.trim()||!data.command.trim())return false;
+  status.className='postprocessor-validation validation';status.textContent='Checking postprocessor command…';
+  try{const result=await api('/api/validate-postprocessor',{...data,allowed_roots:(initial.resources||[]).map(item=>item.root).filter(Boolean)});if(key!==postprocessorKey(card))return false;input.dataset.commandValidated=key;status.className='postprocessor-validation validation valid';status.textContent=result.message;refreshPostprocessing(card);return true;}
+  catch(error){if(key!==postprocessorKey(card))return false;delete input.dataset.commandValidated;status.className='postprocessor-validation validation invalid';status.textContent=error.message;refreshPostprocessing(card);return false;}
+ }
+ const postprocessorTimers=new WeakMap();
+ function queuePostprocessor(event){if(!/^(workflow_)?postprocessor_/.test(event.target.name))return;const card=event.target.closest('.configuration,#workflow-postprocessing');if(!card)return;delete postField(card,'command').dataset.commandValidated;clearTimeout(postprocessorTimers.get(card));postprocessorTimers.set(card,setTimeout(()=>validatePostprocessor(card),350));}
+ form.addEventListener('input',queuePostprocessor);form.addEventListener('change',queuePostprocessor);
+ form.addEventListener('focusout',event=>{if(/^(workflow_)?postprocessor_(directory|command)$/.test(event.target.name))validatePostprocessor(event.target.closest('.configuration,#workflow-postprocessing'));});
+ for(const card of document.querySelectorAll('.configuration,#workflow-postprocessing'))queueMicrotask(()=>validatePostprocessor(card));
+ $('#workflow-postprocessing').querySelectorAll('textarea').forEach(shellEditor);
+ for(const input of $('#workflow-postprocessing').querySelectorAll('[data-path]'))if(input.value.trim())validatePath(input);
  const solverCommandTimers=new WeakMap();
  function solverCommandData(card){return {command:card.querySelector('[name="command"]').value,directory:card.querySelector('[name="solver_directory"]').value,build_on_cluster:card.querySelector('[name="build_mode"]').value==='script'};}
  function solverCommandKey(card){return JSON.stringify(solverCommandData(card));}
@@ -449,8 +488,8 @@ if(document.body.dataset.page==='new'){
  }
  for(const input of document.querySelectorAll('[name="glob"],[name="axiom_glob"]'))if(input.value.trim()&&!input.value.includes('/path/to/'))validatePath(input);
  for(const input of document.querySelectorAll('#limiter-resources [data-path]'))if(input.value.trim()&&!input.value.includes('/path/to/'))validatePath(input);
- function fields(card){return Object.fromEntries([...card.querySelectorAll('[name]')].map(n=>[n.name,n.value]));}
- function payload(){const names=['name','partition','account','reservation','batch_size','max_outstanding','pair_order','mode','jobpairs','configurations_file','building_mode','building_file','limiter_mode','limiter_file','limiter'];const data=Object.fromEntries(names.map(n=>[n,rootValue(n)]));data.host=rootValue('host');data.get_computer_info=form.querySelector('[name="get_computer_info"]').checked;const cards=[...document.querySelectorAll('.configuration')];data.configurations=cards.map(card=>{const row=fields(card);for(const key of Object.keys(row))if(key.startsWith('build_'))delete row[key];row.cpus='auto';return row;});data.resources=[...document.querySelectorAll('.resource')].sort((a,b)=>Number(a.dataset.resourceOrder)-Number(b.dataset.resourceOrder)).filter(node=>data.mode!=='interactive'||node.dataset.resourceRole==='limiter').map(node=>({...fields(node),role:node.dataset.resourceRole}));if(data.mode==='interactive'&&data.building_mode==='create'){const seen=new Map();for(const card of cards){const value=fields(card);const resource={role:'solver',root:value.solver_directory,mode:value.build_mode,source:value.build_source,script:value.build_script,build_policy:value.build_policy,artifact:value.build_mode==='script'?solverArtifact(value.command,value.solver_directory):''};const previous=seen.get(resource.root);if(previous){if(resource.mode!=='none'&&previous.mode!=='none'&&JSON.stringify(resource)!==JSON.stringify(previous))throw new Error(`Conflicting build settings for solver root ${resource.root}`);if(previous.mode==='none'&&resource.mode!=='none')Object.assign(previous,resource);}else{seen.set(resource.root,resource);data.resources.push(resource);}}}data.globs=[...document.querySelectorAll('[name="glob"]')].map(n=>n.value);data.problem_selections=[...document.querySelectorAll('[name="problem_selection"]')].map(n=>n.value);data.problem_selection_modes=[...document.querySelectorAll('.problem-names-mode')].map(n=>n.value);data.axiom_mode='custom';data.axiom_globs=[...document.querySelectorAll('[name="axiom_glob"]')].map(n=>n.value);return data;}
+ function fields(card){return Object.fromEntries([...card.querySelectorAll('[name]')].map(n=>[n.name,n.type==='checkbox'?n.checked:n.value]));}
+ function payload(){const names=['name','partition','account','reservation','batch_size','max_outstanding','pair_order','mode','jobpairs','configurations_file','building_mode','building_file','limiter_mode','limiter_file','limiter'];const data=Object.fromEntries(names.map(n=>[n,rootValue(n)]));data.host=rootValue('host');data.postprocessor=Object.fromEntries(['mode','directory','command','timeout'].map(key=>[key,postField($('#workflow-postprocessing'),key).value]));data.get_computer_info=form.querySelector('[name="get_computer_info"]').checked;const cards=[...document.querySelectorAll('.configuration')];data.configurations=cards.map(card=>{const row=fields(card);for(const key of Object.keys(row))if(key.startsWith('build_'))delete row[key];row.cpus='auto';return row;});data.resources=[...document.querySelectorAll('.resource')].sort((a,b)=>Number(a.dataset.resourceOrder)-Number(b.dataset.resourceOrder)).filter(node=>data.mode!=='interactive'||node.dataset.resourceRole==='limiter').map(node=>({...fields(node),role:node.dataset.resourceRole}));if(data.mode==='interactive'&&data.building_mode==='create'){const seen=new Map();for(const card of cards){const value=fields(card);const resource={role:'solver',root:value.solver_directory,mode:value.build_mode,source:value.build_source,script:value.build_script,build_policy:value.build_policy,artifact:value.build_mode==='script'?solverArtifact(value.command,value.solver_directory):''};const previous=seen.get(resource.root);if(previous){if(resource.mode!=='none'&&previous.mode!=='none'&&JSON.stringify(resource)!==JSON.stringify(previous))throw new Error(`Conflicting build settings for solver root ${resource.root}`);if(previous.mode==='none'&&resource.mode!=='none')Object.assign(previous,resource);}else{seen.set(resource.root,resource);data.resources.push(resource);}}}data.globs=[...document.querySelectorAll('[name="glob"]')].map(n=>n.value);data.problem_selections=[...document.querySelectorAll('[name="problem_selection"]')].map(n=>n.value);data.problem_selection_modes=[...document.querySelectorAll('.problem-names-mode')].map(n=>n.value);data.axiom_mode='custom';data.axiom_globs=[...document.querySelectorAll('[name="axiom_glob"]')].map(n=>n.value);return data;}
  function solverArtifact(command,root){const executable=command.trim().match(/^(?:'([^']+)'|"([^"]+)"|(\S+))/)?.slice(1).find(Boolean)||'';if(!executable)throw new Error('Enter the solver command before configuring its build.');const path=executable.startsWith(root+'/')?executable.slice(root.length+1):executable.replace(/^\.\//,'');if(path.startsWith('/')||path==='..'||path.startsWith('../')||path.includes('/../')||path.includes('{{'))throw new Error('For a remote build, start the solver command with an executable relative to the solver root.');return path;}
  const batchInput=form.querySelector('[name="batch_size"]');
  let batchRequest=0,batchTimer=null,lastBatchSuggestion=null;
@@ -512,7 +551,8 @@ if(document.body.dataset.page==='new'){
    const time=card('5. Respect the Six-Hour Limit',`${amount(data.wall_limit_seconds,'second')}/batch = 6 hours/batch`,'Use the largest wall-clock limit of any pair as a conservative bound. Include the same startup and per-pair overhead as the submission planner.');
    if(data.wall_time_unknown)time.append(el('p','A zero wall limit is unbounded, so no finite batch size can be guaranteed to finish within six hours. The capacity/window estimate is retained; SLURM may stop an unfinished batch at its allocation limit.'));
    else{
-    explain(time,`floor((${amount(data.wall_limit_seconds,'second')}/batch − ${amount(data.batch_startup_seconds,'second')}/batch startup) ÷ (${amount(data.max_pair_wall_seconds,'second')}/pair + ${amount(data.pair_overhead_seconds,'second')}/pair overhead)) = ${amount(data.wall_time_capacity,'pair')}/batch`,'This upper bound assumes every pair reaches its wall limit. Faster pairs may finish sooner.');
+    (data.configuration_wall_seconds||[]).forEach((wall,index)=>explain(time,`${data.configuration_names[index]}: ${amount(wall,'second')}/pair wall + ${amount(data.pair_overhead_seconds,'second')}/pair overhead + ${amount(data.configuration_postprocessor_seconds[index],'second')}/pair postprocessing = ${amount(wall+data.pair_overhead_seconds+data.configuration_postprocessor_seconds[index],'second')}/pair`,'Active postprocessing reserves timeout + 5 seconds; disabled postprocessing reserves zero.'));
+    explain(time,`floor((${amount(data.wall_limit_seconds,'second')}/batch − ${amount(data.batch_startup_seconds,'second')}/batch startup) ÷ ${amount(data.max_pair_budget_seconds,'second')}/pair combined budget) = ${amount(data.wall_time_capacity,'pair')}/batch`,'Postprocessing reserves timeout + 5 seconds per active pair; None adds zero. The capacity uses the largest combined pair budget. Faster pairs may finish sooner.');
     if(!data.wall_single_pair_fits)time.append(el('p','Even one pair can exceed this budget. A batch size of 1 is suggested, but finishing before the SLURM limit cannot be guaranteed.'));
    }
   }
@@ -579,10 +619,13 @@ if(document.body.dataset.page==='new'){
   if(step===1&&rootValue('mode')==='interactive'&&!$('#configurations .configuration'))throw new Error('Add a solver configuration or copy one from an existing workflow before continuing.');
   if(step===1&&rootValue('mode')==='interactive')await Promise.all([...document.querySelectorAll('.configuration')].map(waitForPlacement));
   if(step===1&&rootValue('mode')==='interactive')for(const card of document.querySelectorAll('.configuration'))await validateEnvironment(card);
+  if(step===1&&rootValue('mode')==='interactive'&&!await validatePostprocessor($('#workflow-postprocessing'))){$('#workflow-postprocessing').open=true;throw new Error('Correct the workflow postprocessor folder and command.');}
   const inputs=[...sections[step].querySelectorAll('input,textarea,select')].filter(n=>n.type!=='hidden'&&!n.closest('[hidden]'));
   for(const input of inputs){if(!input.value.trim()&&!input.dataset.optional){const details=input.closest('.solver-card-section,.problem-card-section,.limiter-card-section');if(details)details.open=true;input.focus();throw new Error('Fill in each visible setting before continuing.');}if(!input.checkValidity()){const details=input.closest('.solver-card-section,.problem-card-section,.limiter-card-section');if(details)details.open=true;input.reportValidity();throw new Error('Please correct the highlighted field.');}}
   for(const input of inputs.filter(n=>n.dataset.path&&n.value.trim())){if(input.dataset.validated!==input.value&&!await validatePath(input)){const details=input.closest('.solver-card-section,.problem-card-section,.limiter-card-section');if(details)details.open=true;throw new Error('Correct the path highlighted above.');}}
+  if(step===1&&rootValue('mode')==='interactive'){syncGlobalPostprocessor();if($('#workflow-postprocessing').dataset.state!=='valid'){$('#workflow-postprocessing').open=true;throw new Error('Complete workflow postprocessing before continuing.');}}
   if(step===1&&rootValue('mode')==='interactive')for(const card of document.querySelectorAll('.configuration')){
+   if(!await validatePostprocessor(card)){const section=card.querySelector('[data-solver-section="postprocessing"]');section.open=true;throw new Error('Correct the custom postprocessor folder and command.');}
    if(!await validateSolverCommand(card))throw new Error('Correct the solver executable highlighted under Command.');
    updateSolverStatus(card);const section=card.querySelector('.solver-card-section[data-state="invalid"]');if(section&&!section.hidden){section.open=true;section.querySelector('input,textarea,select')?.focus();throw new Error('Complete the highlighted solver section before continuing.');}
   }

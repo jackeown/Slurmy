@@ -122,6 +122,7 @@ def suggest(data):
         group_counts = [len(problems)]*len(configurations)
     else:
         raise ValueError('Choose how to define solver-problem pairs.')
+    configurations = [{**config, **workflows.effective_postprocessor(config, data)} for config in configurations]
     account = workflows.alias(data['account']) if data.get('account') else ''
     nodes = partition_nodes(host, partition, account) if account else partition_nodes(host, partition)
     submit_limit = getattr(nodes, 'submit_limit', 50 if not account or account=='default' else None)
@@ -136,7 +137,11 @@ def suggest(data):
     wall_limit = 6*60*60
     unknown = any(limit == 0 for limit in wall_limits)
     max_wall = max(wall_limits)
-    time_capacity = None if unknown else (wall_limit-60)//(max_wall+overhead)
+    postprocessing = [workflows.postprocessor_settings(config, check_paths=False) for config in configurations]
+    post_budgets = [0 if config['postprocessor_mode'] == 'none' else config['postprocessor_timeout'] + 5 for config in postprocessing]
+    max_post = max(post_budgets)
+    max_pair_budget = max(wall + overhead + post for wall, post in zip(wall_limits, post_budgets))
+    time_capacity = None if unknown else (wall_limit-60)//max_pair_budget
     selected = min(target, max(1,time_capacity)) if time_capacity is not None else target
     suggestion = submission_fit(configurations, group_counts, selected, *options, account_submit_limit=submit_limit)
     result.update(fit)
@@ -146,6 +151,9 @@ def suggest(data):
                   suggested_fits=suggestion['estimated_batches'] <= suggestion['submission_budget'])
     result.update(wall_limit_seconds=wall_limit, batch_startup_seconds=60,
                   pair_overhead_seconds=overhead, max_pair_wall_seconds=max_wall,
+                  max_postprocessor_seconds=max_post, configuration_postprocessor_seconds=post_budgets,
+                  configuration_wall_seconds=wall_limits,
+                  max_pair_budget_seconds=max_pair_budget,
                   wall_time_unknown=unknown, wall_time_capacity=time_capacity,
                   wall_single_pair_fits=None if unknown else time_capacity>=1,
                   unconstrained_batch_size=target,

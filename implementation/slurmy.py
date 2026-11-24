@@ -25,11 +25,11 @@ from slurmy_archives import expand_axiom_pattern, expand_axiom_source, tptp_coll
 
 VERSION = "1.0.0"
 COLUMNS = ("solver_name", "command", "solver_directory", "problem", "wc_limit", "cpu_limit", "mem_limit", "cores",
-           "threads_per_core", "cpus", "exclusive_cpu", "exclusive_node", "omit_cpu_limit", "omit_wc_limit", "omit_mem_limit", "environment")
+           "threads_per_core", "cpus", "exclusive_cpu", "exclusive_node", "omit_cpu_limit", "omit_wc_limit", "omit_mem_limit", "environment", "postprocessor_mode", "postprocessor_directory", "postprocessor_command", "postprocessor_timeout")
 RESULT_COLUMNS = ("task_id", "complete", "status", "return_code", "wall_seconds",
                   "cpu_seconds", "user_seconds", "system_seconds", "cpu_usage_percent",
                   "max_virtual_memory_kib", "max_memory_kib", "timed_out", "memory_out",
-                  "task_key", "archive", "szs_status", "szs_output")
+                  "task_key", "archive", "szs_status", "szs_output", "postprocess_data", "postprocess_return_code", "postprocess_error", "postprocess_status")
 REPO = Path(__file__).resolve().parents[1]
 PLACEHOLDER = re.compile(r"\{\{([a-z_]+)\}\}")
 PAIR_ORDERS = ("problem-major", "solver-major", "random")
@@ -98,7 +98,7 @@ def read_pairs(filename: Path, host=None, partition=None) -> list[dict]:
     with filename.open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         headers = reader.fieldnames or []
-        required = set(COLUMNS) - {"solver_name", "threads_per_core", "exclusive_cpu", "exclusive_node", "omit_cpu_limit", "omit_wc_limit", "omit_mem_limit", "environment"}
+        required = set(COLUMNS) - {"solver_name", "threads_per_core", "exclusive_cpu", "exclusive_node", "omit_cpu_limit", "omit_wc_limit", "omit_mem_limit", "environment", "postprocessor_mode", "postprocessor_directory", "postprocessor_command", "postprocessor_timeout"}
         if len(headers) != len(set(headers)) or not required <= set(headers) or set(headers) - set(COLUMNS):
             raise SlurmyError(f"{filename}: columns must be {', '.join(COLUMNS)}; threads_per_core and exclusivity columns may be omitted")
         for row in reader:
@@ -152,7 +152,26 @@ def read_pairs(filename: Path, host=None, partition=None) -> list[dict]:
             try:environment=solver_environment.parse(row.get('environment'))
             except ValueError as exc:raise SlurmyError(f'{label}: {exc}') from exc
             if environment:task['environment']=environment
-            task["task_key"] = hashlib.sha256(json.dumps(task, sort_keys=True).encode()).hexdigest()[:16]
+            mode=(row.get('postprocessor_mode') or 'default').strip()
+            if mode not in {'default','custom','none'}:raise SlurmyError(f'{label}: invalid postprocessor mode')
+            timeout=0 if mode=='none' else positive(str(row.get('postprocessor_timeout') or '30').strip(),f'{label}: postprocessor timeout')
+            if timeout>600:raise SlurmyError(f'{label}: postprocessor timeout must be at most 600 seconds')
+            task.update(postprocessor_mode=mode,postprocessor_timeout=timeout if mode!='none' else 0,
+                        postprocessor_directory='',postprocessor_command='')
+            if mode=='custom':
+                directory=path_at(row.get('postprocessor_directory') or '',filename.parent)
+                command=(row.get('postprocessor_command') or '').strip()
+                if not row.get('postprocessor_directory') or not directory.is_dir():raise SlurmyError(f'{label}: postprocessor directory does not exist')
+                if not command or '\x00' in command:raise SlurmyError(f'{label}: enter a postprocessor command')
+                words=shlex.split(command)
+                while words and (words[0]=='exec' or re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*',words[0])):words.pop(0)
+                if not words:raise SlurmyError(f'{label}: enter a postprocessor executable')
+                executable=path_at(words[0],directory)
+                if not executable.is_file() and not (not words[0].startswith(('/','.')) and shutil.which(words[0])):
+                    raise SlurmyError(f'{label}: postprocessor executable does not exist: {words[0]}')
+                task.update(postprocessor_directory=str(directory),postprocessor_command=command)
+            # The postprocessor is part of the configured pair identity.
+            task['task_key']=hashlib.sha256(json.dumps(task,sort_keys=True).encode()).hexdigest()[:16]
             task.setdefault('environment',{})
             tasks.append(task)
     if not tasks:
@@ -369,7 +388,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
     limiter = re.sub(r"^\s*(?:'[^']*'|\"[^\"]*\"|\S+)", lambda _: remote_path(limiter_path), limiter, count=1)
     # Every command runs in its explicitly selected, mirrored solver directory.
     problems = {Path(t["problem"]) for t in tasks if not t['remote_problem']}
-    packaged_roots = set(roots + [Path(t['solver_root']) for t in tasks])
+    packaged_roots = set(roots + [Path(t['solver_root']) for t in tasks] + [Path(t['postprocessor_directory']) for t in tasks if t['postprocessor_mode']=='custom'])
     for task in tasks:
         lexer = shlex.shlex(task['command'], posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
@@ -382,6 +401,10 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         values.update(mem_limit=str(math.ceil(task["mem_limit"] / 10**6)),
                       mem_limit_mib=str(math.ceil(task["mem_limit"] / 2**20)),
                       problem=(shlex.quote(task['problem']) if task['remote_problem'] else remote_path(Path(task["problem"]))))
+        if task['postprocessor_mode']=='custom':
+            post_words=shlex.split(task['postprocessor_command'])
+            post_paths=[Path(word) for word in post_words if word.startswith('/') and any(Path(word).is_relative_to(root) for root in packaged_roots)]
+            task['remote_postprocessor_command']=render(relocate(task['postprocessor_command'],post_paths),values)
         task["remote_command"] = solver_environment.exports(task["environment"], values) + render(relocate(omit_unlimited_arguments(task["command"], task), command_paths), values)
         values["solver_command"] = '/bin/bash "$CALL_DIR/solver.sh"'
         for name in ("watcher_log", "var_file", "solver_log"):
@@ -451,9 +474,18 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
                             '(( stdout_status == 0 && stderr_status == 0 )) || exit 74\n'
                             'exit "$solver_status"\n')
                     else:
-                        solver_script = ('#!/usr/bin/env bash\n( ' + task['remote_command'] +
-                                         ' ) 2> "$SOLVER_STDERR_LOG"\n')
+                        solver_script = ('#!/usr/bin/env bash\n'
+                                         'exec 3> >(tee "$SOLVER_STDOUT_LOG")\nstdout_capture=$!\n'
+                                         '( ' + task['remote_command'] + ' ) >&3 2> "$SOLVER_STDERR_LOG"\nsolver_status=$?\n'
+                                         'exec 3>&-\nwait "$stdout_capture" || exit 74\nexit "$solver_status"\n')
                     emit('solver.sh', solver_script)
+                    if task['postprocessor_mode']=='default':
+                        post_script='#!/usr/bin/env bash\nexec python3 "$JOB_DIR/default_postprocessor.py" "$1" "$2"\n'
+                    elif task['postprocessor_mode']=='custom':
+                        post_script=('#!/usr/bin/env bash\nset -e\ncd -- '+remote_path(Path(task['postprocessor_directory']))+'\n'+task['remote_postprocessor_command']+' "$1" "$2"\n')
+                    else:post_script='#!/usr/bin/env bash\nexit 0\n'
+                    emit('postprocess.sh',post_script)
+
                     # Executable bits can be lost when resource trees cross filesystems
                     # (notably when workflows are prepared on macOS and staged on Linux).
                     # Repair the known limiter binary on the cluster immediately before
@@ -479,6 +511,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
                         "cores": task["cores"], "threads_per_core": task["threads_per_core"],
                         "cpus": task["cpus"], "wc_limit": task["wc_limit"],
                         "cpu_limit": task["cpu_limit"], "mem_limit_mib": math.ceil(task["mem_limit"] / 2**20),
+                        "postprocessor_mode": task["postprocessor_mode"], "postprocessor_timeout": task["postprocessor_timeout"],
                         "get_computer_info": int(get_computer_info),
                         "computer_info_timestamp": int(computer_info_timestamp),
                             "solver_root_rel": task['solver_root'].lstrip("/"),
@@ -495,7 +528,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
             config += f"BATCH_ID={i}\nEXCLUSIVE_CPU={int(any(t['exclusive_cpu'] for t in batch))}\nEXCLUSIVE_NODE={int(any(t['exclusive_node'] for t in batch))}\n"
             memory = 0 if any(t["mem_limit"] == 0 for t in batch) else len(batch) * (max(math.ceil(t["mem_limit"] / 2**20) for t in batch) + 128)
             config += f"MEMORY_MIB={memory}\n"
-            wall = 604800 if any(t["wc_limit"] == 0 for t in batch) else 60 + sum(t["wc_limit"] + (80 if get_computer_info else 30) for t in batch)
+            wall = 604800 if any(t["wc_limit"] == 0 for t in batch) else 60 + sum(t["wc_limit"] + (80 if get_computer_info else 30) + (t["postprocessor_timeout"]+5 if t["postprocessor_mode"]!="none" else 0) for t in batch)
             config += f"WALL_SECONDS={wall}\n"
             config += shell_array("TASK_THREADS_PER_CORE", [t["threads_per_core"] for t in batch])
             config += f"MAX_CORES={max(t['cores'] for t in batch)}\nMAX_CPUS={max(t['cpus'] for t in batch)}\n"
@@ -516,6 +549,9 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         shutil.copyfile(REPO / "implementation/job_names.py", assets / "job_names.py")
         shutil.copyfile(REPO / "implementation/tools/GetComputerInfo", assets / "GetComputerInfo")
         (assets / "szs.sh").write_text(szs.shell_library())
+        shutil.copyfile(REPO/'implementation/szs.py',assets/'szs.py')
+        shutil.copyfile(REPO/'implementation/postprocessing.py',assets/'postprocessing.py')
+        shutil.copyfile(REPO/'implementation/postprocessors/default_szs.py',assets/'default_postprocessor.py')
         # Reuse the local build driver. Remote recipes build in a disposable
         # copy of the declared root; downloaded files preserve that layout.
         shutil.copy2(REPO / "implementation/build/slurmy-build.py", assets / "builds/driver.py")
@@ -593,7 +629,8 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         if progress:
             progress('phase', 'Collecting resource paths for packaging', 0, 0)
         entries = sorted(set(roots + [source for source in axioms if not str(source).startswith('tptp:')] + [Path(t['solver_root']) for t in tasks] +
-                             [Path(t['problem']) for t in tasks if not t['remote_problem']]))
+                             [Path(t['problem']) for t in tasks if not t['remote_problem']] +
+                             [Path(t['postprocessor_directory']) for t in tasks if t['postprocessor_mode']=='custom']))
         entry_set = set(entries)
         selected = []
         for index, path in enumerate(entries, 1):
