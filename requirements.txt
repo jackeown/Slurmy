@@ -1,2 +1,5 @@
 Flask>=3.1,<4
 waitress>=3,<4
+
+# Used only by download.py --interactive; ordinary downloads use the standard library.
+rich>=13.7,<15

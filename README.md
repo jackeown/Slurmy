@@ -399,3 +399,44 @@ preview use direct script bundles, avoiding three local script files per pair.
 The upload phase distinguishes local problem uploads from cluster TPTP use;
 local solver/limiter resources and batch definitions still need transferring.
 A resource set to build for every job—including runsolver—still runs that build.
+
+
+### Downloading from Python or the Terminal
+
+The root-level `download.py` uses the same download engine as the job page:
+
+```sh
+python download.py "My workflow (1)" --mode default
+python download.py "My workflow (1)" --mode verbose
+python download.py --latest --mode starexec
+python download.py --interactive
+```
+
+Use the displayed job name or its stable Slurmy ID. Names must match exactly;
+if a name is ambiguous, use the ID. `--latest` selects the most recently
+originally dispatched job, unaffected by renames, result updates or resumes.
+`--interactive` uses Rich lists to choose both the mode and job. Rich is included
+in `requirements.txt`, or install it with `python -m pip install rich`; normal
+commands and the Python function work without it.
+
+```python
+from download import download
+
+success = download("My workflow (1)", mode="default")
+# Also supported:
+success = download(latest=True, mode="starexec", host="datalab")
+```
+
+The function prints nothing and returns `True` on success or `False` on failure
+(including missing/ambiguous names and connection errors). It downloads the
+currently available results; it does not wait for a running job to finish.
+Formats are `default` (CSV and three output archives), `verbose` (complete
+results and diagnostics), and `starexec` (compatible ZIPs). The normal CLI prints
+progress and exits 0 on success, 1 on failure, or 130 on cancellation.
+
+Both interfaces accept an SSH host (`--host` / `host=`), destination
+(`--output` / `output=`), and SSH timeout (`--ssh-timeout` / `ssh_timeout=`).
+Without a destination, files go into this repository's `job-results/`, using the
+same mode-specific subdirectories as the interface. Explicit relative output
+paths are relative to your current directory. Verbose downloads require rsync,
+just like the verbose button in the interface.
