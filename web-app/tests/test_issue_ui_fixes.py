@@ -12,12 +12,14 @@ class IssueUIFixTests(unittest.TestCase):
     def test_generated_files_have_descriptive_order_and_preserve_file_actions(self):
         env = Environment(loader=FileSystemLoader(WEB/'templates'))
         template = env.from_string((WEB/'templates/experiment.html').read_text().replace("{% extends 'base.html' %}", ''))
-        names = ['workflow.json','jobpairs.csv','configurations.csv','problem-globs.txt','axiom-globs.txt','building.txt','resource_limiter_template.txt','Makefile']
+        names = ['workflow.json','jobpairs.csv','configurations.csv','problem-globs.txt','axiom-globs.txt','problem-selection.json','building.txt','resource_limiter_template.txt','Makefile']
         html = template.render(files=dict.fromkeys(names,'[]'), directory='/users/demo', base='/users/', name='demo', host='datalab',
                                url_for=lambda *args, **kwargs:'/endpoint')
-        labels=['Solvers (.csv)','Problems (globs as .txt)','Axioms (globs as .txt)','Job pairs (.csv)',
-                'Resource limiter (.txt)','Solver and limiter builds (.json)','Workflow (.json)',
-                'Makefile (for hardcore users)','Prepared batches (for SLURM monitoring)']
+        labels=['Solvers (<code>configurations.csv</code>)','Problems (<code>problem-globs.txt</code>)',
+                'Axioms (<code>axiom-globs.txt</code>)','Problem selection (<code>problem-selection.json</code>)',
+                'Job pairs (<code>jobpairs.csv</code>)','Resource limiter (<code>resource_limiter_template.txt</code>)',
+                'Solver and limiter builds (<code>building.txt</code>)','Workflow (<code>workflow.json</code>)',
+                '<code>Makefile</code> (for hardcore users)','Prepared batches (for SLURM monitoring)']
         positions=[html.index(label) for label in labels]
         self.assertEqual(positions,sorted(positions))
         for name in names:

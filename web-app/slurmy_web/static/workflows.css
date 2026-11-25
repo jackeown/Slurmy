@@ -650,3 +650,5 @@ details[data-section-state="closing"] > summary::before { transform: rotate(0deg
 .problem-name-file-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .problem-name-file-list li > span { overflow-wrap: anywhere; min-width: 0; }
 .problem-name-file-list button { flex-shrink: 0; }
+
+.workflow-file-name code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 1em; }
