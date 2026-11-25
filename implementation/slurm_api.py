@@ -134,6 +134,38 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise RuntimeError('SLURM API redirects are not followed; configure the final API URL.')
 
 
+def error_details(errors, token=''):
+    """Keep SLURM's actual error and code, not just a generic description."""
+    if not isinstance(errors, list):
+        return ''
+    details = []
+    reservation_invalid = False
+    for entry in errors:
+        if not isinstance(entry, dict):
+            continue
+        messages = []
+        for key in ('error', 'description'):
+            text = str(entry.get(key) or '').strip()
+            if token:
+                text = text.replace(token, '[redacted]')
+            if text and text not in messages:
+                messages.append(text)
+        code = entry.get('error_number')
+        if code not in (None, 0, '0', ''):
+            messages.append('SLURM error ' + str(code))
+        if messages:
+            details.append('; '.join(messages))
+        text = ' '.join(messages).casefold()
+        reservation_invalid |= str(code) == '2053' or ('reservation' in text and any(word in text for word in ('invalid', 'expired', 'not found')))
+    result = ' | '.join(details)
+    if token:
+        result = result.replace(token, '[redacted]')
+    result = result[:800]
+    if reservation_invalid:
+        result = result.rstrip('. ') + '. Check the saved SLURM reservation: it may have expired or been removed. Choose a valid reservation, or clear the workflow reservation before dispatching a new job. Resume retains the existing job settings'
+    return result
+
+
 def request(host, endpoint, method='GET', payload=None, timeout=12):
     config = settings(host)
     if not re.fullmatch(r'[a-zA-Z0-9_/-]+', endpoint):
@@ -153,8 +185,7 @@ def request(host, endpoint, method='GET', payload=None, timeout=12):
             if exc.code in {401, 403} and not attempt: continue
             detail = ''
             try:
-                errors = json.load(exc).get('errors', [])
-                detail = '; '.join(str(e.get('description') or e.get('error') or '') for e in errors)[:800]
+                detail = error_details(json.load(exc).get('errors', []), auth['token'])
             except (ValueError, AttributeError, TypeError):
                 pass
             detail = detail.replace(auth['token'], '[redacted]')
@@ -164,8 +195,7 @@ def request(host, endpoint, method='GET', payload=None, timeout=12):
         if not isinstance(value, dict):
             raise RuntimeError('Invalid SLURM API response.')
         if value.get('errors'):
-            errors = '; '.join(str(e.get('error') or e.get('description') or e.get('error_number')) for e in value['errors'])
-            raise RuntimeError('SLURM API: '+errors.replace(auth['token'], '[redacted]'))
+            raise RuntimeError('SLURM API: ' + (error_details(value['errors'], auth['token']) or 'request rejected'))
         if method == 'DELETE':
             failures = [item.get('error', {}) for item in value.get('status', []) if item.get('error', {}).get('code', 0)]
             if failures:
