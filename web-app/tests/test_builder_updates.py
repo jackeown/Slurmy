@@ -97,14 +97,16 @@ class BuilderUpdateTests(unittest.TestCase):
         source=(Path(__file__).parent.parent/'slurmy_web/static/builder.js').read_text()
         start=source.index(" form.addEventListener('change',async event=>{\n  if(!event.target.matches('.problem-names-mode")
         end=source.index("\n for(const card",start)
-        handler=source[source.index(' function initializeProblemNames('):source.index(' function fill(')]+source[start:end]
+        handler=source[source.index(' function nameFileContents('):source.index(' function fill(')]+source[start:end]
         program=r'''
 const assert=require('assert');let change,validated=0;
 const form={addEventListener:(type,fn)=>change=fn};
+const list={children:[],replaceChildren(){this.children=[]},append(child){this.children.push(child)}};
+const document={createElement:()=>({children:[],append(...children){this.children.push(...children)},setAttribute(){},addEventListener(type,handler){this.click=handler}})};
 const mode={value:'files',matches:()=>true,closest:()=>row},status={},panel={},namesPanel={},glob={};
 const text={value:'old.p',dispatchEvent:()=>{}};
 const picker={files:[{name:'one.txt',text:async()=>"\uFEFFB.p\nA.p"},{name:'two.txt',text:async()=>"/other/C.p\nrelative/D.p"}],matches:()=>true,setCustomValidity(value){this.error=value},closest:()=>row};
-const row={_namesMode:'files',querySelector:selector=>({'.problem-names-text':namesPanel,'.problem-names-mode':mode,'.problem-name-files':picker,'[name="problem_selection"]':text,'.problem-names-status':status,'.problem-names-files':panel,'[name="glob"]':glob}[selector])};
+const row={_namesMode:'files',querySelector:selector=>({'.problem-name-file-list':list,'.problem-names-text':namesPanel,'.problem-names-mode':mode,'.problem-name-files':picker,'[name="problem_selection"]':text,'.problem-names-status':status,'.problem-names-files':panel,'[name="glob"]':glob}[selector])};
 const beginWork=()=>()=>{};const validatePath=async()=>{validated++};
 '''+handler+r'''
 (async()=>{
@@ -112,12 +114,17 @@ await change({target:picker});
 assert.equal(text.value,'B.p\nA.p\n/other/C.p\nrelative/D.p');assert.equal(validated,1);assert.equal(picker.error,'');
 assert(status.textContent.includes('one.txt → two.txt'));
 assert.equal(namesPanel.hidden,true);
+assert.equal(list.children.length,2);
+picker.files=[{name:'third.txt',text:async()=> 'E.p'}];await change({target:picker});
+assert.equal(list.children.length,3);assert(text.value.endsWith('E.p'));
+await list.children[1].children[1].click();assert.equal(list.children.length,2);
+assert.equal(text.value,'B.p\nA.p\nE.p');
 mode.value='disabled';await change({target:mode});assert.equal(text.value,'');assert.equal(panel.hidden,true);assert.equal(namesPanel.hidden,true);assert.equal(picker.error,'');
 mode.value='names';await change({target:mode});assert.equal(namesPanel.hidden,false);assert.equal(panel.hidden,true);text.value='typed.p';
-mode.value='files';await change({target:mode});assert.equal(text.value,'B.p\nA.p\n/other/C.p\nrelative/D.p');assert.equal(namesPanel.hidden,true);assert.equal(panel.hidden,false);
+mode.value='files';await change({target:mode});assert.equal(text.value,'B.p\nA.p\nE.p');assert.equal(namesPanel.hidden,true);assert.equal(panel.hidden,false);
 
 picker.files=[{name:'bad.txt',text:async()=>{throw Error('read failed')}}];
-const previous=text.value;await change({target:picker});assert.equal(text.value,previous);assert(picker.error);assert.equal(validated,4);
+const previous=text.value;await change({target:picker});assert.equal(text.value,previous);assert(picker.error);assert.equal(validated,6);
 mode.value='names';await change({target:mode});assert.equal(text.value,'typed.p');
 text.value='saved.p';initializeProblemNames(row,{problem_selection_mode:'files'});assert.equal(mode.value,'files');assert.equal(namesPanel.hidden,true);assert.equal(panel.hidden,false);assert.equal(text.value,'saved.p');
 })().catch(error=>{console.error(error);process.exitCode=1});

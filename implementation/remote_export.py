@@ -196,7 +196,8 @@ def export(root: Path, combined: bool = False) -> None:
                 os.replace(staging / name, directory / name)
             (staging / '.signature').write_text(signature + '\n', encoding='ascii')
             os.replace(staging / '.signature', signature_file)
-        print(f'Export ready: {count} solver-problem pairs', flush=True)
+        completed = sum(str(result.get('complete', '')).lower() == 'true' for result in results.values())
+        print(f'Export ready: {completed}/{count} solver-problem pairs finished; summary includes unfinished pairs', flush=True)
         print('EXPORT_FILES|' + '|'.join(names), flush=True)
 
 

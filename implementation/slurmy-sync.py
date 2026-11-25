@@ -128,7 +128,7 @@ def resolve_job_id(host: str, requested: str | None, timeout: float) -> str:
     return job_id
 
 
-def rsync_job(host: str, job_id: str, destination: Path, timeout: float) -> int:
+def rsync_job(host: str, job_id: str, destination: Path, timeout: float, *, mirror=False) -> int:
     if shutil.which("rsync") is None:
         raise SyncError("Verbose incremental downloads require rsync. Install rsync, or use the standard download instead.")
     destination.mkdir(parents=True, exist_ok=True)
@@ -171,6 +171,8 @@ def rsync_job(host: str, job_id: str, destination: Path, timeout: float) -> int:
         f"{host}:slurmy/jobs/{job_id}/",
         os.fspath(destination) + "/",
     ]
+    if mirror:
+        command.insert(1, '--delete')
     try:
         process = subprocess.run(
             command,
@@ -682,7 +684,8 @@ def sync_loop(args: argparse.Namespace) -> int:
     iteration = 0
     while True:
         iteration += 1
-        changed_paths = rsync_job(args.host, job_id, raw, args.ssh_timeout)
+        changed_paths = (rsync_job(args.host, job_id, raw, args.ssh_timeout, mirror=True) if getattr(args, 'incremental', False)
+                         else rsync_job(args.host, job_id, raw, args.ssh_timeout))
         summary = build_summary(
             host=args.host,
             job_id=job_id,
@@ -861,6 +864,79 @@ def starexec_sync_loop(args):
         time.sleep(max(15, args.interval))
 
 
+def incremental_sync_loop(args):
+    """Transfer changed raw files once, then publish a complete local snapshot."""
+    import fcntl
+    from download_records import record
+    from remote_export import export
+    from starexec_export import export as export_starexec
+    if args.follow:
+        raise SyncError('--incremental snapshots cannot be combined with --follow.')
+    if shutil.which('rsync') is None:
+        raise SyncError('Incremental downloads require rsync. Install rsync or omit --incremental.')
+    job_id = resolve_job_id(args.host, args.job_id, args.ssh_timeout)
+    root = Path.cwd()/'job-results'
+    key = hashlib.sha256((args.host+'\0'+job_id).encode()).hexdigest()
+    cache = root/'.download-cache'/key
+    if cache.is_symlink() or cache.parent.is_symlink():
+        raise SyncError('Download cache must not be a symlink.')
+    cache.mkdir(parents=True, exist_ok=True)
+    record(root, cache, args.host, job_id)
+    mode = 'verbose' if args.verbose else 'starexec' if args.starexec else 'default'
+    destination = Path(args.output).expanduser().absolute() if args.output else root/(mode if mode!='default' else '')/job_id
+    if destination.is_symlink() or destination == cache or destination.is_relative_to(cache):
+        raise SyncError('Choose a snapshot directory outside the download cache.')
+    identity_path = destination.parent/('.slurmy-export-identity-'+hashlib.sha256(os.fsencode(destination.resolve())).hexdigest()+'.json')
+    try:
+        identity = json.loads(identity_path.read_text())
+    except (OSError, ValueError):
+        identity = {}
+    if not isinstance(identity,dict):
+        raise SyncError('Invalid download identity metadata.')
+    if destination.exists() and (not destination.is_dir() or any(path.is_symlink() for path in destination.rglob('*'))):
+        raise SyncError('Snapshot destination must be a normal directory without symlinks.')
+    if identity and (identity.get('host'),identity.get('job_id')) != (args.host,job_id):
+        raise SyncError('This output directory belongs to a different host or job.')
+    with (cache/'.lock').open('a+') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        verbose = cache/'verbose'
+        raw = verbose/'diagnostics'
+        raw.mkdir(parents=True,exist_ok=True)
+        print('Updating local cache; unchanged result files will not be downloaded again…',flush=True)
+        if args.verbose:
+            sync_loop(argparse.Namespace(**{**vars(args),'output':str(verbose),'job_id':job_id}))
+            source = verbose
+            names = [path.name for path in source.iterdir()]
+        else:
+            changed = rsync_job(args.host,job_id,raw,args.ssh_timeout,mirror=True)
+            print(f'{changed} paths updated in the local cache',flush=True)
+            export(raw,combined=args.starexec)
+            source = raw/'exports'/('starexec' if args.starexec else '')
+            names = list(export_names(load_job_metadata(raw)))
+            if args.starexec:
+                signature = (source/'.signature').read_text()
+                converted = cache/'starexec'
+                marker = cache/'.starexec-signature'
+                from starexec_export import job_number
+                names = [f'Job{job_number(job_id)}_info.zip',f'Job{job_number(job_id)}_output.zip']
+                if not marker.is_file() or marker.read_text()!=signature or not all((converted/name).is_file() for name in names):
+                    export_starexec(source,converted,job_id)
+                    marker.write_text(signature)
+                source = converted
+        destination.mkdir(parents=True,exist_ok=True)
+        for name in names:
+            original,target=source/name,destination/name
+            if original.is_dir():
+                shutil.copytree(original,target,dirs_exist_ok=True,symlinks=True,
+                                ignore=lambda directory,entries: {'exports'} if Path(directory)==raw else set())
+            else:
+                shutil.copy2(original,target)
+        identity_path.write_text(json.dumps(dict(host=args.host,job_id=job_id,files=names)))
+        record(root,destination,args.host,job_id)
+        print(f'Complete snapshot saved to {destination}',flush=True)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="slurmy-sync.py",
@@ -890,6 +966,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="keep downloading until every planned task has a complete result",
     )
+    parser.add_argument('--incremental', action='store_true', help='reuse a local rsync cache and publish a complete snapshot')
     formats = parser.add_mutually_exclusive_group()
     formats.add_argument('--verbose', action='store_true',
                         help='download all raw per-solver-problem pair archives, SLURM logs, plans, and metadata')
@@ -919,6 +996,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.ssh_timeout <= 0:
         raise SystemExit("--ssh-timeout must be greater than zero")
     try:
+        if args.incremental:
+            return incremental_sync_loop(args)
         if args.starexec:
             return starexec_sync_loop(args)
         return sync_loop(args) if args.verbose else compact_sync_loop(args)

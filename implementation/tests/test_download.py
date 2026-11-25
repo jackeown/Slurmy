@@ -41,6 +41,14 @@ class DownloadTests(unittest.TestCase):
                 self.assertEqual(run.call_args.kwargs['stdout'],subprocess.DEVNULL)
                 self.assertEqual(run.call_args.kwargs['stderr'],subprocess.DEVNULL)
 
+    def test_incremental_option_is_forwarded_by_function_and_cli(self):
+        with patch.object(api,'list_jobs',return_value=self.jobs),patch.object(api.subprocess,'run',return_value=subprocess.CompletedProcess([],0)) as run:
+            self.assertTrue(api.download('Workflow (1)',incremental=True,output='relative results'))
+            self.assertIn('--incremental',run.call_args.args[0])
+        with patch.object(api,'_perform',return_value=True) as perform:
+            self.assertEqual(api.main(['--latest','--incremental']),0)
+            self.assertTrue(perform.call_args.kwargs['incremental'])
+
     def test_default_destinations_preserve_readable_names_and_mode_folders(self):
         instant = datetime(2026, 11, 25, 13, 14, 15, 123456)
         with tempfile.TemporaryDirectory() as folder, patch.object(api, 'ROOT', Path(folder)), patch.object(api, 'datetime') as clock:

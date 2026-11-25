@@ -2,6 +2,7 @@
 from __future__ import annotations
 from ssh_transport import connection_options
 import slurm_api
+from download_records import snapshots as downloaded_snapshots
 import szs
 
 
@@ -778,17 +779,21 @@ def create_app():
         with guard:
             local = [item.copy() for (item_host, _), item in announced_jobs.items() if item_host == host()]
         value = snapshot()
-        items = [monitored_summary(job) for job in value.jobs]
-        updated = value.fetched_epoch
-        remote_ids = {item['id'] for item in items}
-        items.extend(item for item in local if item['id'] not in remote_ids)
         folder = request.args.get('directory')
+        linked = {folder} if folder else None
         if folder:
-            linked = {folder}
             manifest = workflows.definition_path(Path(folder))
             if manifest.is_file():
                 linked.update(json.loads(manifest.read_text(encoding='utf-8')).get('_previous_directories', []))
-            items = [job for job in items if job['directory'] in linked]
+        # A workflow view needs no progress/ETA/outcome calculations for jobs
+        # belonging to other workflows. Keep collection shared, filter first.
+        selected = (job for job in value.jobs if linked is None or
+                    current_workflow_directory(job.metadata.get('workflow_directory', '')) in linked)
+        items = [monitored_summary(job) for job in selected]
+        updated = value.fetched_epoch
+        remote_ids = {item['id'] for item in items}
+        items.extend(item for item in local if item['id'] not in remote_ids and
+                     (linked is None or item['directory'] in linked))
         return jsonify(jobs=items, updated=updated, refresh=g.snapshot_refresh)
 
     @app.get('/api/jobs/<job_id>')
@@ -1557,7 +1562,7 @@ def create_app():
                 percent = 100 * done / total if total else 0
             except (OSError, UnicodeError, csv.Error):
                 pass
-        return jsonify(synced=local.is_dir() or verbose_local.is_dir() or starexec_local.is_dir(), percent_complete=percent,
+        return jsonify(synced=local.is_dir() or verbose_local.is_dir() or starexec_local.is_dir() or bool(downloaded_snapshots(REPO/'job-results', host(), job_id)), percent_complete=percent,
                        updated_at=summary.get('updated_at'))
 
     @app.get('/api/operations/<key>')

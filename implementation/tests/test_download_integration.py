@@ -69,6 +69,44 @@ os.execvp('bash',['bash','-c',' '.join(args)])
                     elif mode=='starexec':self.assertEqual(len(list(output.glob('*.zip'))),2)
                     else:self.assertTrue((output/'solver-problem-pairs').is_dir())
 
+    def test_incremental_modes_reuse_cache_and_keep_complete_independent_snapshots(self):
+        from download_records import snapshots
+        for mode in download.MODES:
+            outputs=[]
+            for iteration in range(2):
+                destination=self.root/'job-results'/(mode+str(iteration));outputs.append(destination)
+                argv=[sys.executable,str(ROOT/'implementation/slurmy-sync.py'),self.identifier,'--host','fixture',
+                      '--incremental','--output',str(destination)]
+                if mode!='default':argv.append('--'+mode)
+                result=subprocess.run(argv,cwd=self.root,env={**os.environ,**self.environment},capture_output=True,text=True,timeout=30)
+                self.assertEqual(result.returncode,0,result.stdout+'\n'+result.stderr)
+                if iteration==1 and mode=='default':
+                    self.assertIn('Export unchanged',result.stdout)
+            first,second=outputs
+            pattern='*.zip' if mode=='starexec' else '*.tgz'
+            for old in first.glob(pattern):
+                new=second/old.name
+                self.assertEqual(old.read_bytes(),new.read_bytes())
+                self.assertNotEqual(old.stat().st_ino,new.stat().st_ino)
+            if mode=='verbose':self.assertTrue((second/'diagnostics/results').is_dir())
+            registered=snapshots(self.root/'job-results','fixture',self.identifier)
+            self.assertIn(second,registered)
+            self.assertIn(first,registered)
+            if mode=='default':
+                # Update one remote archive; a later snapshot must change, while
+                # earlier snapshots remain byte-for-byte unchanged.
+                before={path.name:path.read_bytes() for path in first.glob('*.tgz')}
+                archive=next((self.job/'results').glob('*.tar.gz'))
+                with tarfile.open(archive,'w:gz') as target:
+                    data=b'% SZS status Theorem\nAdditional solver output\n'
+                    info=tarfile.TarInfo('task_000000000_abcdef.solver.log');info.size=len(data);target.addfile(info,io.BytesIO(data))
+                third=self.root/'job-results'/'default-updated'
+                argv[argv.index('--output')+1]=str(third)
+                result=subprocess.run(argv,cwd=self.root,env={**os.environ,**self.environment},capture_output=True,text=True,timeout=30)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual({path.name:path.read_bytes() for path in first.glob('*.tgz')},before)
+                self.assertNotEqual(next(third.glob('*_solver-stdout.tgz')).read_bytes(),next(first.glob('*_solver-stdout.tgz')).read_bytes())
+
     @unittest.skipUnless(importlib.util.find_spec('rich'),'Rich is optional')
     def test_interactive_cli_selects_from_real_lists_and_downloads(self):
         output=self.root/'interactive'

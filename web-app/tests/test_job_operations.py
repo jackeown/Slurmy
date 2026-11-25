@@ -35,6 +35,18 @@ class JobOperationTests(unittest.TestCase):
     def action(self, action):
         return self.client.post('/api/jobs/test-job/action', json={'action': action}, headers=self.headers)
 
+    def test_timestamped_script_downloads_offer_local_cleanup(self):
+        from download_records import record
+        with tempfile.TemporaryDirectory() as folder, patch.object(web, 'REPO', Path(folder)):
+            root=Path(folder)/'job-results';destination=root/'starexec'/'Readable name_timestamp'
+            destination.mkdir(parents=True)
+            record(root,destination,'datalab','test-job')
+            response=self.client.get('/api/jobs/test-job/delete-options?host=datalab')
+            self.assertEqual(response.status_code,200)
+            self.assertTrue(response.json['synced'])
+            response=self.client.get('/api/jobs/test-job/delete-options?host=other-host')
+            self.assertFalse(response.json['synced'])
+
     def test_repeated_stop_reuses_running_operation(self):
         first, second = self.action('stop'), self.action('stop')
         self.assertEqual(first.status_code, 202)

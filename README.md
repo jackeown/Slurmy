@@ -412,6 +412,7 @@ python -m pip install -r requirements.txt
 python web-app/download.py "Job name" --mode default
 python web-app/download.py "Job name" --mode verbose
 python web-app/download.py --latest --mode starexec
+python web-app/download.py "Job name" --mode starexec --incremental
 python web-app/download.py --interactive
 ```
 
@@ -422,6 +423,8 @@ originally dispatched job, unaffected by renames, result updates or resumes.
 in `requirements.txt`, or install it with `python -m pip install rich`; normal
 commands and the Python function work without it.
 
+`--incremental` uses rsync to download only changed raw result files into a local cache. Each timestamped download is still a complete, independent snapshot; existing snapshots are not modified. All three formats are supported. The first incremental download populates the cache and may transfer more data than a standard download. Later downloads reuse it, and unchanged StarExec ZIPs are reused too. Local conversion and copying can still take time for large jobs. Install rsync before using this option. Downloads within `job-results/` are recorded so the job deletion dialog can offer to remove the snapshots and cache; explicitly chosen destinations outside that folder are left alone. Older unrecorded timestamped downloads may need manual cleanup.
+
 Run Python from `web-app/`, or add the absolute `web-app/` directory to
 `PYTHONPATH`, to import the function:
 
@@ -430,7 +433,7 @@ from download import download
 
 success = download("Job name", mode="default")
 # Also supported:
-success = download(latest=True, mode="starexec", host="datalab")
+success = download(latest=True, mode="starexec", host="datalab", incremental=True)
 ```
 
 The function prints nothing and returns `True` on success or `False` on failure

@@ -644,3 +644,9 @@ details[data-section-state="closing"] > summary::before { transform: rotate(0deg
 
 .build-parallel-info {margin-bottom:12px;font-size:13px;color:var(--ink)}
 .build-parallel-help .eta-explanation {left:0;right:auto}
+
+.problem-name-file-list { display: grid; gap: 8px; padding: 0; list-style: none; }
+.problem-name-file-list:empty { display: none; }
+.problem-name-file-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.problem-name-file-list li > span { overflow-wrap: anywhere; min-width: 0; }
+.problem-name-file-list button { flex-shrink: 0; }

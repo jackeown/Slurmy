@@ -25,6 +25,15 @@ class WorkflowFileTests(unittest.TestCase):
         workflow_files.replace(self.directory,'configurations.csv',workflows.csv_text(rows,tuple(rows[0])))
         self.assertEqual(json.loads((self.directory/'workflow.json').read_text())['configurations'][0]['cpu_limit'],'8')
 
+    def test_imported_name_file_list_survives_save_and_reopen(self):
+        data=workflows.decisions(self.directory)
+        files=[dict(name='Selected problems.txt',content=self.problem.name)]
+        data.update(problem_selection_modes=['files'],problem_selections=[self.problem.name],problem_selection_files=[files])
+        workflows.save(data,self.directory)
+        reopened=workflows.decisions(self.directory)
+        self.assertEqual(reopened['problem_selection_files'],[files])
+        self.assertEqual(reopened['problem_selections'],[self.problem.name])
+
     def test_postprocessor_persists_across_json_csv_and_http_replacement(self):
         post=self.root/'postprocessing';post.mkdir()
         (post/'parse.py').write_text('print("{}")')
@@ -178,6 +187,22 @@ class WorkflowFileTests(unittest.TestCase):
         workflow_files.replace(self.directory,'problem-selection.json','["first.p"]')
         self.assertEqual([Path(row['problem']).name for row in self.rows('jobpairs.csv')],['first.p'])
         self.assertEqual(workflows.decisions(self.directory)['problem_selections'],['first.p'])
+
+    def test_clearing_reservation_updates_next_dispatch_environment(self):
+        import subprocess
+        data=workflows.decisions(self.directory);data['reservation']='old-reservation'
+        workflows.save(data,self.directory)
+        data=workflows.decisions(self.directory);data['reservation']=''
+        workflows.save(data,self.directory)
+        self.assertEqual(workflows.decisions(self.directory)['reservation'],'')
+        makefile=self.directory/'Makefile'
+        self.assertIn('SLURMY_RESERVATION := \n',makefile.read_text())
+        # Check the actual make environment, including an inherited old value.
+        result=subprocess.run(['make','--no-print-directory','-f',str(makefile),'-f','-', 'REPO_ROOT='+str(workflows.REPO), 'inspect-reservation'],
+                              cwd=self.directory,input='inspect-reservation:\n\t@printf "reservation=<%s>" "$$SLURMY_RESERVATION"\n',
+                              env={**__import__('os').environ,'SLURMY_RESERVATION':'old-reservation'},capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout,'reservation=<>')
 
     def test_makefile_settings_update_workflow_and_custom_rules_are_rejected(self):
         body=(self.directory/'Makefile').read_text().replace('BATCH_SIZE := 2','BATCH_SIZE := 7').replace('CPU-amd','CPU-intel')

@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from implementation.ssh_transport import connection_options
+from implementation.download_records import record as record_download
 MODES = ('default', 'verbose', 'starexec')
 
 # One SSH request reads only immutable identity metadata, never result archives.
@@ -154,7 +155,7 @@ def _reserve_destination(job, mode):
 
 
 def _perform(job_name, mode, *, host=None, output=None, latest=False, ssh_timeout=10,
-             show_output=False, selected_job=None):
+             show_output=False, selected_job=None, incremental=False):
     if mode not in MODES:raise ValueError('Download mode must be default, verbose, or starexec.')
     host,timeout=_settings(host,ssh_timeout)
     if selected_job is None:
@@ -166,6 +167,7 @@ def _perform(job_name, mode, *, host=None, output=None, latest=False, ssh_timeou
     argv=[sys.executable,str(ROOT/'implementation/slurmy-sync.py'),selected_job.id,
           '--host',host,'--ssh-timeout',str(timeout)]
     if mode!='default':argv.append('--'+mode)
+    if incremental:argv.append('--incremental')
     destination = (Path(output).expanduser().absolute() if output is not None
                    else _reserve_destination(selected_job, mode))
     argv.extend(['--output', str(destination)])
@@ -176,11 +178,12 @@ def _perform(job_name, mode, *, host=None, output=None, latest=False, ssh_timeou
                           stderr=None if show_output else subprocess.DEVNULL,check=False)
     if result.returncode:
         raise DownloadError(f'Results download failed (exit {result.returncode}).')
+    record_download(ROOT/'job-results', destination, host, selected_job.id)
     return True
 
 
 def download(job_name: str | None = None, mode: str = 'default', *, host=None,
-             output=None, latest=False, ssh_timeout=10) -> bool:
+             output=None, latest=False, ssh_timeout=10, incremental=False) -> bool:
     """Silently download a job; return True on success and False on failure.
 
     ``job_name`` is an exact display name or stable Slurmy ID. Use
@@ -188,10 +191,11 @@ def download(job_name: str | None = None, mode: str = 'default', *, host=None,
     ``mode`` is default, verbose, or starexec. Optional output paths are relative
     to the caller. Defaults reserve a unique display-name/local-time directory
     under this repository's job-results (verbose/ or starexec/ for those modes).
-    Errors and cancellation return False without printing.
+    Set ``incremental=True`` to reuse a local rsync cache while still publishing a
+    complete snapshot. Errors and cancellation return False without printing.
     """
     try:
-        return _perform(job_name,mode,host=host,output=output,latest=latest,ssh_timeout=ssh_timeout)
+        return _perform(job_name,mode,host=host,output=output,latest=latest,ssh_timeout=ssh_timeout,incremental=incremental)
     except (OSError,ValueError,TypeError,RuntimeError,subprocess.SubprocessError,KeyboardInterrupt):
         return False
 
@@ -232,6 +236,7 @@ def build_parser():
     selection=parser.add_mutually_exclusive_group()
     selection.add_argument('--latest',action='store_true',help='download the most recently dispatched job')
     selection.add_argument('--interactive',action='store_true',help='pick the mode and job from Rich lists')
+    parser.add_argument('--incremental',action='store_true',help='reuse a local rsync cache; still create a complete snapshot')
     parser.add_argument('--mode',choices=MODES,default='default',help='download format (default: default)')
     parser.add_argument('--host',default=os.environ.get('SLURMY_HOST','datalab'),help='SSH alias (default: $SLURMY_HOST or datalab)')
     parser.add_argument('--output',type=Path,help='destination directory (relative paths use the current directory)')
@@ -252,7 +257,7 @@ def main(argv=None):
         if args.interactive:
             selected,args.mode=_pick(list_jobs(host=args.host,ssh_timeout=args.ssh_timeout),args.mode)
         _perform(args.job_name,args.mode,host=args.host,output=args.output,latest=args.latest,
-                 ssh_timeout=args.ssh_timeout,show_output=True,selected_job=selected)
+                 ssh_timeout=args.ssh_timeout,show_output=True,selected_job=selected,incremental=args.incremental)
         return 0
     except (KeyboardInterrupt, EOFError):
         print('\nDownload cancelled; existing local files were kept.',file=sys.stderr)

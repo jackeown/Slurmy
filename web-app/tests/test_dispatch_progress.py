@@ -37,6 +37,20 @@ class DispatchProgressTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session['csrf'] = 'test'
 
+    def test_workflow_list_does_not_compute_summaries_for_unrelated_jobs(self):
+        from slurmy_web.monitor import JobSnapshot
+        selected=JobSnapshot('selected','/jobs/selected',123,metadata={'workflow_directory':str(self.workflow)})
+        other=JobSnapshot('other','/jobs/other',123,metadata={'workflow_directory':'/other-workflow'})
+        self.app.config['COLLECTOR']=lambda *args:SimpleNamespace(fetch=lambda *args:SimpleNamespace(jobs=[selected,other],fetched_epoch=123))
+        original=web.summary
+        def summarize(job):
+            self.assertEqual(job.job_id,'selected')
+            return original(job)
+        with patch.object(web,'summary',side_effect=summarize) as summary:
+            jobs=self.jobs()
+        self.assertEqual([job['id'] for job in jobs],['selected'])
+        self.assertEqual(summary.call_count,1)
+
     def start(self, action='prepare-submit'):
         response = self.client.post('/api/workflow/action',
             query_string={'directory': str(self.workflow)}, json={'action': action},

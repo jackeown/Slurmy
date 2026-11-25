@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Stop or resume one Slurmy job on the configured cluster."""
 from ssh_transport import connection_options
+from download_records import snapshots
 
 import argparse
 import base64
@@ -33,6 +34,7 @@ def main():
     local_paths = [Path(__file__).resolve().parent.parent / 'job-results' / args.job_id,
                    Path(__file__).resolve().parent.parent / 'job-results' / 'verbose' / args.job_id,
                    Path(__file__).resolve().parent.parent / 'job-results' / 'starexec' / args.job_id]
+    local_paths += snapshots(Path(__file__).resolve().parent.parent/'job-results', args.host, args.job_id)
     if args.action == 'delete' and args.delete_local and any(p.is_symlink() for p in local_paths):
         print('Local result directory is a symlink; job was kept.', file=sys.stderr)
         return 1

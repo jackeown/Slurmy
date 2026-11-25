@@ -185,7 +185,7 @@ function scheduleRefresh(fresh=false){
  refreshTimer=setTimeout(()=>{refreshTimer=null;refresh(fresh);},delay);
 }
 restoreTableUrl();
-function pendingJobs(){try{return JSON.parse(sessionStorage.getItem('slurmy-pending-jobs')||'[]').filter(job=>job.host===host&&Date.now()-job.created<3600000);}catch{return [];}}
+function pendingJobs(){try{return JSON.parse(sessionStorage.getItem('slurmy-pending-jobs')||'[]').map(job=>({...job,created:job.created>1e12?job.created/1000:job.created})).filter(job=>job.host===host&&Number.isFinite(job.created)&&Date.now()/1000-job.created<3600);}catch{return [];}}
 function savePendingJobs(value){sessionStorage.setItem('slurmy-pending-jobs',JSON.stringify(value));}
 async function deleteJob(id, control, redirect=false){
  const originalLabel=control.textContent;
@@ -242,7 +242,7 @@ async function renameJob(id,current){
   notice(result.warning||`Job renamed to ${result.name}.`);
  }catch(error){notice(error.message);}
 }
-function announceJob(id,name){const known=pendingJobs();if(!known.some(job=>job.id===id))known.push({id,host,directory:document.body.dataset.directory||'',name:name||document.querySelector('h1')?.textContent||'Slurmy',state:'SUBMITTED',total:0,completed:0,percent:0,issues:0,created:Date.now()});savePendingJobs(known);}
+function announceJob(id,name){const known=pendingJobs();if(!known.some(job=>job.id===id))known.push({id,host,directory:document.body.dataset.directory||'',name:name||document.querySelector('h1')?.textContent||'Slurmy',state:'SUBMITTED',total:0,completed:0,percent:0,issues:0,created:Date.now()/1000});savePendingJobs(known);}
 function remoteState(state){for(const panel of [$('#remote-data'),$('#results-overview')]){if(!panel)continue;panel.classList.remove('loading','refreshing','stale');if(state)panel.classList.add(state);panel.setAttribute('aria-busy',String(state==='loading'||state==='refreshing'));}}
 function loadingRow(body,columns,message,failed=false){body.replaceChildren();const row=el('tr');row.className=failed?'loading-row failed-row':'loading-row';const cell=el('td');cell.colSpan=columns;if(!failed)cell.append(el('span','', 'spinner'));cell.append(document.createTextNode(' '+message));row.append(cell);body.append(row);}
 function beginRefresh(){clearTimeout(staleTimer);remoteState(hasLoadedRemote?'refreshing':'loading');const refresh=$('#refresh');if(refresh){refresh.disabled=true;refresh.textContent='↻ Refreshing…';}if(hasLoadedRemote)text('#connection',`Refreshing data from ${host}… Previously loaded data remains visible.`);}
