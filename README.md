@@ -403,26 +403,32 @@ A resource set to build for every job—including runsolver—still runs that bu
 
 ### Downloading from Python or the Terminal
 
-The root-level `download.py` uses the same download engine as the job page:
+The `web-app/download.py` wrapper uses the same download engine as the job page.
+From the repository root, activate your environment and install the root requirements:
 
 ```sh
-python download.py "My workflow (1)" --mode default
-python download.py "My workflow (1)" --mode verbose
-python download.py --latest --mode starexec
-python download.py --interactive
+source .venv/bin/activate  # Create first with python3 -m venv .venv if needed.
+python -m pip install -r requirements.txt
+python web-app/download.py "Job name" --mode default
+python web-app/download.py "Job name" --mode verbose
+python web-app/download.py --latest --mode starexec
+python web-app/download.py --interactive
 ```
 
-Use the displayed job name or its stable Slurmy ID. Names must match exactly;
+Replace `Job name` with the actual **Job name** shown in the interface, or use its stable Slurmy ID. Names must match exactly;
 if a name is ambiguous, use the ID. `--latest` selects the most recently
 originally dispatched job, unaffected by renames, result updates or resumes.
 `--interactive` uses Rich lists to choose both the mode and job. Rich is included
 in `requirements.txt`, or install it with `python -m pip install rich`; normal
 commands and the Python function work without it.
 
+Run Python from `web-app/`, or add the absolute `web-app/` directory to
+`PYTHONPATH`, to import the function:
+
 ```python
 from download import download
 
-success = download("My workflow (1)", mode="default")
+success = download("Job name", mode="default")
 # Also supported:
 success = download(latest=True, mode="starexec", host="datalab")
 ```
@@ -436,7 +442,12 @@ progress and exits 0 on success, 1 on failure, or 130 on cancellation.
 
 Both interfaces accept an SSH host (`--host` / `host=`), destination
 (`--output` / `output=`), and SSH timeout (`--ssh-timeout` / `ssh_timeout=`).
-Without a destination, files go into this repository's `job-results/`, using the
-same mode-specific subdirectories as the interface. Explicit relative output
-paths are relative to your current directory. Verbose downloads require rsync,
+Without a destination, each call reserves a new folder named after the job's
+display name and the local download date/time (with microseconds), for example
+`job-results/starexec/demo-workflow_2026-11-25_14-30-05.123456`. Default mode
+uses `job-results/`; verbose and StarExec use `job-results/verbose/` and
+`job-results/starexec/`. Unsafe filename characters are replaced, and collisions
+receive a unique suffix; existing download folders are never reused. The stable
+internal job ID still selects the remote results. Explicit output paths retain
+the existing behavior; relative paths resolve from your current directory. Verbose downloads require rsync,
 just like the verbose button in the interface.

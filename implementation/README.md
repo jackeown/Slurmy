@@ -292,6 +292,13 @@ including the solver. Runsolver's measurements of the solver tree replace that
 fallback when available. Default download exports `<job-name>_results-summary.csv`,
 `<job-name>_solver-stdout.tgz`, `<job-name>_solver-stderr.tgz`, and
 `<job-name>_postprocessing.tgz` into `job-results/JOB_ID/`.
+The public [`web-app/download.py`](../web-app/download.py) wrapper uses these same
+formats but reserves a fresh display-name/local-download-time directory on every
+call (under `job-results/`, `job-results/verbose/`, or `job-results/starexec/`).
+Run `python web-app/download.py "Job name"` from the repository root; see the
+[root download guide](../README.md#downloading-from-python-or-the-terminal) for
+environment setup, Python imports and explicit destinations. Its `--latest`
+selection uses the original dispatch timestamp, unaffected by rename or resume.
 Each archive extracts into a same-named top-level directory and contains logs
 named `<solver>___<original-problem-filename>___<solver-problem-pair-id>.log` (or
 `.stderr.log` for stderr). The full problem filename is preserved exactly,
