@@ -13,6 +13,8 @@ def config(cores=8, **extra):
 
 class BatchSuggestionTests(unittest.TestCase):
     def setUp(self):
+        policy=patch.object(batch,'wall_time_policy',return_value={'limit_seconds':21600,'account':'default','partition_time_override':False})
+        policy.start();self.addCleanup(policy.stop)
         self.nodes = [dict(sockets=2, cores_per_socket=32, threads_per_core=2) for _ in range(10)]
 
     def test_all_cores_uses_dedicated_socket_or_node_capacity(self):
@@ -185,6 +187,16 @@ class BatchSuggestionTests(unittest.TestCase):
         for timeout in (0,-1,601,'NaN',float('inf')):
             with self.subTest(timeout=timeout),self.assertRaises(ValueError):
                 batch.workflows.postprocessor_settings({'postprocessor_timeout':timeout},check_paths=False)
+
+    def test_suggestion_reads_selected_account_wall_policy_instead_of_fixed_six_hours(self):
+        configurations=[config(1,wc_limit=3600)]
+        for limit in (1800,86400,None):
+            with self.subTest(limit=limit),patch.object(batch,'wall_time_policy',return_value={'limit_seconds':limit}) as policy, \
+                 patch.object(batch,'partition_nodes',return_value=self.nodes),patch.object(batch.workflows,'problem_glob',return_value=('pattern',['a'])):
+                result=batch.suggest(dict(host='datalab',partition='CPU-amd',account='cpuopt',mode='interactive',configurations=configurations,globs=['pattern'],batch_size=10))
+                self.assertEqual(result['wall_limit_seconds'],limit)
+                self.assertEqual(result['selected_size_exceeds_wall'],limit==1800)
+                policy.assert_called_once_with('datalab','CPU-amd','cpuopt')
 
     def test_unbounded_wall_limits_are_not_given_a_false_six_hour_guarantee(self):
         with patch.object(batch,'partition_nodes',return_value=self.nodes),patch.object(batch.workflows,'problem_glob',return_value=('pattern',['a','b'])):

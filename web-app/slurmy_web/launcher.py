@@ -25,7 +25,7 @@ REPO = Path(__file__).resolve().parents[2]
 def web_version():
     """Fingerprint files loaded into the web server at startup."""
     package = REPO / 'web-app/slurmy_web'
-    paths = [REPO / 'web-app/main.py', REPO/'implementation/szs.py', *sorted(package.glob('*.py')),
+    paths = [REPO / 'web-app/main.py', REPO/'implementation/szs.py', REPO/'implementation/slurm_time_limits.py', *sorted(package.glob('*.py')),
              *sorted((package / 'templates').glob('*.html')),
              *sorted((package / 'static').glob('*'))]
     digest = hashlib.sha256()

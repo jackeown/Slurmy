@@ -197,9 +197,14 @@ archive="batch_${BATCH_ID}_${stem}_${SLURM_JOB_ID:-local}_$(date +%s).tar.gz"
 tar -czf "$JOB_DIR/results/.$archive.tmp" -C "$work" .
 mv "$JOB_DIR/results/.$archive.tmp" "$JOB_DIR/results/$archive"
 result=$(printf '%s/results/batch_%06d_task_%09d.csv' "$JOB_DIR" "$BATCH_ID" "$TASK_ID")
-result_row=$(csv_row "$TASK_ID" "$complete" "$status" "$code" "$wall" "$cpu" "$user" "$system" "$cpu_usage" "$max_vm" "$memory" "${timed_out:-false}" "${memory_out:-false}" "$TASK_KEY" "$archive" "$szs_status" "$szs_output" "$postprocess_data" "$postprocess_return_code" "$postprocess_error" "$postprocess_status")
+# Keep execution provenance with each result, including across retries/requeues.
+execution_node=${SLURMD_NODENAME:-}
+if [[ -z "$execution_node" && -r /proc/sys/kernel/hostname ]]; then IFS= read -r execution_node < /proc/sys/kernel/hostname || true; fi
+execution_slurm_id=${SLURM_JOB_ID:-}
+if [[ -n ${SLURM_ARRAY_JOB_ID:-} && -n ${SLURM_ARRAY_TASK_ID:-} ]]; then execution_slurm_id="${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"; fi
+result_row=$(csv_row "$TASK_ID" "$complete" "$status" "$code" "$wall" "$cpu" "$user" "$system" "$cpu_usage" "$max_vm" "$memory" "${timed_out:-false}" "${memory_out:-false}" "$TASK_KEY" "$archive" "$szs_status" "$szs_output" "$postprocess_data" "$postprocess_return_code" "$postprocess_error" "$postprocess_status" "$execution_node" "$execution_slurm_id")
 {
-    csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output postprocess_data postprocess_return_code postprocess_error postprocess_status
+    csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output postprocess_data postprocess_return_code postprocess_error postprocess_status node slurm_id
     printf '%s\n' "$result_row"
 } > "$result.tmp"
 mv "$result.tmp" "$result"
@@ -210,10 +215,10 @@ if {
     if [[ -f "$index" ]]; then
         # A resumed call replaces its earlier incomplete row in the compact
         # monitor index; otherwise it would be counted twice.
-        csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output postprocess_data postprocess_return_code postprocess_error postprocess_status
+        csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output postprocess_data postprocess_return_code postprocess_error postprocess_status node slurm_id
         awk -F, -v id="$TASK_ID" '{field=$1; gsub(/"/, "", field); if (NR>1 && field!=id) print}' "$index"
     else
-        csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output postprocess_data postprocess_return_code postprocess_error postprocess_status
+        csv_row task_id complete status return_code wall_seconds cpu_seconds user_seconds system_seconds cpu_usage_percent max_virtual_memory_kib max_memory_kib timed_out memory_out task_key archive szs_status szs_output postprocess_data postprocess_return_code postprocess_error postprocess_status node slurm_id
     fi
     printf '%s\n' "$result_row"
 } > "$index.tmp" && mv "$index.tmp" "$index"; then

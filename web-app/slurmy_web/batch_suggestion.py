@@ -4,6 +4,7 @@ from ssh_transport import connection_options
 import subprocess
 
 from slurmy import boolean, positive
+from slurm_time_limits import query_remote as wall_time_policy
 from . import workflows
 
 
@@ -134,14 +135,15 @@ def suggest(data):
     target = max(balance, fit['recommended_batch_size'] or 1)
     wall_limits = [int(config.get('wc_limit', 1)) for config in configurations]
     overhead = 80 if data.get('get_computer_info', True) else 30
-    wall_limit = 6*60*60
+    policy = wall_time_policy(host, partition, account)
+    wall_limit = policy['limit_seconds']
     unknown = any(limit == 0 for limit in wall_limits)
     max_wall = max(wall_limits)
     postprocessing = [workflows.postprocessor_settings(config, check_paths=False) for config in configurations]
     post_budgets = [0 if config['postprocessor_mode'] == 'none' else config['postprocessor_timeout'] + 5 for config in postprocessing]
     max_post = max(post_budgets)
     max_pair_budget = max(wall + overhead + post for wall, post in zip(wall_limits, post_budgets))
-    time_capacity = None if unknown else (wall_limit-60)//max_pair_budget
+    time_capacity = None if unknown or wall_limit is None else (wall_limit-60)//max_pair_budget
     selected = min(target, max(1,time_capacity)) if time_capacity is not None else target
     suggestion = submission_fit(configurations, group_counts, selected, *options, account_submit_limit=submit_limit)
     result.update(fit)
@@ -149,15 +151,16 @@ def suggest(data):
                   fit_batch_size=fit['recommended_batch_size'],
                   suggested_batches=suggestion['estimated_batches'],
                   suggested_fits=suggestion['estimated_batches'] <= suggestion['submission_budget'])
-    result.update(wall_limit_seconds=wall_limit, batch_startup_seconds=60,
+    label = 'unlimited' if wall_limit is None else (f'{wall_limit/3600:g} hours' if wall_limit>=3600 else f'{wall_limit/60:g} minutes')
+    result.update(wall_limit_seconds=wall_limit, wall_limit_label=label, wall_time_policy=policy, batch_startup_seconds=60,
                   pair_overhead_seconds=overhead, max_pair_wall_seconds=max_wall,
                   max_postprocessor_seconds=max_post, configuration_postprocessor_seconds=post_budgets,
                   configuration_wall_seconds=wall_limits,
                   max_pair_budget_seconds=max_pair_budget,
                   wall_time_unknown=unknown, wall_time_capacity=time_capacity,
-                  wall_single_pair_fits=None if unknown else time_capacity>=1,
+                  wall_single_pair_fits=None if unknown or time_capacity is None else time_capacity>=1,
                   unconstrained_batch_size=target,
-                  selected_size_exceeds_wall=False if unknown else int(data.get('batch_size') or selected)>time_capacity)
+                  selected_size_exceeds_wall=(wall_limit is not None and (604800>wall_limit if unknown else int(data.get('batch_size') or selected)>time_capacity)))
     # One recommendation is used by the field, explanation and submission warning.
     result.update(configuration_count=len(configurations), problem_count=None if mode=='jobpairs' else len(problems),
                   configuration_names=[str(c.get('solver_name') or f'Solver {i+1}') for i,c in enumerate(configurations)],

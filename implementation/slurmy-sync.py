@@ -238,6 +238,8 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
                 "postprocess_return_code": fields[18] if len(fields) > 18 else "",
                 "postprocess_error": fields[19] if len(fields) > 19 else "",
                 "postprocess_status": fields[20] if len(fields) > 20 else "",
+                "node": fields[21] if len(fields) > 21 else "",
+                "slurm_id": fields[22] if len(fields) > 22 else "",
             }
     for path in sorted(results_dir.glob("*.csv")):
         try:
@@ -265,6 +267,8 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
                 "postprocess_return_code": fields[18] if len(fields) > 18 else "",
                 "postprocess_error": fields[19] if len(fields) > 19 else "",
                 "postprocess_status": fields[20] if len(fields) > 20 else "",
+                "node": fields[21] if len(fields) > 21 else "",
+                "slurm_id": fields[22] if len(fields) > 22 else "",
             }
     for path in sorted(results_dir.glob("*.jsonl")):
         try:
@@ -293,6 +297,8 @@ def read_result_records(destination: Path) -> dict[int, dict[str, Any]]:
                 "postprocess_return_code": item.get("postprocess_return_code", ""),
                 "postprocess_error": item.get("postprocess_error", ""),
                 "postprocess_status": item.get("postprocess_status", ""),
+                "node": item.get("node", ""),
+                "slurm_id": item.get("slurm_id", ""),
             }
     return records
 

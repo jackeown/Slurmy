@@ -144,6 +144,25 @@ if sys.argv[1]=='attempt':
                     self.assertEqual([option for option in options if option.startswith('--reservation=')],
                                      [] if saved=='-' else ['--reservation='+saved])
 
+    def test_oversized_and_zero_wall_budgets_are_capped_without_dropping_pairs(self):
+        for wall in (30000,0):
+            with self.subTest(wall=wall):
+                self.setup_job(3,overrides=[{'wc_limit':wall}]*3)
+                result=self.submit()
+                self.assert_success(result)
+                self.assertTrue(all('--time=360' in request for request in self.requests()))
+                self.assertIn('capping requested time',result.stdout)
+                self.assertEqual([int(row['batch_id']) for row in self.ledger()],[0,1,2])
+
+    def test_confirmed_account_qos_exception_can_request_more_than_partition_max(self):
+        self.setup_job(2,overrides=[{'wc_limit':30000}]*2)
+        command=self.bin/'sacctmgr'
+        body=command.read_text().replace("elif name=='sacctmgr':print('tester|cpuopt||100|')", "elif name=='sacctmgr':\n if 'format=Account,User,Partition,DefaultQOS,QOS,MaxWall' in sys.argv:print('cpuopt|tester||long|long||')\n elif 'format=Name,Flags,MaxWall' in sys.argv:print('long|PartitionTimeLimit|24:00:00|')\n else:print('tester|cpuopt||100|')")
+        command.write_text(body)
+        self.assert_success(self.submit())
+        times=[int(option.split('=')[1]) for request in self.requests() for option in request if option.startswith('--time=')]
+        self.assertTrue(all(360<value<=1440 for value in times))
+
     def test_ambient_sbatch_reservation_does_not_leak_into_new_jobs(self):
         self.setup_job()
         # The fake sbatch sees the same environment the real CLI uses.

@@ -625,6 +625,8 @@ class ResultRecord:
     postprocess_return_code: str = ""
     postprocess_error: str = ""
     postprocess_status: str = ""
+    node: str = ""
+    slurm_id: str = ""
 
 
 @dataclass
@@ -663,6 +665,7 @@ class SlurmRecord:
     start: str = ""
     end: str = ""
     submitted: str = ""
+    raw_id: str = ""
 
 
 @dataclass
@@ -964,6 +967,8 @@ def parse_result_rows(rows: Any) -> dict[int, ResultRecord]:
             postprocess_return_code=fields[18] if len(fields) > 18 else '',
             postprocess_error=fields[19] if len(fields) > 19 else '',
             postprocess_status=fields[20] if len(fields) > 20 else '',
+            node=fields[21] if len(fields) > 21 else '',
+            slurm_id=fields[22] if len(fields) > 22 else '',
         )
     return results
 
@@ -1002,6 +1007,8 @@ def parse_jsonl_results(payload: str) -> dict[int, ResultRecord]:
             postprocess_return_code=str(item.get("postprocess_return_code", "")),
             postprocess_error=str(item.get("postprocess_error", "")),
             postprocess_status=str(item.get("postprocess_status", "")),
+            node=str(item.get("node", "")),
+            slurm_id=str(item.get("slurm_id", "")),
         )
     return results
 
@@ -1081,6 +1088,7 @@ def parse_slurm_lines(payload: str, source: str) -> list[SlurmRecord]:
             records.append(
                 SlurmRecord(
                     display_id=job_id or fields[0],
+                    raw_id=fields[0],
                     array_job_id=array_job_id,
                     array_task_id=array_task_id or "N/A",
                     state=fields[3],

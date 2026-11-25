@@ -129,6 +129,27 @@ PARTITION_INFO=$(scontrol show partition -o "$PARTITION")
 [[ "$PARTITION_INFO" != *OverSubscribe=FORCE* ]] || {
     echo 'Selected partition forces CPU sharing; exclusive cores cannot be guaranteed.' >&2; exit 1;
 }
+# Recheck the selected account's time policy on every finite submission wave.
+# Older copied submitters still cap against the reported partition limit.
+if [[ -f "$JOB_DIR/slurm_time_limits.py" ]]; then
+    MAX_TIME_MINUTES=$(python3 "$JOB_DIR/slurm_time_limits.py" --partition "$PARTITION" --account "$ACCOUNT" --partition-info "$PARTITION_INFO" --minutes)
+else
+    MAX_TIME_MINUTES=$(python3 - "$PARTITION_INFO" <<'SLURMY_TIME'
+import re,sys
+value=re.search(r'\bMaxTime=([^ ]+)',sys.argv[1])
+if not value:raise SystemExit('SLURM did not report MaxTime; refusing an unchecked time request.')
+text=value[1]
+if text.upper() in {'UNLIMITED','INFINITE'}:print(0)
+else:
+ days,sep,clock=text.partition('-');parts=list(map(int,(clock if sep else text).split(':')))
+ seconds=(int(days)*86400 if sep else 0)+sum(v*m for v,m in zip(reversed(parts),(1,60,3600)))
+ if not sep and len(parts)==1:seconds*=60
+ if seconds<60:raise SystemExit('Partition time limit is shorter than one scheduling minute.')
+ print(seconds//60)
+SLURMY_TIME
+)
+fi
+[[ "$MAX_TIME_MINUTES" =~ ^[0-9]+$ ]] || { echo 'Invalid SLURM maximum time.' >&2; exit 1; }
 # Require a homogeneous topology rather than silently guessing a socket size.
 TOPOLOGY=$(sinfo -p "$PARTITION" -N -h -o '%X %Y %Z %m' | sort -u)
 [[ $(wc -l <<< "$TOPOLOGY") == 1 ]] || {
@@ -430,11 +451,16 @@ for batch in batches/batch_*.sh; do
     ISOLATION=shared
     if (( EXCLUSIVE_CPU )); then ISOLATION=socket; fi
     if (( EXCLUSIVE_NODE )); then ISOLATION=node; fi
+    REQUESTED_TIME_MINUTES=$(( (WALL_SECONDS + 59) / 60 ))
+    if (( MAX_TIME_MINUTES > 0 && REQUESTED_TIME_MINUTES > MAX_TIME_MINUTES )); then
+        echo "Batch $BATCH_ID: capping requested time from $REQUESTED_TIME_MINUTES to $MAX_TIME_MINUTES minutes under the current SLURM policy; completed pairs are kept and unfinished pairs can be resumed."
+        REQUESTED_TIME_MINUTES=$MAX_TIME_MINUTES
+    fi
     OPTIONS=(--parsable --partition="$PARTITION" --job-name="$JOB_PREFIX"
         --requeue --open-mode=append
         --nodes=1 --ntasks="$PARALLEL" --cpus-per-task="$((SLOT_CORES * MAX_THREADS_PER_CORE))"
         --threads-per-core="$MAX_THREADS_PER_CORE" --distribution=block:block
-        --mem="${MEMORY_MIB}M" --time="$(( (WALL_SECONDS + 59) / 60 ))"
+        --mem="${MEMORY_MIB}M" --time="$REQUESTED_TIME_MINUTES"
         --output=logs/slurm_%A_%a.out --signal=B:TERM@30)
     if [[ -n "$RESERVATION" ]]; then OPTIONS+=(--reservation="$RESERVATION"); fi
     if [[ -n "$ACCOUNT" ]]; then OPTIONS+=(--account="$ACCOUNT"); fi

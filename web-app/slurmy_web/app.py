@@ -278,6 +278,15 @@ def batch_allocations(job):
 
 def task_rows(job,task_ids=None):
     batch_records=batch_allocations(job)
+    if not hasattr(job,'_execution_records'):
+        job._execution_records={}
+        job._execution_attempts={}
+        for record in job.slurm:
+            if record.array_task_id.isdigit() and record.array_job_id in job.submission_offsets:
+                batch=job.submission_offsets[record.array_job_id]+int(record.array_task_id)
+                job._execution_attempts.setdefault(batch,set()).add(record.display_id)
+            for identifier in (record.display_id,getattr(record,'raw_id','')):
+                if identifier:job._execution_records[identifier]=record
     for task_id in (sorted(set(job.tasks) | set(job.results)) if task_ids is None else task_ids):
         definition = job.tasks.get(task_id)
         result = job.results.get(task_id)
@@ -289,6 +298,18 @@ def task_rows(job,task_ids=None):
         wall = None
         batch_id = job.task_batches.get(task_id, task_id // job.batch_size)
         allocation=batch_records.get(batch_id)
+        execution_id=result.slurm_id if result else ''
+        if result and not execution_id:
+            legacy=re.search(r'_(\d+)_\d+\.tar\.gz$',result.archive)
+            if legacy:execution_id=legacy[1]
+        if result and execution_id:
+            # A finished pair may belong to an earlier attempt of this batch.
+            # Never attribute it to whichever retry happens to be running now.
+            allocation=job._execution_records.get(execution_id)
+        elif result and len(job._execution_attempts.get(batch_id,set()))>1:
+            allocation=None
+        historical_node=(result.node if result else '') or (allocation.location if allocation and
+                         not allocation.state.upper().startswith(('PENDING','PD')) and (result or allocation.state.upper().startswith(('RUNNING','COMPLETING'))) and allocation.location not in {'—','Unknown','(null)'} else '')
         if result:
             state, wall = result_status(result) or result.status.replace('-', ' '), result.wall_seconds
             if not result_status(result) and result.status in {'resource-limiter-error', 'worker-error', 'interrupted'}:
@@ -324,8 +345,8 @@ def task_rows(job,task_ids=None):
                    szs_output_code=szs.data_mnemonic(result.szs_output) if result else '',
                    will_run=will_run, reason=reason, diagnostic=diagnostic,
                    diagnostic_available=bool(not result and allocation),
-                   node=(allocation.location if allocation and allocation.state.upper().startswith(('RUNNING', 'COMPLETING')) else ''),
-                   slurm_id=allocation.display_id if allocation else '',
+                   node=historical_node, node_historical=bool(result),
+                   slurm_id=execution_id or (allocation.display_id if allocation else ''),
                    output=bool(result and result.archive))
 
 

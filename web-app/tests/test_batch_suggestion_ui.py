@@ -33,6 +33,23 @@ assert.doesNotMatch(accountOutput,/50 account task slots/);
         source=Path(__file__).parent.parent/'slurmy_web/static/builder.js'
         subprocess.run(['node','-e',script,str(source)],check=True,capture_output=True,text=True)
 
+    def test_wall_warning_updates_for_manual_edits_and_account_limits(self):
+        source=(Path(__file__).parent.parent/'slurmy_web/static/builder.js').read_text()
+        function=source[source.index(' function updateBatchTimeWarning()'):source.index(' async function suggestBatchSize()')]
+        script=r"""
+const assert=require('assert');const warning={},batchInput={value:'250'};
+let lastBatchPlan={wall_limit_seconds:21600,wall_limit_label:'6 hours',batch_startup_seconds:60,max_pair_budget_seconds:121,account:'cpuopt'};
+const $=()=>warning;
+"""+function+r"""
+updateBatchTimeWarning();assert.equal(warning.hidden,false);assert.match(warning.textContent,/6 hours.*cpuopt/);assert.match(warning.textContent,/cap the requested time/);
+batchInput.value='100';updateBatchTimeWarning();assert.equal(warning.hidden,true);
+batchInput.value='250';lastBatchPlan.wall_limit_seconds=86400;lastBatchPlan.wall_limit_label='24 hours';updateBatchTimeWarning();assert.equal(warning.hidden,true);
+lastBatchPlan.wall_limit_seconds=null;updateBatchTimeWarning();assert.equal(warning.hidden,true);
+lastBatchPlan.wall_limit_seconds=21600;lastBatchPlan.wall_time_unknown=true;updateBatchTimeWarning();assert.equal(warning.hidden,false);
+batchInput.value='';updateBatchTimeWarning();assert.equal(warning.hidden,true);
+"""
+        subprocess.run(['node','-e',script],check=True,capture_output=True,text=True)
+
     def test_manual_override_stale_response_and_failure(self):
         script = r'''
 const fs=require('node:fs'), vm=require('node:vm'), assert=require('node:assert/strict');

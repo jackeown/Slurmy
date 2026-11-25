@@ -569,8 +569,8 @@ if(document.body.dataset.page==='new'){
    groupCount(fit,data.fit_batch_size,counts.reduce((sum,count)=>sum+Math.ceil(count/data.fit_batch_size),0));
   }
   if(data.wall_limit_seconds){
-   const time=card('5. Respect the Six-Hour Limit',`${amount(data.wall_limit_seconds,'second')}/batch = 6 hours/batch`,'Use the largest wall-clock limit of any pair as a conservative bound. Include the same startup and per-pair overhead as the submission planner.');
-   if(data.wall_time_unknown)time.append(el('p','A zero wall limit is unbounded, so no finite batch size can be guaranteed to finish within six hours. The capacity/window estimate is retained; SLURM may stop an unfinished batch at its allocation limit.'));
+   const time=card('5. Respect the SLURM Wall-Time Limit',`${amount(data.wall_limit_seconds,'second')}/batch = ${data.wall_limit_label||'reported SLURM limit'}/batch`,'Use the largest wall-clock limit of any pair as a conservative bound. Include the same startup and per-pair overhead as the submission planner.');
+   if(data.wall_time_unknown)time.append(el('p','A zero wall limit is unbounded, so no finite batch size can be guaranteed to finish within the reported SLURM time limit. The capacity/window estimate is retained; SLURM may stop an unfinished batch at its allocation limit.'));
    else{
     (data.configuration_wall_seconds||[]).forEach((wall,index)=>explain(time,`${data.configuration_names[index]}: ${amount(wall,'second')}/pair wall + ${amount(data.pair_overhead_seconds,'second')}/pair overhead + ${amount(data.configuration_postprocessor_seconds[index],'second')}/pair postprocessing = ${amount(wall+data.pair_overhead_seconds+data.configuration_postprocessor_seconds[index],'second')}/pair`,'Active postprocessing reserves timeout + 5 seconds; disabled postprocessing reserves zero.'));
     explain(time,`floor((${amount(data.wall_limit_seconds,'second')}/batch − ${amount(data.batch_startup_seconds,'second')}/batch startup) ÷ ${amount(data.max_pair_budget_seconds,'second')}/pair combined budget) = ${amount(data.wall_time_capacity,'pair')}/batch`,'Postprocessing reserves timeout + 5 seconds per active pair; None adds zero. The capacity uses the largest combined pair budget. Faster pairs may finish sooner.');
@@ -586,24 +586,31 @@ if(document.body.dataset.page==='new'){
   const picture=el('div',undefined,'batch-window-picture');picture.setAttribute('aria-label',`${data.suggested_batches} suggested batches; ${data.submission_budget} available submission slots`);
   const shown=Math.min(data.suggested_batches,100);for(let i=0;i<shown;i++){const square=el('span',String(i+1),i<data.submission_budget?'batch-slot fits':'batch-slot waits');square.title=`Batch ${i+1}: ${i<data.submission_budget?'fits the current submission window':'must wait for a free submission slot'}`;picture.append(square);}content.append(picture,el('p','Each numbered box is one SLURM batch.'+(data.suggested_batches>100?' Only the first 100 are shown.':'')+' Account usage can change after this calculation.','muted'));
  }
+ function updateBatchTimeWarning(){
+  const warning=$('#batch-time-warning'),data=lastBatchPlan,size=Number(batchInput.value);
+  if(!data||!data.wall_limit_seconds||!Number.isInteger(size)||size<1){warning.hidden=true;return;}
+  const budget=data.wall_time_unknown?604800:data.batch_startup_seconds+size*data.max_pair_budget_seconds;
+  warning.hidden=budget<=data.wall_limit_seconds;
+  warning.textContent=warning.hidden?'':`This batch size may need more than the ${data.wall_limit_label||'reported'} SLURM limit for ${data.account||'the selected account'}. Slurmy will cap the requested time at that limit. SLURM may stop unfinished work; completed solver-problem pairs are kept and the rest can be resumed.`;
+ }
  async function suggestBatchSize(){
   const request=++batchRequest, status=$('#batch-suggestion'), use=$('#use-batch-suggestion');
   status.className='validation';status.textContent='Checking partition nodes and counting solver-problem pairs…';use.hidden=true;
   try{
    const data=await api('/api/suggest-batch-size',payload());
    if(request!==batchRequest)return;
-   lastBatchSuggestion=data.batch_size;lastBatchPlan=data;renderBatchExplanation(data);
+   lastBatchSuggestion=data.batch_size;lastBatchPlan=data;renderBatchExplanation(data);updateBatchTimeWarning();
    status.className='validation valid';
-   status.textContent=`Suggested: ${data.batch_size} ${data.batch_size===1?'pair':'pairs'} per batch · ${data.suggested_batches} ${data.suggested_batches===1?'batch':'batches'}. ${data.suggested_fits?'Fits the current submission window.':'Some batches will need to wait.'}`;
+   status.textContent=`Suggested: ${data.batch_size} ${data.batch_size===1?'pair':'pairs'} per batch · ${data.suggested_batches} ${data.suggested_batches===1?'batch':'batches'}. ${data.suggested_fits?'Fits the current submission window.':'Some batches will need to wait.'}${data.wall_time_policy?.policy_verified===false?' Account/QOS policy could not be fully verified; the reported limits are used conservatively.':''}`;
    use.hidden=Number(batchInput.value)===data.batch_size;
    updateStepStates();
-  }catch(error){if(request!==batchRequest)return;lastBatchSuggestion=null;lastBatchPlan=null;status.className='validation invalid';status.textContent=`Could not suggest a batch size: ${error.message} You can enter a size manually.`;}
+  }catch(error){if(request!==batchRequest)return;lastBatchSuggestion=null;lastBatchPlan=null;updateBatchTimeWarning();status.className='validation invalid';status.textContent=`Could not suggest a batch size: ${error.message} You can enter a size manually.`;}
  }
- batchInput.addEventListener('input',()=>{$('#use-batch-suggestion').hidden=lastBatchSuggestion===null||Number(batchInput.value)===lastBatchSuggestion;});
- $('#use-batch-suggestion').addEventListener('click',()=>{if(lastBatchSuggestion!==null){batchInput.value=lastBatchSuggestion;$('#use-batch-suggestion').hidden=true;updateStepStates();}});
+ batchInput.addEventListener('input',()=>{updateBatchTimeWarning();$('#use-batch-suggestion').hidden=lastBatchSuggestion===null||Number(batchInput.value)===lastBatchSuggestion;});
+ $('#use-batch-suggestion').addEventListener('click',()=>{if(lastBatchSuggestion!==null){batchInput.value=lastBatchSuggestion;$('#use-batch-suggestion').hidden=true;updateBatchTimeWarning();updateStepStates();}});
  form.addEventListener('input',event=>{
   if(event.target===batchInput)return;
-  ++batchRequest;lastBatchSuggestion=null;lastBatchPlan=null;clearTimeout(batchTimer);
+  ++batchRequest;lastBatchSuggestion=null;lastBatchPlan=null;updateBatchTimeWarning();clearTimeout(batchTimer);
   if(step===4)batchTimer=setTimeout(suggestBatchSize,400);
  });
  form.addEventListener('change',event=>{if(event.target!==batchInput&&step===4){++batchRequest;clearTimeout(batchTimer);batchTimer=setTimeout(suggestBatchSize,400);}});
@@ -629,11 +636,11 @@ if(document.body.dataset.page==='new'){
   if(signature!==JSON.stringify(payload()))return checkSubmissionFitNow();
   if(plan.estimated_batches<=plan.submission_budget&&!plan.selected_size_exceeds_wall)return;
   const recommendation=plan.recommended_batch_size;
-  const timeWarning=plan.selected_size_exceeds_wall?`The selected batch size can exceed the six-hour SLURM budget. The conservative time-based maximum is ${plan.wall_time_capacity} pairs per batch, including startup and per-pair overhead. ${plan.wall_single_pair_fits?'':'Even one pair can exceed six hours at its configured wall limit. '}`:'';
+  const timeWarning=plan.selected_size_exceeds_wall?`The selected batch size can exceed the ${plan.wall_limit_label||'reported'} SLURM limit for ${plan.account||'this account'}. Slurmy will cap the requested time at that limit. Completed solver-problem pairs are kept; unfinished pairs can be resumed. ${plan.wall_time_unknown?'A zero wall limit cannot guarantee completion within the SLURM allocation. ':`The conservative maximum is ${plan.wall_time_capacity} pairs per batch, including overhead. `}`:'';
   const explanation=timeWarning+`This workflow creates approximately ${plan.estimated_batches} batches. ${plan.account_submit_limit===null?`No account submission cap was reported for ${plan.account||'the selected account'}.`:`The selected account permits up to ${plan.account_submit_limit??50} submitted SLURM tasks for your user, including pending tasks and tasks outside Slurmy.`} Your submitted-task setting is ${current.max_outstanding}.${plan.account_submit_limit!==null&&plan.account_active_tasks!==null?` Your account currently has ${plan.account_active_tasks} active/pending tasks, leaving ${plan.account_free_slots} slots.`:''} Keep this computer awake and the local server running until the final batch is accepted; already submitted tasks continue if you disconnect. `+(recommendation?`Use ${recommendation} solver-problem pairs per batch to create ${plan.recommended_batches} ${plan.recommended_batches===1?'batch':'batches'}, ${plan.suggested_fits?'fitting within the current submission window and any reported account limit':'respecting the time budget, but requiring some batches to wait for submission slots'}. Other submissions can change availability.`:`${plan.submission_budget===0?'Your account currently has no free submission slots; even a single batch must wait. ':''}At least ${plan.minimum_batches} separate batches are required by the distinct SLURM allocation settings. Increasing batch size alone cannot fit them into the current ${plan.submission_budget}-task window. Adjust the allocation requirements or submitted-task setting, or allow local submission to wait.`);
-  const choice=await SlurmyDialog.choose({title:plan.selected_size_exceeds_wall?'Batch Size Can Exceed Six Hours':'Some Batches Will Need to Wait',message:explanation,choices:[...(recommendation?[{value:'use',label:`Use Batch Size ${recommendation}`}]:[]),{value:'keep',label:'Keep Batch Size',secondary:true}]});
+  const choice=await SlurmyDialog.choose({title:plan.selected_size_exceeds_wall?'Batch Size Can Exceed the SLURM Time Limit':'Some Batches Will Need to Wait',message:explanation,choices:[...(recommendation?[{value:'use',label:`Use Batch Size ${recommendation}`}]:[]),{value:'keep',label:'Keep Batch Size',secondary:true}]});
   if(!choice)throw new Error('Review the batch size before continuing.');
-  if(choice==='use'){batchInput.value=recommendation;updateStepStates();}
+  if(choice==='use'){batchInput.value=recommendation;updateBatchTimeWarning();updateStepStates();}
   acceptedBatchWarning=JSON.stringify(payload());
  }
  async function validSection(){

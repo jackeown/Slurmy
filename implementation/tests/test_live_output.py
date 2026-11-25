@@ -11,6 +11,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 from slurmy import COLUMNS, generate
@@ -76,6 +77,18 @@ class LiveOutputTests(unittest.TestCase):
             logs={member.name.split('.')[-2]:archive.extractfile(member).read()
                   for member in archive if member.isfile() and member.name.endswith('.log')}
         return job,row,logs
+
+    def test_worker_saves_node_and_slurm_task_with_each_result_and_export(self):
+        with patch.dict(os.environ,SLURMD_NODENAME='compute-7',SLURM_JOB_ID='456',SLURM_ARRAY_JOB_ID='123',SLURM_ARRAY_TASK_ID='4'):
+            job,row,_=self.run_capture('/bin/true',postprocessor_mode='none')
+        self.assertEqual((row['node'],row['slurm_id']),('compute-7','123_4'))
+        with (job/'results/index/batch_000000.csv').open(newline='') as stream:
+            saved=next(csv.DictReader(stream))
+        self.assertEqual((saved['node'],saved['slurm_id']),('compute-7','123_4'))
+        compact_export(job)
+        with next((job/'exports').glob('*_results-summary.csv')).open(newline='') as stream:
+            exported=next(csv.DictReader(stream))
+        self.assertEqual((exported['node'],exported['slurm_id']),('compute-7','123_4'))
 
     def test_solver_receives_literal_environment_without_leaking_to_parent(self):
         command="/bin/bash -c 'printf \"%s\\n\" \"$SLURMY_TEST_ENV\" \"$Hello\"'"

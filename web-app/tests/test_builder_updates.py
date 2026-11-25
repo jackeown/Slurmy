@@ -13,6 +13,8 @@ from slurmy_web import batch_suggestion as batch
 
 class BuilderUpdateTests(unittest.TestCase):
     def setUp(self):
+        policy=patch.object(batch,'wall_time_policy',return_value={'limit_seconds':21600,'account':'default','partition_time_override':False})
+        policy.start();self.addCleanup(policy.stop)
         tmp=tempfile.TemporaryDirectory();self.addCleanup(tmp.cleanup)
         self.root=Path(tmp.name);self.workflow=self.root/'sample';self.workflow.mkdir()
         (self.workflow/'Makefile').write_text('')

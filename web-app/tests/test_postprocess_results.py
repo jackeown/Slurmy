@@ -97,11 +97,11 @@ class PostprocessResultsTests(unittest.TestCase):
                 self.assertEqual(response.json,{'valid':True,'message':'ready'})
                 validate.assert_called_once_with('./parse','/tmp/parser',allowed_roots=expected)
 
-    def test_ui_renders_fields_as_text(self):
+    def test_status_column_stays_compact_without_inline_result_details(self):
         source=(Path(__file__).parent.parent/'slurmy_web/static/app.js').read_text()
-        self.assertIn('Object.entries(data)',source)
-        self.assertIn("Postprocessing error",source)
+        self.assertNotIn('Result details',source)
+        self.assertNotIn('function taskResult(',source)
         self.assertIn('document.createTextNode(cell',source)
-        self.assertIn('taskResult(task)',source)
+        self.assertIn('taskStatus(task)',source)
 
 if __name__=='__main__':unittest.main()

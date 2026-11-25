@@ -19,14 +19,14 @@ RESULT_FIELDS = ('task_id', 'complete', 'status', 'return_code', 'wall_seconds',
                  'cpu_seconds', 'user_seconds', 'system_seconds', 'cpu_usage_percent',
                  'max_virtual_memory_kib', 'max_memory_kib', 'timed_out', 'memory_out',
                  'task_key', 'archive', 'szs_status', 'szs_output', 'postprocess_data',
-                 'postprocess_return_code', 'postprocess_error', 'postprocess_status')
+                 'postprocess_return_code', 'postprocess_error', 'postprocess_status', 'node', 'slurm_id')
 EXPORT_FIELDS = ('task_id', 'solver', 'problem', 'command', 'cores', 'threads_per_core',
                  'wc_limit', 'cpu_limit', 'mem_limit', 'complete', 'status',
                  'return_code', 'wall_seconds', 'cpu_seconds', 'user_seconds',
                  'system_seconds', 'cpu_usage_percent', 'max_virtual_memory_kib',
                  'max_memory_kib', 'timed_out', 'memory_out', 'szs_status',
                  'szs_output', 'has_solver_stdout', 'has_solver_stderr', 'szs_status_code', 'szs_output_code', 'execution_status',
-                 'postprocess_return_code', 'postprocess_error')
+                 'postprocess_return_code', 'postprocess_error', 'node', 'slurm_id')
 JOB_ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]*$')
 STAREXEC_FIELDS = (*EXPORT_FIELDS, 'has_combined_solver_output')
 ARCHIVE = re.compile(r'^[A-Za-z0-9._-]+\.tar\.gz$')
@@ -101,7 +101,7 @@ def export(root: Path, combined: bool = False) -> None:
         source_files = [root / 'metadata.json', root / 'manifest.jsonl',
                         *sorted((root / 'results').glob('batch_*_task_*.csv')),
                         *sorted((root / 'results').glob('*.tar.gz'))]
-        signature = hashlib.sha256(('streams-v3-postprocessing' + str(combined) + szs.REGISTRY_VERSION + repr([(path.name, path.stat().st_size, path.stat().st_mtime_ns)
+        signature = hashlib.sha256(('streams-v4-execution-provenance' + str(combined) + szs.REGISTRY_VERSION + repr([(path.name, path.stat().st_size, path.stat().st_mtime_ns)
                                          for path in source_files if path.is_file()])).encode()).hexdigest()
         signature_file = directory / '.signature'
         metadata = json.loads((root / 'metadata.json').read_text(encoding='utf-8'))

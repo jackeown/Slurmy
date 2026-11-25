@@ -15,7 +15,7 @@ const context={link:(text,href)=>({text,href}),params:values=>new URLSearchParam
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf('function taskPlacement('),source.indexOf('async function fetchJob(')),context);
 assert.equal(context.taskPlacement({finished:true,slurm_id:'123_0'},'job'),'123_0');
-assert.equal(context.taskPlacement({finished:true,node:'node1',slurm_id:'123_0'},'job'),'123_0');
+assert.equal(context.taskPlacement({finished:true,node:'node1',slurm_id:'123_0'},'job'),'node1 · 123_0');
 assert.equal(context.taskPlacement({state:'queued',slurm_id:'123_0'},'job'),'Queued · 123_0');
 assert.equal(context.taskPlacement({state:'stopped',slurm_id:'123_0'},'job'),'123_0');
 assert.equal(context.taskPlacement({state:'batch failed',slurm_id:'123_0'},'job'),'123_0');

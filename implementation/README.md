@@ -438,6 +438,11 @@ export and converts locally into two ZIPs under `job-results/starexec/JOB_ID`:
 numeric alias derived from the Slurmy job ID, and pair IDs retain Slurmy task IDs.
 The column order and directory layout match the supplied StarExec Job7575 exports.
 
+Each newly written solver-problem pair result saves its compute node and SLURM
+task ID. These stay visible after completion and are included in the results
+summary. Older results use SLURM accounting history when available; unknown
+locations are left blank rather than assigned to a later retry.
+
 CPU/wall times are seconds and memory usage is bytes. A Slurmy solver configuration
 name supplies both the solver and configuration columns because Slurmy does not
 store a separate StarExec solver identity. TPTP-relative problem paths and original
@@ -563,15 +568,20 @@ shell-quoted words, are preserved in portable workflows, and invalidate build
 reuse when changed. Shell pipelines belong inside a script or the explicit
 inline-command build option.
 
-Batch suggestions also respect a six-hour planning budget. For finite limits,
-the conservative maximum is `floor((21600 - 60) / (largest wall limit + overhead))`,
-where overhead is 80 seconds/pair with computer information or 30 without it.
-This matches the generated startup and per-pair allowances. If the time cap
-requires more batches than the submission window, later batches must wait.
-A zero wall limit is unbounded and cannot provide a six-hour completion guarantee;
-even a single finite pair can exceed the allocation when its own wall limit is
-longer than the batch budget. The explanation and manual-size warning show these
-cases rather than claiming a guaranteed fit.
+Batch suggestions use the wall-time policy reported for the selected partition
+and account, including the account's default/allowed QOS. A different account
+does not automatically bypass the partition maximum: a QOS must explicitly
+permit that exception. The editor warns when the estimated batch budget exceeds
+the reported limit, including startup, computer-info collection and postprocessing.
+The conservative capacity is `floor((limit_seconds - 60) / max_pair_budget)`,
+where a pair budget includes its wall limit and all these per-pair allowances.
+
+Before each submission wave, Slurmy checks the policy again and caps each
+batch's requested SLURM time at the allowed maximum, rounded down to whole
+minutes. Keeping a larger batch size is permitted: SLURM may terminate it at
+the limit, but completed solver-problem pair results remain saved. Resume
+retries unfinished pairs. A zero per-pair wall limit remains unbounded; the
+batch still receives a finite SLURM limit when the selected policy imposes one.
 
 CPU-amd was verified on 19 November 2026 as 20 nodes, two 32-core sockets/node,
 one thread/core, `CR_CORE_MEMORY`, `task/cgroup,task/affinity`, `OverSubscribe=NO`,

@@ -29,7 +29,7 @@ COLUMNS = ("solver_name", "command", "solver_directory", "problem", "wc_limit", 
 RESULT_COLUMNS = ("task_id", "complete", "status", "return_code", "wall_seconds",
                   "cpu_seconds", "user_seconds", "system_seconds", "cpu_usage_percent",
                   "max_virtual_memory_kib", "max_memory_kib", "timed_out", "memory_out",
-                  "task_key", "archive", "szs_status", "szs_output", "postprocess_data", "postprocess_return_code", "postprocess_error", "postprocess_status")
+                  "task_key", "archive", "szs_status", "szs_output", "postprocess_data", "postprocess_return_code", "postprocess_error", "postprocess_status", "node", "slurm_id")
 REPO = Path(__file__).resolve().parents[1]
 PLACEHOLDER = re.compile(r"\{\{([a-z_]+)\}\}")
 PAIR_ORDERS = ("problem-major", "solver-major", "random")
@@ -555,6 +555,7 @@ def generate(jobpairs: Path, building: Path, limiter_file: Path,
         # Reuse the local build driver. Remote recipes build in a disposable
         # copy of the declared root; downloaded files preserve that layout.
         shutil.copy2(REPO / "implementation/build/slurmy-build.py", assets / "builds/driver.py")
+        shutil.copyfile(REPO / "implementation/slurm_time_limits.py", assets / "slurm_time_limits.py")
         shutil.copy2(REPO / "implementation/submit_coordinator.py", assets / "submit_coordinator.py")
         shutil.copyfile(REPO / "implementation/check_threads.py", assets / "check_threads.py")
         shutil.copyfile(REPO / "implementation/ssh_transport.py", assets / "ssh_transport.py")
