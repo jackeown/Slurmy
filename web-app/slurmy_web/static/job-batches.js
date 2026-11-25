@@ -5,7 +5,7 @@ if(['job','workflow'].includes(document.body.dataset.page)&&document.querySelect
  const query=values=>params({...(prepared?{directory:document.body.dataset.directory}:{}),...values});
  const jobId=document.body.dataset.job,expanded=new Map(),pairSizes=new Map();let batchPage=0,listRequest=0,retryTimer=null,focusBatch=null;
  const url=suffix=>prepared?`/api/workflow/prepared-batches${suffix}`:`/api/jobs/${encodeURIComponent(jobId)}/batches${suffix}`;
- function freshness(data){if(prepared)return `Prepared ${new Date(data.refresh.updated*1000).toLocaleString()}${data.refresh.stale?' · workflow changed since preparation':''}`;const info=data.refresh||{},when=info.updated?new Date(info.updated*1000).toLocaleTimeString():'unknown time';return info.stale?`Saved snapshot from ${when} · may be out of date${info.refreshing?' · refreshing in background':''}`:`Last refreshed ${when}`;}
+ function freshness(data){if(prepared)return `Prepared ${new Date(data.refresh.updated*1000).toLocaleString()}${data.refresh.stale?' · workflow changed since preparation':''}`;const info=data.refresh||{},when=info.updated?new Date(info.updated*1000).toLocaleTimeString():'unknown time';return info.stale?`Saved snapshot from ${when} · might be out of date${info.refreshing?' · refreshing in background':''}`:`Last refreshed ${when}`;}
  function pager(container,current,total,size,change,label,resize=null,sizeLabel=null){
   const pages=Math.max(1,Math.ceil(total/size));container.replaceChildren();
   const previous=button('Previous',()=>change(current-1)),next=button('Next',()=>change(current+1));

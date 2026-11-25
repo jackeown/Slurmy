@@ -15,7 +15,7 @@ function refreshLabel(data){''' + function + '''
 const stamp=100;
 const failed=refreshLabel({refresh:{updated:stamp,stale:true,error:'offline'}});
 assert(failed.includes('Saved snapshot from'));
-assert(failed.includes('may be out of date'));
+assert(failed.includes('might be out of date'));
 assert(failed.includes('failed'));
 assert(!failed.includes('Last refreshed'));
 assert.equal(lastLoadedAt.getTime(),stamp*1000);
