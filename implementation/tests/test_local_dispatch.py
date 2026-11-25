@@ -50,6 +50,16 @@ class LocalDispatchTests(unittest.TestCase):
         self.assertEqual(request.call_args.args[:3],('host','job/submit','POST'))
         self.assertEqual(request.call_args.args[3]['job']['minimum_nodes'],1)
 
+    def test_rejected_submission_reports_effective_settings_without_retrying(self):
+        message=dict(argv=['sbatch','--partition=CPU-amd','--account=cpuopt','batch.sh'],script='true',cwd='/job',environment={'SBATCH_RESERVATION':'stale','PATH':'/bin'})
+        with patch.object(slurm_api,'request',side_effect=RuntimeError('Requested reservation is invalid')) as request:
+            with self.assertRaises(RuntimeError) as caught:local_dispatch.rpc('host',message)
+        self.assertIn("reservation='(none)'",str(caught.exception))
+        self.assertIn("account='cpuopt'",str(caught.exception))
+        self.assertIn("partition='CPU-amd'",str(caught.exception))
+        self.assertEqual(request.call_count,1)
+        self.assertNotIn('SBATCH_RESERVATION=stale',request.call_args.args[3]['job']['environment'])
+
     def test_full_rest_window_waits_locally_without_opening_more_ssh_sessions(self):
         import io
         class Process:

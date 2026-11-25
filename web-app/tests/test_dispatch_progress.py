@@ -37,6 +37,16 @@ class DispatchProgressTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session['csrf'] = 'test'
 
+    def test_workflow_dispatch_drops_parent_make_overrides_and_resume_marker(self):
+        with patch.dict(os.environ,MAKEFLAGS='-- SLURMY_RESERVATION=slurm-cpu',GNUMAKEFLAGS='-e',SLURMY_RESUME_JOB_ID='old-job'):
+            self.start()
+        worker=web.threading.Thread.call_args.kwargs['target']
+        with patch.object(web.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
+            worker()
+        child=run.call_args.kwargs['env']
+        for key in ('MAKEFLAGS','GNUMAKEFLAGS','SLURMY_RESUME_JOB_ID'):
+            self.assertNotIn(key,child)
+
     def test_workflow_list_does_not_compute_summaries_for_unrelated_jobs(self):
         from slurmy_web.monitor import JobSnapshot
         selected=JobSnapshot('selected','/jobs/selected',123,metadata={'workflow_directory':str(self.workflow)})

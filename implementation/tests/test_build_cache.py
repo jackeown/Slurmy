@@ -27,6 +27,22 @@ class BuildCacheTests(unittest.TestCase):
         subprocess.run(['bash',str(script)],env={**os.environ,'SLURM_SUBMIT_DIR':str(stage)},capture_output=True,text=True,check=True)
         self.assertEqual(json.loads((stage/'output/solver').read_text()),self.args.recipe_arg)
 
+    def test_build_submission_ignores_stale_login_reservation_default(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);staging=root/'slurmy/builds/.staging-test';staging.mkdir(parents=True)
+            (staging/'job.sh').write_text('#!/bin/bash\n#SBATCH --reservation=current-reservation\ntrue\n')
+            (staging/'recipe.sh').touch()
+            tools=root/'bin';tools.mkdir()
+            command=tools/'sbatch'
+            command.write_text('#!/bin/bash\nif [[ ${SBATCH_RESERVATION+x} ]]; then echo "stale reservation leaked" >&2; exit 9; fi\nprintf "12345\\n"\n')
+            command.chmod(0o755)
+            result=subprocess.run(['bash','-s','--','test'],input=driver.REMOTE_SUBMIT,
+                                  env={**os.environ,'HOME':folder,'PATH':str(tools)+os.pathsep+os.environ['PATH'],
+                                       'SBATCH_RESERVATION':'old-reservation'},capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(result.stdout.strip(),'12345')
+            self.assertIn('#SBATCH --reservation=current-reservation',(root/'slurmy/builds/test/job.sh').read_text())
+
     def test_socket_build_requests_physical_cores_and_sets_parallelism(self):
         self.args.cpus_per_task='socket'
         self.args.sbatch_option=['--partition=CPU-amd']

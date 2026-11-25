@@ -45,9 +45,9 @@ elif name=='sbatch':
             path=self.bin/name;path.write_text(program);path.chmod(0o755)
         self.env={**os.environ,'HOME':str(self.home),'USER':'tester','PATH':str(self.bin)+':'+os.environ['PATH']}
 
-    def submit(self,window=100,resume=0,**env):
+    def submit(self,window=100,resume=0,reservation='-',partition='CPU-amd',**env):
         return subprocess.run(['bash',str(REPO/'implementation/templates/remote_submit.sh'),
-            'array-test','CPU-amd',str(window),'array-test',base64.b64encode(b'Array test').decode(),str(resume),'-','0','cpuopt'],
+            'array-test',partition,str(window),'array-test',base64.b64encode(b'Array test').decode(),str(resume),reservation,'0','cpuopt'],
             env={**self.env,**env},capture_output=True,text=True,timeout=30)
 
     def requests(self):return json.loads((self.home/'requests.json').read_text())
@@ -129,6 +129,30 @@ if sys.argv[1]=='attempt':
         for batch,options in enumerate(self.requests()):
             self.assertIn('--array=0-0',options)
             self.assertIn('--export=ALL,SLURMY_BATCH_ID='+str(batch),options)
+
+    def test_later_waves_keep_saved_partition_and_reservation_including_none(self):
+        for saved in ('-', 'original-reservation'):
+            with self.subTest(saved=saved):
+                self.setup_job()
+                first=self.submit(reservation=saved,TEST_ARRAY_SIZE='3',TEST_STOP_AFTER='1')
+                self.assertNotEqual(first.returncode,0)
+                (self.job/'.stopped').unlink()
+                self.assert_success(self.submit(resume=2,reservation='other-reservation',partition='CPU-intel',TEST_ARRAY_SIZE='3'))
+                self.assertGreater(len(self.requests()),1)
+                for options in self.requests():
+                    self.assertIn('--partition=CPU-amd',options)
+                    self.assertEqual([option for option in options if option.startswith('--reservation=')],
+                                     [] if saved=='-' else ['--reservation='+saved])
+
+    def test_ambient_sbatch_reservation_does_not_leak_into_new_jobs(self):
+        self.setup_job()
+        # The fake sbatch sees the same environment the real CLI uses.
+        sbatch=self.bin/'sbatch'
+        sbatch.write_text(sbatch.read_text().replace("elif name=='sbatch':", "elif name=='sbatch':\n assert 'SBATCH_RESERVATION' not in os.environ"))
+        result=self.submit(SBATCH_RESERVATION='stale-shell-reservation')
+        self.assert_success(result)
+        self.assertIn('reservation=none',result.stdout)
+        self.assertTrue(all(not any(option.startswith('--reservation=') for option in request) for request in self.requests()))
 
     def test_stop_marker_blocks_further_arrays_after_recording_acceptance(self):
         self.setup_job()

@@ -225,6 +225,8 @@ staging="$HOME/slurmy/builds/.staging-$build_id"
 }
 mv -T -- "$staging" "$root"
 cd -- "$root"
+# Saved workflow directives must win over an old login-shell default.
+unset SBATCH_RESERVATION
 sbatch --parsable job.sh
 """
 

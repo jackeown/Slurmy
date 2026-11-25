@@ -43,14 +43,21 @@ RESERVATION=${7:--}
 [[ -z "$RESERVATION" || "$RESERVATION" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo 'Invalid reservation.' >&2; exit 2; }
 if [[ -f submission_context.sh ]]; then
     source ./submission_context.sh
-    # Resume the committed job under its original account, including an empty
-    # default. A later workflow edit must not move its unfinished batches.
+    # All waves of a committed job keep their original placement settings,
+    # including an explicitly empty reservation. Later workflow edits only
+    # affect newly dispatched jobs.
+    PARTITION=${SAVED_PARTITION:-$PARTITION}
+    RESERVATION=${SAVED_RESERVATION-}
     ACCOUNT=${SAVED_ACCOUNT-}
     export SLURMY_ACCOUNT="$ACCOUNT"
 else
     printf 'SAVED_PARTITION=%q\nSAVED_MAX_OUTSTANDING=%q\nSAVED_JOB_PREFIX=%q\nSAVED_JOB_NAME_B64=%q\nSAVED_RESERVATION=%q\nSAVED_ACCOUNT=%q\n' \
         "$PARTITION" "${3:-32}" "$JOB_PREFIX" "${5:-}" "$RESERVATION" "$ACCOUNT" > submission_context.sh
 fi
+[[ "$PARTITION" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo 'Invalid saved partition.' >&2; exit 2; }
+[[ -z "$RESERVATION" || "$RESERVATION" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo 'Invalid saved reservation.' >&2; exit 2; }
+[[ -z "$ACCOUNT" || "$ACCOUNT" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo 'Invalid saved account.' >&2; exit 2; }
+printf 'SLURM settings: partition=%s; account=%s; reservation=%s\n' "$PARTITION" "${ACCOUNT:-cluster default}" "${RESERVATION:-none}"
 if [[ -f .stopped ]]; then
     echo 'This job is stopped. Use Resume job before submitting more batches.' >&2
     exit 1

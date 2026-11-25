@@ -2,13 +2,14 @@
 import _bootstrap  # noqa: F401 -- support direct unittest discovery
 from pathlib import Path
 import subprocess
+import os
 import sys
 import unittest
 import tempfile
 import venv
 from unittest.mock import patch
 
-from slurmy_web.local_runtime import python_environment
+from slurmy_web.local_runtime import python_environment, workflow_environment
 
 
 class LocalRuntimeTests(unittest.TestCase):
@@ -24,6 +25,24 @@ class LocalRuntimeTests(unittest.TestCase):
                 self.assertEqual(result.stdout.strip(), sys.prefix)
         self.assertFalse(directory.exists())
         self.assertEqual(original['PATH'], '')
+
+    def test_fresh_workflow_make_ignores_inherited_reservation_overrides(self):
+        inherited={**os.environ, 'MAKEFLAGS':'-- SLURMY_RESERVATION=slurm-cpu',
+                   'MAKEOVERRIDES':'SLURMY_RESERVATION=slurm-cpu', 'MFLAGS':'-e',
+                   'GNUMAKEFLAGS':'-e', 'MAKELEVEL':'3', 'SLURMY_RESUME_JOB_ID':'old-job',
+                   'SLURMY_RESERVATION':'old-shell-value', 'KEEP':'yes'}
+        clean=workflow_environment(inherited)
+        self.assertEqual(clean['KEEP'],'yes')
+        for name in ('MAKEFLAGS','MAKEOVERRIDES','MFLAGS','GNUMAKEFLAGS','MAKELEVEL','SLURMY_RESUME_JOB_ID'):
+            self.assertNotIn(name,clean)
+            self.assertIn(name,inherited)
+        with tempfile.TemporaryDirectory() as folder:
+            makefile=Path(folder)/'Makefile'
+            for value in ('','new-reservation'):
+                makefile.write_text('SLURMY_RESERVATION := '+value+'\nexport SLURMY_RESERVATION\nshow:\n\t@printf "<%s>" "$$SLURMY_RESERVATION"\n')
+                result=subprocess.run(['make','--no-print-directory','-f',str(makefile),'show'],env=clean,capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(result.stdout,'<'+value+'>')
 
     def test_exception_cleans_up(self):
         with self.assertRaisesRegex(RuntimeError, 'failed'):

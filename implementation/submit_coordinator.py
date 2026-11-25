@@ -38,7 +38,11 @@ def command(argv: list[str], timeout: int = 20) -> subprocess.CompletedProcess[s
         with os.fdopen(os.dup(4), 'r') as stream:
             response = json.loads(stream.readline())
         return subprocess.CompletedProcess(argv, response['returncode'], response['stdout'], response['stderr'])
-    return subprocess.run(argv, text=True, capture_output=True, timeout=timeout, check=False)
+    # A blank workflow reservation means no reservation, not a login shell's
+    # old SBATCH_RESERVATION default. Explicit --reservation still takes effect.
+    environment = ({key: value for key, value in os.environ.items() if key != 'SBATCH_RESERVATION'}
+                   if argv[0] == 'sbatch' else None)
+    return subprocess.run(argv, text=True, capture_output=True, timeout=timeout, check=False, env=environment)
 
 
 def save_json(path: Path, value: dict) -> None:

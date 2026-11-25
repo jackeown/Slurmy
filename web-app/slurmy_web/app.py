@@ -33,7 +33,7 @@ from .monitor import RemoteCollector, summarize_results, ResultRecord, result_st
 from .cluster import fetch_status
 from .launcher import web_version
 from . import workflows
-from .local_runtime import python_environment
+from .local_runtime import python_environment, workflow_environment
 from .recovery_watch import RecoveryWatch
 from .snapshot_cache import SnapshotCache
 
@@ -1469,8 +1469,8 @@ def create_app():
         action = data.get('action')
         if action not in {'all', 'prepare', 'prepare-submit', 'submit'}:
             raise ValueError('Unknown workflow action.')
-        environment = {**os.environ, 'SLURMY_HOST': host(), 'SLURMY_PYTHON': sys.executable,
-                       'PATH': str(Path(sys.executable).parent) + os.pathsep + os.environ.get('PATH', '')}
+        environment = workflow_environment({**os.environ, 'SLURMY_HOST': host(), 'SLURMY_PYTHON': sys.executable,
+                       'PATH': str(Path(sys.executable).parent) + os.pathsep + os.environ.get('PATH', '')})
         missing = [tool for tool in ('make', 'bash', 'ssh', 'scp', 'tar')
                    if shutil.which(tool) is None]
         if missing:

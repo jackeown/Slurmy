@@ -308,7 +308,7 @@ def batch_request(options, script, cwd, environment):
                 'threads-per-core':'threads_per_core', 'ntasks-per-socket':'tasks_per_socket',
                 'cores-per-socket':'cores_per_socket', 'sockets-per-node':'sockets_per_node'}
     job = dict(current_working_directory=cwd)
-    env = {k:v for k,v in environment.items() if k not in {'SLURM_JWT','SLURMY_API_BRIDGE','BASH_ENV','ENV'}}
+    env = {k:v for k,v in environment.items() if k not in {'SLURM_JWT','SLURMY_API_BRIDGE','BASH_ENV','ENV','SBATCH_RESERVATION'}}
     env['SLURM_SUBMIT_DIR'] = cwd
     for option in options:
         if option == 'batch.sh' or option == '--parsable': continue

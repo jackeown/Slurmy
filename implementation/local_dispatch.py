@@ -43,7 +43,13 @@ def rpc(host, message):
     if argv[0] != 'sbatch':
         raise ValueError('Unsupported scheduler bridge command.')
     payload = slurm_api.batch_request(argv[1:], message['script'], message['cwd'], message['environment'])
-    result = slurm_api.request(host, 'job/submit', 'POST', payload)
+    try:
+        result = slurm_api.request(host, 'job/submit', 'POST', payload)
+    except RuntimeError as error:
+        job = payload['job']
+        settings = ', '.join(f"{key}={str(job.get(key) or '(none)')!r}"
+                             for key in ('partition', 'account', 'reservation'))
+        raise RuntimeError(f'{error} Requested SLURM settings: {settings}.') from None
     identifier = result.get('job_id') or (result.get('result') or {}).get('job_id')
     if not str(identifier).isdigit(): raise RuntimeError('API submission did not return a job ID.')
     slurm_api.remember_submission(host, identifier, payload)
