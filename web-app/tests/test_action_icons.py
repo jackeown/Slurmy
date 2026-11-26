@@ -22,7 +22,7 @@ api.scan(control);assert.equal(text.nodeValue,'Download');assert.equal(control.d
 text.nodeValue='Duplicate';api.scan(control);assert.equal(control.dataset.actionIcon,'copy');assert.equal(text.nodeValue,'Duplicate');
 api.scan(control);assert.equal(text.nodeValue,'Duplicate');
 text.nodeValue='Something else';api.scan(control);assert.equal(control.dataset.actionIcon,undefined);
-for(const [index,icon] of ['list-check','gears','folder-open','shield-halved','sliders','eye'].entries()){
+for(const [index,icon] of ['list-check','gears','folder-open','shield-halved','sliders','floppy-disk'].entries()){
  control.dataset.stepTab=String(index);text.nodeValue=`${index+1} · Step`;
  api.scan(control);assert.equal(control.dataset.actionIcon,icon);assert.equal(text.nodeValue,`${index+1} · Step`);
 }

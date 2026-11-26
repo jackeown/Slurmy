@@ -704,7 +704,7 @@ if(document.body.dataset.page==='new'){
   if(step===4)batchTimer=setTimeout(suggestBatchSize,400);
  });
  form.addEventListener('change',event=>{if(event.target!==batchInput&&step===4){++batchRequest;clearTimeout(batchTimer);batchTimer=setTimeout(suggestBatchSize,400);}});
- function renderStep(){sections.forEach((s,i)=>s.hidden=i!==step);document.querySelectorAll('#steps li').forEach((n,i)=>{n.classList.toggle('current',i===step);const tab=$('button',n);if(i===step)tab.setAttribute('aria-current','step');else tab.removeAttribute('aria-current');});$('#builder-back').hidden=step===0;$('#builder-next').hidden=step===5;$('#builder-save').hidden=step!==5;text('#step-count',`Step ${step+1} of 6`);$('#builder-error').hidden=true;if(step===4)suggestBatchSize();}
+ function renderStep(){form.classList.toggle('save-step',step===5);$('#step-count').hidden=step===5;sections.forEach((s,i)=>s.hidden=i!==step);document.querySelectorAll('#steps li').forEach((n,i)=>{n.classList.toggle('current',i===step);const tab=$('button',n);if(i===step)tab.setAttribute('aria-current','step');else tab.removeAttribute('aria-current');});$('#builder-back').hidden=step===0;$('#builder-next').hidden=step===5;$('#builder-save').hidden=step!==5;text('#step-count',`Step ${step+1} of 6`);$('#builder-error').hidden=true;if(step===4)suggestBatchSize();}
  function showError(error){text('#builder-error',error.message);$('#builder-error').hidden=false;}
  async function waitForPlacement(card){
   const input=card.querySelector('[name="threads_per_core"]');

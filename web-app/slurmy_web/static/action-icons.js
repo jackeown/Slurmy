@@ -25,7 +25,7 @@ window.SlurmyActionIcons=(()=>{
   function decorate(control){
     if(control.matches('.collapse-toggle,.sort-button,.theme-option,.outcome-row-button,.cluster-node-button,.theme-toggle')||control.closest('template'))return;
     const label=(control.getAttribute('aria-label')||control.textContent||'').trim();
-    const stepIcons=['list-check','gears','folder-open','shield-halved','sliders','eye'];
+    const stepIcons=['list-check','gears','folder-open','shield-halved','sliders','floppy-disk'];
     let icon=stepIcons[control.dataset.stepTab]||iconFor(label);
     if(!icon && control.textContent.trim()==='✕')icon='xmark';
     if(!icon){if(control.dataset.actionIcon)delete control.dataset.actionIcon;return;}
