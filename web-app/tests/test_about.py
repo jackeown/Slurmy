@@ -17,7 +17,7 @@ class AboutTests(unittest.TestCase):
             response=self.client.get('/about?host=datalab')
         self.assertEqual(response.status_code,200)
         html=response.text
-        for value in (VERSION,'abc1234','Jack Keown','TU Wien dataLAB','FoRSyTe','APRe','<span>About</span>','/logo.svg'):
+        for value in (VERSION,'abc1234','Jack McKeown','TU Wien dataLAB','FORSYTE','APRe','<span>About</span>','/logo.svg'):
             self.assertIn(value,html)
         self.assertNotIn('paid for',html)
         self.assertIn('aria-current="page"',html)
