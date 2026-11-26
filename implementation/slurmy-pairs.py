@@ -68,7 +68,7 @@ def main() -> int:
     parser.add_argument("--configurations", required=True, action="append", type=Path)
     parser.add_argument("--problems", action="append", nargs="+", default=[])
     parser.add_argument("--problem-globs-file", type=Path, help="one glob per line, relative to this file")
-    parser.add_argument("--output", type=Path, default=Path("jobpairs.csv"))
+    parser.add_argument("--output", type=Path, default=Path("solver-problem-pairs.csv"))
     parser.add_argument("--order", choices=PAIR_ORDERS, default="solver-major",
                         help="solver-problem pair order; random is reproducible for unchanged inputs")
     parser.add_argument('--problem-selection-file',type=Path,help='JSON filename selections, aligned with the problem sources')

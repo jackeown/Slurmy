@@ -6,14 +6,14 @@ the shared runsolver references keep the same relative paths.
 
 1. Put your solver executable and supporting files in `bin/`, or change `solver_directory` and
    the resource root in the input files to existing directories elsewhere.
-2. Edit `jobpairs.csv`: one command/problem per row, with all per-solver-problem pair limits
+2. Edit `solver-problem-pairs.csv`: one command/problem per row, with all per-solver-problem pair limits
    and exclusivity choices.
-3. Edit `building.txt`: the solver entry has an empty `recipe`, meaning no build.
+3. Edit `building.json`: the solver entry has an empty `recipe`, meaning no build.
    For remote compilation, provide a build-script path and its expected `artifact`
    relative to the runtime `root`. Set `source` to a local source directory, or
    leave it empty if the script fetches source itself. Add the script to
    `BUILD_RECIPES` in the Makefile so changes refresh submission files.
-4. Review the runsolver invocation in `resource_limiter_template.txt`.
+4. Review the runsolver invocation in `resource-limiter.txt`.
 5. Set `BATCH_SIZE` (solver-problem pairs per SLURM task, run sequentially) in the Makefile,
    then `make prepare-submit`.
 

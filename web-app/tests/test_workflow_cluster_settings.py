@@ -41,11 +41,11 @@ class ClusterSettingsTests(unittest.TestCase):
             row = dict(solver_name='test', command='./solver {{problem}}', solver_directory=str(root),
                        problem='tptp:'+problem, wc_limit=3, cpu_limit=2, mem_limit='100MiB', cores=1,
                        threads_per_core=1, cpus='auto', exclusive_cpu='false', exclusive_node='false')
-            (root/'jobpairs.csv').write_text(workflows.csv_text([row]))
-            (root/'building.txt').write_text(str(root)+'\n\n')
+            (root/'solver-problem-pairs.csv').write_text(workflows.csv_text([row]))
+            (root/'building.json').write_text(str(root)+'\n\n')
             for flag, enabled, expected in [('--timestamp', True, 1), ('', True, 0), ('--label=--timestamp', False, 0)]:
-                (root/'resource_limiter_template.txt').write_text(f'{root}/limiter {flag} {{{{solver_command}}}}')
-                generate(root/'jobpairs.csv', root/'building.txt', root/'resource_limiter_template.txt', get_computer_info=enabled)
+                (root/'resource-limiter.txt').write_text(f'{root}/limiter {flag} {{{{solver_command}}}}')
+                generate(root/'solver-problem-pairs.csv', root/'building.json', root/'resource-limiter.txt', get_computer_info=enabled)
                 assets = root/'submit.sh.files'
                 config = (assets/'calls/0/config.sh').read_text()
                 self.assertIn('TPTP_DEFAULT_ROOT='+TPTP_DEFAULT_ROOT, config)
@@ -70,7 +70,7 @@ class ClusterSettingsTests(unittest.TestCase):
                 with patch.object(workflows,'check_requested'):
                     destination,files,count=workflows.specification(data,root/data['name'])
                 self.assertIn('SLURMY_ACCOUNT := cpuopt',files['Makefile'])
-                resource=json.loads(files['building.txt'])[1]
+                resource=json.loads(files['building.json'])[1]
                 self.assertEqual(resource['build_policy'],policy)
                 self.assertEqual(bool(resource.get('recipe')),mode=='script')
                 if mode=='script':
@@ -78,7 +78,7 @@ class ClusterSettingsTests(unittest.TestCase):
                     self.assertEqual(resource['artifact'],'runsolver')
                 destination.mkdir()
                 for name,body in files.items():(destination/name).write_text(body)
-                generate(destination/'jobpairs.csv',destination/'building.txt',destination/'resource_limiter_template.txt')
+                generate(destination/'solver-problem-pairs.csv',destination/'building.json',destination/'resource-limiter.txt')
                 settings=(destination/'submit.sh.files/submission_settings.sh').read_text()
                 if mode=='script':
                     self.assertIn('--sbatch-option=--account=$SLURMY_ACCOUNT',(destination/'submit.sh.files/builds/run.sh').read_text())
@@ -107,15 +107,15 @@ class ClusterSettingsTests(unittest.TestCase):
             with patch.object(workflows, 'check_requested'), patch('slurmy_archives.CACHE', root/'cache'):
                 destination, files, count = workflows.specification(data, root/'workflow')
             self.assertEqual(count, 2858)
-            rows = list(csv.DictReader(io.StringIO(files['jobpairs.csv'])))
+            rows = list(csv.DictReader(io.StringIO(files['solver-problem-pairs.csv'])))
             self.assertEqual([row['solver_name'] for row in rows], ['VampireCASC']*1429+['BuiltE']*1429)
             self.assertEqual(len({row['problem'] for row in rows}), 1429)
             self.assertTrue(all(Path(row['problem']).name.startswith('SET') for row in rows))
             destination.mkdir()
             for name, body in files.items():
                 (destination/name).write_text(body)
-            generate(destination/'jobpairs.csv', destination/'building.txt',
-                     destination/'resource_limiter_template.txt', batch_size=500, pair_order='solver-major')
+            generate(destination/'solver-problem-pairs.csv', destination/'building.json',
+                     destination/'resource-limiter.txt', batch_size=500, pair_order='solver-major')
             metadata = json.loads((destination/'submit.sh.files/metadata.json').read_text())
             self.assertEqual(metadata['task_count'], 2858)
             self.assertEqual(metadata['batch_count'], 6)
@@ -184,8 +184,8 @@ class ClusterSettingsTests(unittest.TestCase):
             destination.mkdir()
             for filename, body in files.items():
                 (destination / filename).write_text(body)
-            generate(destination/'jobpairs.csv', destination/'building.txt', destination/'resource_limiter_template.txt')
-            self.assertEqual(json.loads(files['building.txt'])[0]['build_policy'], 'changed')
+            generate(destination/'solver-problem-pairs.csv', destination/'building.json', destination/'resource-limiter.txt')
+            self.assertEqual(json.loads(files['building.json'])[0]['build_policy'], 'changed')
             assets = destination/'submit.sh.files'
             self.assertIn('--build-policy changed', (assets/'builds/run.sh').read_text())
             self.assertIn('TPTP_DEFAULT_ROOT=/share/TPTP/TPTP-v10', (assets/'calls/0/config.sh').read_text())

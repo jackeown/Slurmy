@@ -47,9 +47,9 @@ refresh the scripts automatically.
 
 ## 📁 What to edit
 
-- `configurations.csv`: solver commands, limits, and core/socket/node choices.
-- `building.txt`: runtime roots, optional source directories, build recipes, and expected executables, including runsolver.
-- `resource_limiter_template.txt`: limiter invocation.
+- `solvers.csv`: solver commands, limits, and core/socket/node choices.
+- `building.json`: runtime roots, optional source directories, build recipes, and expected executables, including runsolver.
+- `resource-limiter.txt`: limiter invocation.
 - `Makefile`: problem globs, batch size, and optional
   `PAIR_ORDER` (`problem-major`, `solver-major`, or `random`).
 
@@ -69,7 +69,7 @@ This is the same pattern to use with your own local solver source.
 resources; `make submit` builds them again before packaging.
 `make clean` removes only `submit.sh` and `submit.sh.files/`, retaining inputs
 and downloaded binaries. In the four solver examples, `make pairs-clean`
-also removes the generated `jobpairs.csv`, so edits to configurations or problem
+also removes the generated `solver-problem-pairs.csv`, so edits to configurations or problem
 selection can be expanded again.
 
 Shared collection paths use `tptp://TPTP-v10.0.0/Problems/...` and resolve under

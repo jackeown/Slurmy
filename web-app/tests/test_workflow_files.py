@@ -19,10 +19,10 @@ class WorkflowFileTests(unittest.TestCase):
         self.assertNotIn('SLURMY_HOST',(self.directory/'Makefile').read_text())
         definition['configurations'][0]['cpu_limit']='7'
         workflow_files.replace(self.directory,'workflow.json',json.dumps(definition))
-        self.assertEqual(self.rows('configurations.csv')[0]['cpu_limit'],'7')
-        self.assertEqual(self.rows('jobpairs.csv')[0]['cpu_limit'],'7')
-        rows=self.rows('configurations.csv');rows[0]['cpu_limit']='8'
-        workflow_files.replace(self.directory,'configurations.csv',workflows.csv_text(rows,tuple(rows[0])))
+        self.assertEqual(self.rows('solvers.csv')[0]['cpu_limit'],'7')
+        self.assertEqual(self.rows('solver-problem-pairs.csv')[0]['cpu_limit'],'7')
+        rows=self.rows('solvers.csv');rows[0]['cpu_limit']='8'
+        workflow_files.replace(self.directory,'solvers.csv',workflows.csv_text(rows,tuple(rows[0])))
         self.assertEqual(json.loads((self.directory/'workflow.json').read_text())['configurations'][0]['cpu_limit'],'8')
 
     def test_imported_name_file_list_survives_save_and_reopen(self):
@@ -46,12 +46,12 @@ class WorkflowFileTests(unittest.TestCase):
             headers={'X-CSRF-Token':'post-token'},data={'file':'workflow.json',
                 'replacement':(io.BytesIO(json.dumps(definition).encode()),'workflow.json')})
         self.assertEqual(response.status_code,200,response.get_json())
-        self.assertEqual(self.rows('configurations.csv')[0]['postprocessor_command'],'python3 parse.py')
-        self.assertEqual(self.rows('jobpairs.csv')[0]['postprocessor_timeout'],'42')
-        rows=self.rows('configurations.csv');rows[0].update(postprocessor_mode='none',postprocessor_timeout='30')
-        workflow_files.replace(self.directory,'configurations.csv',workflows.csv_text(rows,tuple(rows[0])))
+        self.assertEqual(self.rows('solvers.csv')[0]['postprocessor_command'],'python3 parse.py')
+        self.assertEqual(self.rows('solver-problem-pairs.csv')[0]['postprocessor_timeout'],'42')
+        rows=self.rows('solvers.csv');rows[0].update(postprocessor_mode='none',postprocessor_timeout='30')
+        workflow_files.replace(self.directory,'solvers.csv',workflows.csv_text(rows,tuple(rows[0])))
         self.assertEqual(workflows.decisions(self.directory)['configurations'][0]['postprocessor_mode'],'none')
-        self.assertEqual(self.rows('jobpairs.csv')[0]['postprocessor_mode'],'none')
+        self.assertEqual(self.rows('solver-problem-pairs.csv')[0]['postprocessor_mode'],'none')
 
     def test_workflow_default_resolves_csv_and_override_survives_regeneration(self):
         post=self.root/'post';post.mkdir();(post/'parse.py').write_text('print("{}")')
@@ -61,7 +61,7 @@ class WorkflowFileTests(unittest.TestCase):
         data['configurations'].append({**first,'solver_name':'Override','postprocessor_override':True,
                                       'postprocessor_mode':'none','postprocessor_timeout':30})
         workflows.save(data,self.directory)
-        rows=self.rows('configurations.csv')
+        rows=self.rows('solvers.csv')
         self.assertEqual([r['postprocessor_mode'] for r in rows],['custom','none'])
         self.assertEqual(rows[0]['postprocessor_timeout'],'50')
         self.assertNotIn('postprocessor_override',rows[0])
@@ -69,11 +69,11 @@ class WorkflowFileTests(unittest.TestCase):
         self.assertFalse(saved['configurations'][0]['postprocessor_override'])
         self.assertTrue(saved['configurations'][1]['postprocessor_override'])
         saved['postprocessor']['timeout']=80;workflows.save(saved,self.directory)
-        self.assertEqual(self.rows('jobpairs.csv')[0]['postprocessor_timeout'],'80')
+        self.assertEqual(self.rows('solver-problem-pairs.csv')[0]['postprocessor_timeout'],'80')
         self.assertEqual(workflows.copyable_solver_configurations(self.directory)[0]['postprocessor_timeout'],'80')
         self.assertTrue(workflows.copyable_solver_configurations(self.directory)[0]['postprocessor_override'])
         # Importing resolved CSV treats every row as an explicit override.
-        workflow_files.replace(self.directory,'configurations.csv',(self.directory/'configurations.csv').read_text())
+        workflow_files.replace(self.directory,'solvers.csv',(self.directory/'solvers.csv').read_text())
         self.assertTrue(all(c['postprocessor_override'] for c in workflows.decisions(self.directory)['configurations']))
 
     def test_parser_and_timeout_inherit_independently_after_save(self):
@@ -88,7 +88,7 @@ class WorkflowFileTests(unittest.TestCase):
         self.assertFalse(saved['configurations'][0]['postprocessor_timeout_inherit'])
         saved['postprocessor'].update(mode='none',timeout=80)
         workflows.save(saved,self.directory)
-        result=self.rows('configurations.csv')[0]
+        result=self.rows('solvers.csv')[0]
         self.assertEqual(result['postprocessor_mode'],'none')
         self.assertEqual(result['postprocessor_timeout'],'7')
         saved=workflows.decisions(self.directory)
@@ -103,7 +103,7 @@ class WorkflowFileTests(unittest.TestCase):
         self.assertTrue(saved['configurations'][0]['postprocessor_timeout_inherit'])
         saved['postprocessor']['timeout']=90
         workflows.save(saved,self.directory)
-        result=self.rows('jobpairs.csv')[0]
+        result=self.rows('solver-problem-pairs.csv')[0]
         self.assertEqual(result['postprocessor_mode'],'default')
         self.assertEqual(result['postprocessor_timeout'],'90')
 
@@ -136,14 +136,14 @@ class WorkflowFileTests(unittest.TestCase):
         data=workflows.decisions(self.directory)
         data['resources'][0].update(mode='script',script=shlex.join([str(script),'--target','name with spaces']),artifact='solver')
         workflows.save(data,self.directory)
-        resource,=read_builds(self.directory/'building.txt')
+        resource,=read_builds(self.directory/'building.json')
         self.assertEqual(resource.arguments,('--target','name with spaces'))
-        generate(self.directory/'jobpairs.csv',self.directory/'building.txt',self.directory/'resource_limiter_template.txt')
+        generate(self.directory/'solver-problem-pairs.csv',self.directory/'building.json',self.directory/'resource-limiter.txt')
         command=(self.directory/'submit.sh.files/builds/run.sh').read_text()
         self.assertIn('--recipe-arg=--target',command)
         self.assertIn("--recipe-arg='name with spaces'",command)
         duplicate=workflows.duplicate(self.directory,'duplicate')
-        copied,=read_builds(duplicate/'building.txt')
+        copied,=read_builds(duplicate/'building.json')
         self.assertEqual(copied.recipe,script)
         self.assertEqual(copied.arguments,resource.arguments)
 
@@ -171,30 +171,30 @@ class WorkflowFileTests(unittest.TestCase):
         return {p.name:p.read_bytes() for p in self.directory.iterdir() if p.is_file()}
 
     def test_configurations_replacement_updates_pairs_editor_and_preparation(self):
-        configs=self.rows('configurations.csv');configs[0].update(solver_name='New',cpu_limit='2')
+        configs=self.rows('solvers.csv');configs[0].update(solver_name='New',cpu_limit='2')
         (self.directory/'submit.sh').write_text('old prepared job')
-        workflow_files.replace(self.directory,'configurations.csv',workflows.csv_text(configs,tuple(configs[0])))
-        self.assertEqual(self.rows('jobpairs.csv')[0]['solver_name'],'New')
+        workflow_files.replace(self.directory,'solvers.csv',workflows.csv_text(configs,tuple(configs[0])))
+        self.assertEqual(self.rows('solver-problem-pairs.csv')[0]['solver_name'],'New')
         self.assertEqual(workflows.decisions(self.directory)['configurations'][0]['cpu_limit'],'2')
         self.assertFalse((self.directory/'submit.sh').exists())
         self.assertFalse(list(self.directory.glob('.replace-*')))
 
     def test_explicit_pairs_switches_source_and_removes_stale_configurations(self):
-        rows=self.rows('jobpairs.csv');rows[0]['solver_name']='Explicit'
-        workflow_files.replace(self.directory,'jobpairs.csv',workflows.csv_text(rows))
+        rows=self.rows('solver-problem-pairs.csv');rows[0]['solver_name']='Explicit'
+        workflow_files.replace(self.directory,'solver-problem-pairs.csv',workflows.csv_text(rows))
         data=workflows.decisions(self.directory)
         self.assertEqual(data['mode'],'jobpairs')
-        self.assertEqual(data['jobpairs'],str(self.directory/'jobpairs.csv'))
-        self.assertFalse((self.directory/'configurations.csv').exists())
+        self.assertEqual(data['jobpairs'],str(self.directory/'solver-problem-pairs.csv'))
+        self.assertFalse((self.directory/'solvers.csv').exists())
         self.assertFalse((self.directory/'problem-globs.txt').exists())
         # A later ordinary editor save must preserve the replaced rows.
         workflows.save(data,self.directory)
-        self.assertEqual(self.rows('jobpairs.csv')[0]['solver_name'],'Explicit')
+        self.assertEqual(self.rows('solver-problem-pairs.csv')[0]['solver_name'],'Explicit')
 
     def test_problem_globs_rebuild_cartesian_product_and_use_workflow_relative_paths(self):
         (self.directory/'extra.p').write_text('cnf(a,axiom,p).')
         workflow_files.replace(self.directory,'problem-globs.txt',str(self.problem)+'\nextra.p\n')
-        self.assertEqual(len(self.rows('jobpairs.csv')),2)
+        self.assertEqual(len(self.rows('solver-problem-pairs.csv')),2)
         self.assertEqual(workflows.decisions(self.directory)['globs'][-1],str(self.directory/'extra.p'))
 
     def test_axioms_limiter_and_builds_update_editor(self):
@@ -205,11 +205,11 @@ class WorkflowFileTests(unittest.TestCase):
         self.assertEqual(workflows.decisions(self.directory)['axiom_mode'],'custom')
         self.assertIn('AXIOMS := axiom-globs.txt',(self.directory/'Makefile').read_text())
         limiter=str(self.runtime/'limiter')+' --cpu-limit {{cpu_limit}} {{solver_command}}'
-        workflow_files.replace(self.directory,'resource_limiter_template.txt',limiter)
+        workflow_files.replace(self.directory,'resource-limiter.txt',limiter)
         self.assertEqual(workflows.decisions(self.directory)['limiter'],limiter)
         recipe=self.root/'build.sh';recipe.write_text('echo build')
         body=json.dumps([dict(root=str(self.runtime),source=str(self.runtime),recipe=str(recipe),artifact='solver',build_policy='changed')])
-        workflow_files.replace(self.directory,'building.txt',body)
+        workflow_files.replace(self.directory,'building.json',body)
         resource=workflows.decisions(self.directory)['resources'][0]
         self.assertEqual(resource['script'],str(recipe));self.assertEqual(resource['build_policy'],'changed')
 
@@ -218,10 +218,10 @@ class WorkflowFileTests(unittest.TestCase):
         data=workflows.decisions(self.directory)
         data.update(globs=[str(self.root/'*.p')],problem_selections=['later.p\nfirst.p'])
         workflows.save(data,self.directory)
-        self.assertEqual([Path(row['problem']).name for row in self.rows('jobpairs.csv')],['later.p','first.p'])
+        self.assertEqual([Path(row['problem']).name for row in self.rows('solver-problem-pairs.csv')],['later.p','first.p'])
         self.assertIn('--problem-selection-file problem-selection.json',(self.directory/'Makefile').read_text())
         workflow_files.replace(self.directory,'problem-selection.json','["first.p"]')
-        self.assertEqual([Path(row['problem']).name for row in self.rows('jobpairs.csv')],['first.p'])
+        self.assertEqual([Path(row['problem']).name for row in self.rows('solver-problem-pairs.csv')],['first.p'])
         self.assertEqual(workflows.decisions(self.directory)['problem_selections'],['first.p'])
 
     def test_clearing_reservation_updates_next_dispatch_environment(self):
@@ -269,9 +269,9 @@ class WorkflowFileTests(unittest.TestCase):
         workflows.save(data,self.directory)
         self.assertTrue((self.directory/'axiom-globs.txt').exists())
         (self.directory/'submit.sh').write_text('stale prepared input')
-        data.update(axiom_mode='cluster',axiom_globs=[],mode='jobpairs',jobpairs=str(self.directory/'jobpairs.csv'))
+        data.update(axiom_mode='cluster',axiom_globs=[],mode='jobpairs',jobpairs=str(self.directory/'solver-problem-pairs.csv'))
         workflows.save(data,self.directory)
-        for name in ['axiom-globs.txt','configurations.csv','problem-globs.txt','submit.sh']:
+        for name in ['axiom-globs.txt','solvers.csv','problem-globs.txt','submit.sh']:
             self.assertFalse((self.directory/name).exists(),name)
         self.assertEqual(workflows.decisions(self.directory)['mode'],'jobpairs')
 
@@ -284,11 +284,11 @@ class WorkflowFileTests(unittest.TestCase):
 
     def test_invalid_replacement_and_failed_commit_preserve_originals(self):
         before=self.snapshot()
-        with self.assertRaises(ValueError):workflow_files.replace(self.directory,'configurations.csv','wrong,headers\n1,2\n')
+        with self.assertRaises(ValueError):workflow_files.replace(self.directory,'solvers.csv','wrong,headers\n1,2\n')
         self.assertEqual(self.snapshot(),before)
         real=Path.replace
         def fail(path,target):
-            if target.name=='configurations.csv':raise OSError('disk failure')
+            if target.name=='solvers.csv':raise OSError('disk failure')
             return real(path,target)
         with patch.object(Path,'replace',fail),self.assertRaisesRegex(OSError,'disk failure'):
             workflow_files.replace(self.directory,'problem-globs.txt',str(self.problem))
@@ -302,6 +302,52 @@ class WorkflowFileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'symbolic link'):
             workflow_files.replace(self.directory,'problem-globs.txt',content)
         self.assertEqual(self.problem.read_text(),'cnf(a,axiom,p).')
+
+    def test_legacy_filenames_are_readable_and_upgrade_consistently(self):
+        from slurmy_web.workflow_paths import ALIASES
+        for current,old in ALIASES.items():
+            path=self.directory/current
+            if path.exists():path.rename(self.directory/old)
+        makefile=self.directory/'Makefile'
+        body=makefile.read_text()
+        for current,old in ALIASES.items():body=body.replace(current,old)
+        makefile.write_text(body)
+        # Exercise reconstruction without a saved editor definition as well.
+        (self.directory/'workflow.json').unlink()
+        data=workflows.decisions(self.directory)
+        self.assertEqual(data['mode'],'interactive')
+        self.assertTrue(data['configurations'])
+        with patch.object(workflows,'migrate_user_runs'):
+            client=create_app().test_client()
+        response=client.get('/api/workflows/files/download',query_string={'directory':str(self.directory),'file':'solvers.csv'})
+        self.assertEqual(response.status_code,200)
+        self.assertIn('solvers.csv',response.headers['Content-Disposition']);response.close()
+        html=client.get('/workflow',query_string={'directory':str(self.directory)}).text
+        self.assertIn('Solvers (<code>solvers.csv</code>)',html)
+        old_content=(self.directory/'configurations.csv').read_text()
+        workflow_files.replace(self.directory,'configurations.csv',old_content)
+        for current,old in ALIASES.items():
+            self.assertTrue((self.directory/current).is_file(),current)
+            self.assertFalse((self.directory/old).exists(),old)
+        self.assertIsInstance(json.loads((self.directory/'building.json').read_text()),list)
+        self.assertIn('--configurations solvers.csv',makefile.read_text())
+        workflows.save(workflows.decisions(self.directory),self.directory)
+
+    def test_make_selects_new_and_legacy_inputs_before_pairs_exist(self):
+        import subprocess
+        from slurmy_web.workflow_paths import ALIASES
+        def inspect():
+            return subprocess.run(['make','--no-print-directory','-f',str(workflows.REPO/'implementation/templates/workflow.mk'),'-f','-',
+                'REPO_ROOT='+str(workflows.REPO),'inspect-inputs'],cwd=self.directory,
+                input='inspect-inputs:\n\t@printf "%s|%s|%s" "$(JOBPAIRS)" "$(BUILDING)" "$(LIMITER)"\n',capture_output=True,text=True)
+        (self.directory/'solver-problem-pairs.csv').unlink()
+        result=inspect();self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout,'solver-problem-pairs.csv|building.json|resource-limiter.txt')
+        for current,old in ALIASES.items():
+            path=self.directory/current
+            if path.exists():path.rename(self.directory/old)
+        result=inspect();self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout,'jobpairs.csv|building.txt|resource_limiter_template.txt')
 
     def test_download_replace_and_path_restrictions_over_http(self):
         with patch.object(workflows,'migrate_user_runs'):

@@ -14,12 +14,12 @@ on the cluster.
 
 <blockquote>
 
-`slurmy.py` consumes `jobpairs.csv`, `building.txt`, and
-`resource_limiter_template.txt`. A [workflow Makefile](../workflows/README.md)
+`slurmy.py` consumes `solver-problem-pairs.csv`, `building.json`, and
+`resource-limiter.txt`. A [workflow Makefile](../workflows/README.md)
 can prepare them for you. Paths in a handwritten input file resolve relative
 to that file; the web app normally saves absolute paths.
 
-`jobpairs.csv` has one row per solver–problem call. Its columns are:
+`solver-problem-pairs.csv` has one row per solver–problem call. Its columns are:
 
 | Column | Meaning |
 | --- | --- |
@@ -43,7 +43,7 @@ also permit `{{cpus}}`. Leave path placeholders unquoted: the runner quotes
 them. Commands without placeholders are valid, but their hard-coded limits
 should agree with the row's limits.
 
-`building.txt` is normally a JSON list. Each item declares a local runtime
+`building.json` is normally a JSON list. Each item declares a local runtime
 `root` and, optionally, a `source` directory, Bash `recipe`, and executable
 `artifact` path relative to the root:
 
@@ -69,7 +69,7 @@ Independent resources build concurrently. Recipes run again on each dispatch;
 there is no implicit build cache. Older two-line-per-resource files remain
 accepted. The [build guide](build/README.md) covers standalone builds.
 
-`resource_limiter_template.txt` is one shell invocation beginning with the
+`resource-limiter.txt` is one shell invocation beginning with the
 limiter executable path inside a declared resource root. The default is
 runsolver. Its command should enforce the per-solver-problem pair limits and invoke
 `{{solver_command}}`. For runsolver, a useful template is:
@@ -132,7 +132,7 @@ with `GET_COMPUTER_INFO := false` in the workflow Makefile or
 From a directory containing the three input files:
 
 ```bash
-python /path/to/Slurmy/implementation/slurmy.py jobpairs.csv building.txt resource_limiter_template.txt --batch-size 20
+python /path/to/Slurmy/implementation/slurmy.py solver-problem-pairs.csv building.json resource-limiter.txt --batch-size 20
 bash ./submit.sh
 ```
 
@@ -157,7 +157,7 @@ Solver name, resource directory, command, per-pair limits, and limit-argument
 omission settings do not prevent pairs from sharing a batch. Each pair retains
 its own command and limits. Partition and reservation apply to the whole job.
 
-Slurmy scans `jobpairs.csv` in its saved order and fills an open batch for each
+Slurmy scans `solver-problem-pairs.csv` in its saved order and fills an open batch for each
 allocation type, collecting compatible rows even when incompatible rows appear
 between them. For example, A1, B1, A2, B2 with matching allocation settings and
 batch size 2 becomes [A1, B1] and [A2, B2]. With different allocation settings for
@@ -330,7 +330,7 @@ selected full-collection axiom glob takes precedence over that environment setti
 
 | Script | Purpose |
 | --- | --- |
-| `slurmy-pairs.py` | Expand configurations × all selected problem globs into an explicit `jobpairs.csv`; supports problem-major, solver-major, or reproducible random order. |
+| `slurmy-pairs.py` | Expand configurations × all selected problem globs into an explicit `solver-problem-pairs.csv`; supports problem-major, solver-major, or reproducible random order. |
 | `slurmy-sync.py` | Download the summary and three log archives into `job-results/JOB_ID/`; `--debug` downloads raw files, and `--follow` keeps updating. |
 | `slurmy-cancel.py` | Choose an active SLURM allocation to cancel, or provide its ID non-interactively. |
 | `slurmy-job.py` | Stop or resume an entire Slurmy job by ID (`stop` or `resume`); resume keeps completed calls. |
@@ -425,7 +425,7 @@ Generated workflow file headers offer Download and Replace actions. Replacement
 uses the workflow editor's validator and regenerates the definition and related
 files together; invalid replacements leave the workflow unchanged. Relative paths
 in uploaded definitions are resolved from the workflow directory. Replacing
-`jobpairs.csv` switches to explicit pairs and removes obsolete configuration/glob
+`solver-problem-pairs.csv` switches to explicit pairs and removes obsolete configuration/glob
 derivatives. Changes invalidate `submit.sh`, requiring preparation before the next
 dispatch; submitted cluster jobs are unaffected. Example files can be downloaded;
 duplicate the workflow before replacing them. Makefile replacement supports the

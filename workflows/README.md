@@ -33,15 +33,15 @@ files are:
 ```text
 my-study/
   Makefile                       # Shared prepare, submit, monitor, and sync targets.
-  jobpairs.csv                   # One solver–problem call per row.
-  building.txt                   # Runtime roots and optional cluster build recipes.
-  resource_limiter_template.txt  # Command wrapping each solver call.
+  solver-problem-pairs.csv                   # One solver–problem call per row.
+  building.json                   # Runtime roots and optional cluster build recipes.
+  resource-limiter.txt  # Command wrapping each solver call.
   .slurmy-workflow.json          # Form choices used when editing in the web app.
 ```
 
 For the all-pairs convenience mode, the folder also contains
-`configurations.csv` and `problem-globs.txt`; the Makefile expands their
-configuration × problem product into `jobpairs.csv`. Optional
+`solvers.csv` and `problem-globs.txt`; the Makefile expands their
+configuration × problem product into `solver-problem-pairs.csv`. Optional
 `axiom-globs.txt` lists custom TPTP axiom inputs. Build commands typed in the
 form are saved as `build-resource-*.sh`. The solver source and problem files
 can remain at their existing paths; they are packaged at submission time.
@@ -51,8 +51,8 @@ pattern such as `tptp://TPTP-v10.0.0/Problems/*/*.p` (all domains) or
 shared `/share/datasets/TPTP/TPTP-v10.0.0/Problems/` tree. If custom axioms
 are selected, they replace the default shared TPTP library for that job.
 
-The three core inputs are `jobpairs.csv`, `building.txt`, and
-`resource_limiter_template.txt`. Each CSV row is one explicit solver-problem pair; Slurmy
+The three core inputs are `solver-problem-pairs.csv`, `building.json`, and
+`resource-limiter.txt`. Each CSV row is one explicit solver-problem pair; Slurmy
 does not silently expand it into other calls. See the
 [input format and runner reference](../implementation/README.md) for details.
 
@@ -120,7 +120,7 @@ workflow Makefiles pass `PAIR_ORDER` automatically.
 
 `BUILD_RECIPES` lists build scripts whose changes should trigger fresh
 submission-file generation. All-pairs workflows add a rule to create
-`jobpairs.csv` from configurations and problem globs; see the
+`solver-problem-pairs.csv` from configurations and problem globs; see the
 [examples](example-workflows/README.md).
 
 | Target | What it does |

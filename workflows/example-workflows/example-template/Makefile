@@ -1,4 +1,4 @@
-# Put your experiment limits in jobpairs.csv, not in this Makefile.
+# Put your experiment limits in solver-problem-pairs.csv, not in this Makefile.
 REPO_ROOT := ../../..
 SLURMY_HOST ?= datalab
 SLURMY_PARTITION ?= CPU-amd

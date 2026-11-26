@@ -25,3 +25,10 @@ __pycache__/
 .slurmy-build-cache.json
 .slurmy-build-cache.lock
 .slurmy-build-cache.tmp
+
+# Canonically named generated example pair tables
+/workflows/example-workflows/example-vampire/solver-problem-pairs.csv
+/workflows/example-workflows/example-e/solver-problem-pairs.csv
+/workflows/example-workflows/example-drodi/solver-problem-pairs.csv
+/workflows/example-workflows/example-combined/solver-problem-pairs.csv
+/workflows/example-workflows/example-shared-tptp/solver-problem-pairs.csv

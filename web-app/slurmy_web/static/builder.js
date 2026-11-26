@@ -314,7 +314,7 @@ if(document.body.dataset.page==='new'){
   const axioms=[...document.querySelectorAll('[name="axiom_glob"]')];
   const axiomsReady=axioms.length>0&&axioms.every(ready);
   for(const [id,valid,label] of [
-   ['problem-selection',inputsReady,mode==='jobpairs'?'From jobpairs.csv':inputsReady?`${problems.length} source${problems.length===1?'':'s'} ready`:'Check problem sources'],
+   ['problem-selection',inputsReady,mode==='jobpairs'?'From solver-problem-pairs.csv':inputsReady?`${problems.length} source${problems.length===1?'':'s'} ready`:'Check problem sources'],
    ['axiom-selection',axiomsReady,axiomsReady?`${axioms.length} axiom source${axioms.length===1?'':'s'} ready`:'Check axiom sources']]){
    const section=$('#'+id),status=$('.solver-section-status',section);if(!status)continue;section.dataset.state=valid?'valid':'invalid';status.textContent=label;
   }

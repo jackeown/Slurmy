@@ -66,14 +66,14 @@ class WorkflowRecoveryTests(unittest.TestCase):
         source=workflows.REPO/'workflows/example-workflows/example-shared-tptp'
         original=workflows.decisions(source,check_paths=False)
         destination=workflows.duplicate(source,'shared-tptp-copy')
-        builds=read_builds(destination/'building.txt',check_paths=False)
+        builds=read_builds(destination/'building.json',check_paths=False)
         self.assertEqual(len(builds),len(original['resources']))
         for build,resource in zip(builds,original['resources']):
             self.assertEqual(str(build.root),resource['root'])
             self.assertEqual(build.artifact,resource['artifact'])
             self.assertEqual(str(build.source) if build.source else '',resource['source'])
             self.assertEqual(build.build_policy,resource['build_policy'])
-        rows=workflows.imported_rows(destination/'configurations.csv',True,check_paths=False)
+        rows=workflows.imported_rows(destination/'solvers.csv',True,check_paths=False)
         self.assertEqual(rows[0]['solver_directory'],original['configurations'][0]['solver_directory'])
         self.assertEqual((destination/'problem-globs.txt').read_text().splitlines(),original['globs'])
         self.assertFalse((destination/'submit.sh').exists())

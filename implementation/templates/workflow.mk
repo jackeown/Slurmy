@@ -13,9 +13,9 @@ SLURMY_RESERVATION ?=
 SLURMY_MAX_OUTSTANDING ?= 50
 SLURMY_ID ?=
 export SLURMY_HOST SLURMY_PARTITION SLURMY_MAX_OUTSTANDING SLURMY_RESERVATION SLURMY_ACCOUNT
-JOBPAIRS ?= jobpairs.csv
-BUILDING ?= building.txt
-LIMITER ?= resource_limiter_template.txt
+JOBPAIRS ?= $(if $(wildcard solver-problem-pairs.csv solvers.csv building.json),solver-problem-pairs.csv,jobpairs.csv)
+BUILDING ?= $(if $(wildcard building.json),building.json,building.txt)
+LIMITER ?= $(if $(wildcard resource-limiter.txt),resource-limiter.txt,resource_limiter_template.txt)
 BUILD_RECIPES ?=
 AXIOMS ?=
 

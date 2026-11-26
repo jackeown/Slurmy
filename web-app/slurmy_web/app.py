@@ -693,8 +693,9 @@ def create_app():
     def workflow():
         path = directory()
         from .workflow_files import FILES
-        files = {name: (path / name).read_text() for name in
-                 FILES if (path / name).is_file()}
+        from .workflow_paths import workflow_file
+        files = {name: workflow_file(path, name).read_text() for name in
+                 FILES if workflow_file(path, name).is_file()}
         name = path.name.removeprefix('example-') if path.parent == workflows.USER_RUNS else path.name
         created = created_label(path)
         return page('experiment.html', directory=str(path), name=name, created=created, files=files,
@@ -726,8 +727,8 @@ def create_app():
         path = directory()
         data = workflows.decisions(path, check_paths=False)
         globs = list(data.get('globs') or [])
-        if not globs and (path/'jobpairs.csv').is_file():
-            for row in workflows.imported_rows(path/'jobpairs.csv', check_paths=False):
+        if not globs and workflows.workflow_file(path, 'solver-problem-pairs.csv').is_file():
+            for row in workflows.imported_rows(workflows.workflow_file(path, 'solver-problem-pairs.csv'), check_paths=False):
                 value = row['problem']
                 if value.startswith('tptp:'):
                     from slurmy_archives import tptp_collection_root
@@ -1268,9 +1269,10 @@ def create_app():
 
     @app.get('/api/workflows/files/download')
     def download_workflow_file():
-        from .workflow_files import definition_file
-        path = definition_file(directory(), request.args.get('file', ''))
-        return send_file(path, as_attachment=True, download_name=path.name, mimetype='text/plain')
+        from .workflow_files import definition_file, canonical_name
+        name = canonical_name(request.args.get('file', ''))
+        path = definition_file(directory(), name)
+        return send_file(path, as_attachment=True, download_name=name, mimetype='text/plain')
 
     @app.post('/api/workflows/files/replace')
     def replace_workflow_file():

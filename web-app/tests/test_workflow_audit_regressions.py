@@ -48,28 +48,28 @@ class WorkflowAuditTests(unittest.TestCase):
         workflows.save(data, self.directory)
         destination = workflows.duplicate(self.directory, 'copy')
         self.assertEqual((destination/'source/main.c').read_text(), 'source input')
-        builds = read_builds(destination/'building.txt')
+        builds = read_builds(destination/'building.json')
         self.assertEqual(builds[0].source, destination/'source')
         self.assertEqual(builds[0].build_policy, 'changed')
         shutil.rmtree(self.directory)
-        self.assertTrue(read_builds(destination/'building.txt')[0].recipe.is_file())
+        self.assertTrue(read_builds(destination/'building.json')[0].recipe.is_file())
 
     def test_duplicate_existing_build_definition_preserves_all_fields(self):
         recipe = self.directory/'build.sh'; recipe.write_text('true\n')
         definitions = [dict(root=str(self.runtime), source=str(self.runtime), recipe=str(recipe),
                             artifact='solver', build_policy='changed')]
-        (self.directory/'building.txt').write_text(json.dumps(definitions))
+        (self.directory/'building.json').write_text(json.dumps(definitions))
         data = workflows.decisions(self.directory)
-        data.update(building_mode='existing', building_file=str(self.directory/'building.txt'), resources=[])
+        data.update(building_mode='existing', building_file=str(self.directory/'building.json'), resources=[])
         (self.directory/'workflow.json').write_text(json.dumps(data))
         destination = workflows.duplicate(self.directory, 'copy')
-        build, = read_builds(destination/'building.txt')
+        build, = read_builds(destination/'building.json')
         self.assertEqual(build.recipe, destination/'build.sh')
         self.assertEqual(build.source, self.runtime)
         self.assertEqual(build.artifact, 'solver')
         self.assertEqual(build.build_policy, 'changed')
         manifest = workflows.decisions(destination)
-        self.assertEqual(manifest['building_file'], str(destination/'building.txt'))
+        self.assertEqual(manifest['building_file'], str(destination/'building.json'))
         self.assertEqual(manifest['resources'][0]['script'], str(build.recipe))
 
     def test_editor_rename_preserves_sibling_paths_and_relocates_own(self):
@@ -82,7 +82,7 @@ class WorkflowAuditTests(unittest.TestCase):
         self.assertEqual(count, 2)
         self.assertEqual(workflows.decisions(destination)['globs'],
                          [str(problem), str(destination/'own.p')])
-        rows = workflows.imported_rows(destination/'jobpairs.csv')
+        rows = workflows.imported_rows(destination/'solver-problem-pairs.csv')
         self.assertEqual({row['problem'] for row in rows}, {str(problem), str(destination/'own.p')})
 
     def test_editor_rename_write_failure_restores_bytes_modes_and_name(self):
@@ -158,7 +158,7 @@ class WorkflowAuditTests(unittest.TestCase):
         with patch.object(portable.subprocess, 'run', side_effect=AssertionError('No SSH allowed')):
             with portable.export_bundle(self.directory, 'datalab') as archive:
                 destination, _ = portable.import_bundle(archive, 'imported')
-        row, = workflows.imported_rows(destination/'jobpairs.csv')
+        row, = workflows.imported_rows(destination/'solver-problem-pairs.csv')
         self.assertNotIn('='+str(self.runtime), row['command'])
         self.assertIn('TPTP='+row['solver_directory'], row['command'])
         self.assertIn('--data='+row['solver_directory']+'/data', row['command'])

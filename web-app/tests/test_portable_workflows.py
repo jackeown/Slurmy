@@ -31,12 +31,12 @@ class PortableWorkflowTests(unittest.TestCase):
         self.problem=self.root/'SET_002+3.p';self.problem.write_text('cnf(a,axiom,p).')
         recipe=self.workflow/'build.sh';recipe.write_text('cp solver "$SLURMY_BUILD_OUTPUT/solver"\n')
         resources=[dict(root=str(self.runtime),source=str(self.source),recipe=str(recipe),artifact='solver')]
-        (self.workflow/'building.txt').write_text(json.dumps(resources))
+        (self.workflow/'building.json').write_text(json.dumps(resources))
         row=dict(solver_name='Solver + config',command="'"+str(self.runtime/'solver')+"' {{problem}}",solver_directory=str(self.runtime),
                  problem=str(self.problem),wc_limit=6,cpu_limit=3,mem_limit='100MiB',cores=1,cpus='auto',threads_per_core=1,
                  exclusive_cpu='false',exclusive_node='false')
-        (self.workflow/'jobpairs.csv').write_text(workflows.csv_text([row]))
-        (self.workflow/'resource_limiter_template.txt').write_text("'"+str(self.runtime/'limiter')+"' {{solver_command}}")
+        (self.workflow/'solver-problem-pairs.csv').write_text(workflows.csv_text([row]))
+        (self.workflow/'resource-limiter.txt').write_text("'"+str(self.runtime/'limiter')+"' {{solver_command}}")
         (self.workflow/'Makefile').write_text('SLURMY_HOST := test-host\nSLURMY_PARTITION := CPU-amd\nBATCH_SIZE := 100\nSLURMY_RESERVATION := E192-04\nSLURMY_ACCOUNT := cpuopt\n')
 
     def bundle(self):
@@ -47,36 +47,49 @@ class PortableWorkflowTests(unittest.TestCase):
         with patch.object(portable.subprocess,'run',side_effect=remote):
             return portable.export_bundle(self.workflow,'test-host')
 
+    def test_legacy_filenames_export_to_canonical_import(self):
+        from slurmy_web.workflow_paths import ALIASES
+        for current,old in ALIASES.items():
+            path=self.workflow/current
+            if path.exists():path.rename(self.workflow/old)
+        bundle=self.bundle();self.addCleanup(bundle.close)
+        imported,count=portable.import_bundle(bundle,'legacy-import')
+        self.assertEqual(count,1)
+        for name in ('solver-problem-pairs.csv','building.json','resource-limiter.txt','workflow.json'):
+            self.assertTrue((imported/name).is_file(),name)
+        self.assertIsInstance(json.loads((imported/'building.json').read_text()),list)
+        self.assertEqual(workflows.decisions(imported)['jobpairs'],str(imported/'solver-problem-pairs.csv'))
+
     def test_custom_postprocessor_folder_and_external_script_survive_move_and_copy(self):
         import shlex
         post = self.root/'post folder';post.mkdir()
         script = self.root/'external parser.py';script.write_text('print("{}")')
         (post/'settings.json').write_text('{}')
-        rows = workflows.imported_rows(self.workflow/'jobpairs.csv', check_paths=False)
+        rows = workflows.imported_rows(self.workflow/'solver-problem-pairs.csv', check_paths=False)
         rows[0].update(postprocessor_mode='custom', postprocessor_directory=str(post),
                        postprocessor_command=shlex.join(['python3', str(script), '--settings', str(post/'settings.json')]),
                        postprocessor_timeout=47)
-        (self.workflow/'jobpairs.csv').write_text(workflows.csv_text(rows))
+        (self.workflow/'solver-problem-pairs.csv').write_text(workflows.csv_text(rows))
         bundle=self.bundle();self.addCleanup(bundle.close)
         shutil.rmtree(post);script.unlink()
         imported,_=portable.import_bundle(bundle,'post-import')
-        row=workflows.imported_rows(imported/'jobpairs.csv')[0]
+        row=workflows.imported_rows(imported/'solver-problem-pairs.csv')[0]
         self.assertEqual(row['postprocessor_timeout'],47)
         self.assertTrue((Path(row['postprocessor_directory'])/'settings.json').is_file())
         words=shlex.split(row['postprocessor_command'])
         self.assertTrue(Path(words[1]).is_file())
-        builds=read_builds(imported/'building.txt')
+        builds=read_builds(imported/'building.json')
         self.assertTrue(any(Path(words[1]).is_relative_to(build.root) for build in builds))
         data=workflows.decisions(imported)
         with patch.object(workflows,'check_requested'):
             workflows.save(data,imported)
-        self.assertEqual(workflows.imported_rows(imported/'jobpairs.csv')[0]['postprocessor_command'],row['postprocessor_command'])
+        self.assertEqual(workflows.imported_rows(imported/'solver-problem-pairs.csv')[0]['postprocessor_command'],row['postprocessor_command'])
         self.assertTrue(Path(words[3]).is_file())
         copy=workflows.copyable_solver_configurations(imported)[0]
         self.assertEqual(copy['postprocessor_command'],row['postprocessor_command'])
         self.assertEqual(copy['postprocessor_timeout'],'47')
         duplicate=workflows.duplicate(imported,'post-copy')
-        copied=workflows.imported_rows(duplicate/'jobpairs.csv')[0]
+        copied=workflows.imported_rows(duplicate/'solver-problem-pairs.csv')[0]
         self.assertTrue(Path(copied['postprocessor_directory']).is_relative_to(duplicate))
         self.assertNotIn(str(imported),copied['postprocessor_command'])
         self.assertTrue(Path(shlex.split(copied['postprocessor_command'])[1]).is_file())
@@ -84,7 +97,7 @@ class PortableWorkflowTests(unittest.TestCase):
     def test_workflow_postprocessor_and_inheritance_are_portable(self):
         post=self.root/'workflow parser';post.mkdir();(post/'parse.py').write_text('print("{}")')
         data=workflows.decisions(self.workflow)
-        row=workflows.imported_rows(self.workflow/'jobpairs.csv')[0]
+        row=workflows.imported_rows(self.workflow/'solver-problem-pairs.csv')[0]
         row.pop('problem');row['postprocessor_override']=False
         data.update(mode='interactive',configurations=[row],globs=[str(self.problem)],
                     postprocessor=dict(mode='custom',directory=str(post),command='python3 parse.py',timeout=71))
@@ -100,13 +113,13 @@ class PortableWorkflowTests(unittest.TestCase):
         self.assertTrue((Path(restored['postprocessor']['directory'])/'parse.py').is_file())
 
     def test_old_csv_without_postprocessor_settings_inherits_workflow_default(self):
-        row=workflows.imported_rows(self.workflow/'jobpairs.csv')[0]
+        row=workflows.imported_rows(self.workflow/'solver-problem-pairs.csv')[0]
         self.assertFalse(row['postprocessor_override'])
         effective=workflows.effective_postprocessor(row,{'postprocessor':{'mode':'none'}},check_paths=False)
         self.assertEqual(effective['postprocessor_mode'],'none')
 
     def test_old_configuration_defaults_to_bundled_postprocessor(self):
-        row=workflows.imported_rows(self.workflow/'jobpairs.csv')[0]
+        row=workflows.imported_rows(self.workflow/'solver-problem-pairs.csv')[0]
         self.assertEqual(row['postprocessor_mode'],'default')
         self.assertEqual(row['postprocessor_timeout'],30)
         card=workflows.copyable_solver_configurations(self.workflow)[0]
@@ -114,18 +127,18 @@ class PortableWorkflowTests(unittest.TestCase):
         self.assertEqual(card['postprocessor_timeout'],'30')
 
     def test_environment_survives_portable_export_and_configuration_copy(self):
-        rows=workflows.imported_rows(self.workflow/'jobpairs.csv',check_paths=False)
+        rows=workflows.imported_rows(self.workflow/'solver-problem-pairs.csv',check_paths=False)
         rows[0]['environment']='X=Y\nHello = "World with spaces"'
-        (self.workflow/'jobpairs.csv').write_text(workflows.csv_text(rows))
+        (self.workflow/'solver-problem-pairs.csv').write_text(workflows.csv_text(rows))
         bundle=self.bundle();self.addCleanup(bundle.close)
         imported,_=portable.import_bundle(bundle,'environment-import')
-        self.assertEqual(workflows.imported_rows(imported/'jobpairs.csv',check_paths=False)[0]['environment'],rows[0]['environment'])
+        self.assertEqual(workflows.imported_rows(imported/'solver-problem-pairs.csv',check_paths=False)[0]['environment'],rows[0]['environment'])
         self.assertEqual(workflows.copyable_solver_configurations(imported)[0]['environment'],rows[0]['environment'])
 
     def test_explicit_problem_selection_order_survives_portable_workflow(self):
         second=self.root/'AAA.p';second.write_text('cnf(b,axiom,q).')
         data=workflows.decisions(self.workflow)
-        configuration=workflows.imported_rows(self.workflow/'jobpairs.csv',check_paths=False)[0]
+        configuration=workflows.imported_rows(self.workflow/'solver-problem-pairs.csv',check_paths=False)[0]
         configuration.pop('problem',None)
         data.update(mode='interactive',configurations=[configuration],globs=[str(self.root/'*.p')],problem_selections=[self.problem.name+'\n'+second.name])
         with patch.object(workflows,'check_requested'):
@@ -136,7 +149,7 @@ class PortableWorkflowTests(unittest.TestCase):
         self.assertEqual([Path(path).name for path in restored['_problem_order']],[self.problem.name,second.name])
         with patch.object(workflows,'check_requested'):
             workflows.save(restored,imported)
-        with (imported/'jobpairs.csv').open() as stream:rows=list(csv.DictReader(stream))
+        with (imported/'solver-problem-pairs.csv').open() as stream:rows=list(csv.DictReader(stream))
         self.assertEqual([Path(row['problem']).name for row in rows],[self.problem.name,second.name])
 
     def test_import_resolves_account_for_current_cluster_user(self):
@@ -153,20 +166,20 @@ class PortableWorkflowTests(unittest.TestCase):
 
     def test_zero_limit_omission_choices_survive_portable_round_trip_and_copy(self):
         from slurmy import generate
-        with (self.workflow/'jobpairs.csv').open() as stream:row=next(csv.DictReader(stream))
+        with (self.workflow/'solver-problem-pairs.csv').open() as stream:row=next(csv.DictReader(stream))
         row.update(cpu_limit='0',wc_limit='0',mem_limit='0',omit_cpu_limit='true',omit_wc_limit='true',omit_mem_limit='true',
                    command='./solver --cpu-limit {{cpu_limit}} --wall={{wc_limit}} --mem={{mem_limit_mib}} {{problem}}')
-        (self.workflow/'jobpairs.csv').write_text(workflows.csv_text([row]))
+        (self.workflow/'solver-problem-pairs.csv').write_text(workflows.csv_text([row]))
         bundle=self.bundle();self.addCleanup(bundle.close)
         imported,_=portable.import_bundle(bundle,'zero-omissions')
         self.assertEqual(workflows.decisions(imported)['account'],'cpuopt')
         self.assertIn('SLURMY_ACCOUNT := cpuopt',(imported/'Makefile').read_text())
-        with (imported/'jobpairs.csv').open() as stream:restored=next(csv.DictReader(stream))
+        with (imported/'solver-problem-pairs.csv').open() as stream:restored=next(csv.DictReader(stream))
         for field in ('omit_cpu_limit','omit_wc_limit','omit_mem_limit'):self.assertEqual(restored[field],'true')
         card=workflows.copyable_solver_configurations(imported)[0]
         self.assertEqual(card['cpu_limit'],'0');self.assertEqual(card['wc_limit'],'0');self.assertEqual(card['mem_limit'],'0')
         self.assertEqual(card['omit_cpu_limit'],'true')
-        generate(imported/'jobpairs.csv',imported/'building.txt',imported/'resource_limiter_template.txt')
+        generate(imported/'solver-problem-pairs.csv',imported/'building.json',imported/'resource-limiter.txt')
         script=(imported/'submit.sh.files/calls/0/solver.sh').read_text()
         self.assertNotIn('--cpu-limit',script);self.assertNotIn('--wall=',script);self.assertNotIn('--mem=',script)
 
@@ -198,10 +211,10 @@ class PortableWorkflowTests(unittest.TestCase):
     def test_new_and_legacy_shared_collections_remain_portable(self):
         for index, root in enumerate(('/share/datasets/TPTP/TPTP-v10.0.0', '/share/TPTP/TPTP-v9.2.1')):
             with self.subTest(root=root):
-                with (self.workflow/'jobpairs.csv').open() as source:
+                with (self.workflow/'solver-problem-pairs.csv').open() as source:
                     row = next(csv.DictReader(source))
                 row['problem'] = 'tptp:' + root + '/Problems/SET/SET002+3.p'
-                (self.workflow/'jobpairs.csv').write_text(workflows.csv_text([row]))
+                (self.workflow/'solver-problem-pairs.csv').write_text(workflows.csv_text([row]))
                 def remote(*args, stdout, **kwargs):
                     with tarfile.open(fileobj=stdout, mode='w') as archive:
                         directory = tarfile.TarInfo('assets'+root+'/Axioms')
@@ -229,7 +242,7 @@ class PortableWorkflowTests(unittest.TestCase):
                     legacy.seek(0); bundle = legacy
                 imported, count = portable.import_bundle(bundle, 'shared-'+str(index))
                 self.assertEqual(count, 1)
-                pair = read_pairs(imported/'jobpairs.csv')[0]
+                pair = read_pairs(imported/'solver-problem-pairs.csv')[0]
                 self.assertFalse(pair['remote_problem'])
                 library = imported/'assets'/root.lstrip('/')
                 self.assertEqual(Path(pair['problem']), library/'Problems/SET/SET002+3.p')
@@ -242,7 +255,7 @@ class PortableWorkflowTests(unittest.TestCase):
         shutil.rmtree(self.runtime);shutil.rmtree(self.source);self.problem.unlink();shutil.rmtree(self.workflow)
         imported,count=portable.import_bundle(bundle,'restored')
         self.assertEqual(count,1)
-        pairs=read_pairs(imported/'jobpairs.csv');builds=read_builds(imported/'building.txt')
+        pairs=read_pairs(imported/'solver-problem-pairs.csv');builds=read_builds(imported/'building.json')
         self.assertEqual(pairs[0]['solver'],'Solver + config')
         self.assertEqual(Path(pairs[0]['problem']).name,'SET_002+3.p')
         self.assertEqual((builds[0].source/'source.c').read_text(),'int main() {}')
@@ -250,7 +263,7 @@ class PortableWorkflowTests(unittest.TestCase):
         self.assertTrue((builds[0].root/'solver').stat().st_mode & 0o100)
         self.assertNotIn(str(self.runtime)+"'",pairs[0]['command'])
         self.assertIn('SLURMY_RESERVATION := E192-04',(imported/'Makefile').read_text())
-        generate(imported/'jobpairs.csv',imported/'building.txt',imported/'resource_limiter_template.txt',batch_size=100)
+        generate(imported/'solver-problem-pairs.csv',imported/'building.json',imported/'resource-limiter.txt',batch_size=100)
         # Re-exporting an imported workflow must also work.
         with patch.object(portable.subprocess,'run') as run:
             run.side_effect=lambda *args,stdout,**kwargs:self.empty_remote(stdout)
@@ -265,7 +278,7 @@ class PortableWorkflowTests(unittest.TestCase):
         (limiter_source/'limiter').write_text('#!/bin/sh\n"$@"\n')
         limiter_recipe = self.workflow/'build-limiter.sh'
         limiter_recipe.write_text('install -m 755 limiter "$SLURMY_BUILD_OUTPUT/limiter"\n')
-        resources = json.loads((self.workflow/'building.txt').read_text())
+        resources = json.loads((self.workflow/'building.json').read_text())
         resources.append(dict(root=str(limiter_root),source=str(limiter_source),recipe=str(limiter_recipe),artifact='limiter'))
         for name, artifact in [('legacy resource', ''), ('in-place resource', 'built')]:
             root = self.root/name;root.mkdir()
@@ -275,8 +288,8 @@ class PortableWorkflowTests(unittest.TestCase):
             resources.append(dict(root=str(root), source=str(root), recipe=str(recipe), artifact=artifact, legacy=not artifact))
         prebuilt = self.root/'prebuilt';prebuilt.mkdir();(prebuilt/'data').write_text('prebuilt data')
         resources.append(dict(root=str(prebuilt), source='', recipe='', artifact=''))
-        (self.workflow/'building.txt').write_text(json.dumps(resources))
-        (self.workflow/'resource_limiter_template.txt').write_text("'"+str(limiter_root/'limiter')+"' {{solver_command}}")
+        (self.workflow/'building.json').write_text(json.dumps(resources))
+        (self.workflow/'resource-limiter.txt').write_text("'"+str(limiter_root/'limiter')+"' {{solver_command}}")
         axiom = self.root/'SET_001+0.ax';axiom.write_text('fof(ax,axiom,p).')
         (self.workflow/'axiom-globs.txt').write_text(str(axiom)+'\n')
         with self.bundle() as bundle:
@@ -286,9 +299,9 @@ class PortableWorkflowTests(unittest.TestCase):
             self.problem.unlink();axiom.unlink()
             imported, count = portable.import_bundle(bundle, 'all-resource-modes')
         self.assertEqual(count,1)
-        builds = read_builds(imported/'building.txt')
+        builds = read_builds(imported/'building.json')
         self.assertEqual(len(builds),5)
-        generate(imported/'jobpairs.csv',imported/'building.txt',imported/'resource_limiter_template.txt',
+        generate(imported/'solver-problem-pairs.csv',imported/'building.json',imported/'resource-limiter.txt',
                  imported/'axiom-globs.txt')
         # Run the archived recipes in fresh build contexts just like the driver;
         # live verification also exercises the cluster driver itself.
@@ -303,7 +316,7 @@ class PortableWorkflowTests(unittest.TestCase):
                            env={**os.environ,'SLURMY_BUILD_WORK':str(work),'SLURMY_BUILD_OUTPUT':str(output)})
             artifact_dir = work if build.source==build.root and build.artifact else output
             self.assertTrue((artifact_dir/(build.artifact or 'built')).is_file())
-        self.assertIn(str(builds[1].root/'limiter'),(imported/'resource_limiter_template.txt').read_text())
+        self.assertIn(str(builds[1].root/'limiter'),(imported/'resource-limiter.txt').read_text())
         sources, _ = portable.read_axioms(imported/'axiom-globs.txt')
         self.assertEqual([path.name for path in sources],['SET_001+0.ax'])
         self.assertEqual(sources[0].read_text(),'fof(ax,axiom,p).')
@@ -338,7 +351,7 @@ class PortableWorkflowTests(unittest.TestCase):
                 response=client.post('/api/workflows/import',data={'name':'uploaded','workflow':(io.BytesIO(content),'workflow.slurmy.tgz')},headers={'X-CSRF-Token':'test'})
             self.assertEqual(response.status_code,201,response.json)
             self.assertEqual(response.json['count'],1)
-            self.assertTrue((Path(response.json['directory'])/'jobpairs.csv').is_file())
+            self.assertTrue((Path(response.json['directory'])/'solver-problem-pairs.csv').is_file())
 
     def test_large_upload_limit_does_not_change_other_requests(self):
         from flask import request

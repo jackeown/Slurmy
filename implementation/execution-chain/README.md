@@ -56,11 +56,11 @@ YOUR COMPUTER
   │   │                                                                      │
   │   ├── .slurmy-workflow.json        Editor choices                         │
   │   ├── Makefile                    Cluster settings and shared targets     │
-  │   ├── jobpairs.csv                One explicit solver–problem call/row    │
-  │   ├── building.txt                Resource roots and build recipes        │
-  │   ├── resource_limiter_template.txt                                       │
+  │   ├── solver-problem-pairs.csv                One explicit solver–problem call/row    │
+  │   ├── building.json                Resource roots and build recipes        │
+  │   ├── resource-limiter.txt                                       │
   │   │                                                                      │
-  │   ├── configurations.csv          For all-pairs workflows                 │
+  │   ├── solvers.csv          For all-pairs workflows                 │
   │   ├── problem-globs.txt           For all-pairs workflows                 │
   │   ├── axiom-globs.txt             If using custom axioms                  │
   │   └── build-resource-*.sh          If build commands were entered inline  │
@@ -90,7 +90,7 @@ YOUR COMPUTER
   │                                                                          │
   │ make prepare-submit                                                     │
   │   └── make prepare                                                      │
-  │         ├── Refresh jobpairs.csv for all-pairs workflows                  │
+  │         ├── Refresh solver-problem-pairs.csv for all-pairs workflows                  │
   │         │     └── implementation/slurmy-pairs.py                          │
   │         ├── Check partition threads/core over SSH                        │
   │         │     └── implementation/check_threads.py                         │
@@ -102,7 +102,7 @@ YOUR COMPUTER
   ┌────────────────────────────────────────────────────────────────────────────┐
   │ 6. slurmy.py compiles the workflow into an execution plan                  │
   │                                                                          │
-  │   • Read jobpairs.csv, building.txt and limiter template                  │
+  │   • Read solver-problem-pairs.csv, building.json and limiter template                  │
   │   • Assign task IDs and batch IDs                                        │
   │   • Render commands and relocate packaged paths                          │
   │   • Group calls into sequential batches                                  │

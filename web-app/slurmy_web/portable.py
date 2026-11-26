@@ -20,6 +20,7 @@ import time
 
 from slurmy import order_jobpairs, path_at, read_pairs, read_builds, read_axioms
 from . import workflows
+from .workflow_paths import workflow_file
 from slurmy_archives import tptp_collection_root, TPTP_DEFAULT_ROOT
 
 FORMAT = 'slurmy-workflow-v1'
@@ -80,8 +81,8 @@ def export_bundle(directory, host):
     rows = collect_rows(directory, data, host)
     rows = [{**row, **workflows.effective_postprocessor(row, data, directory, check_paths=True)} for row in rows]
     global_post = workflows.workflow_postprocessor(data, directory)
-    builds = read_builds(directory / 'building.txt')
-    limiter = (directory / 'resource_limiter_template.txt').read_text().strip()
+    builds = read_builds(workflow_file(directory, 'building.json'))
+    limiter = (workflow_file(directory, 'resource-limiter.txt')).read_text().strip()
     if not Path(shlex.split(limiter)[0]).is_absolute():
         executable = shlex.split(limiter)[0]
         limiter = shlex.quote(str(path_at(executable, directory))) + limiter[len(shlex.quote(executable)):]
@@ -367,9 +368,9 @@ def import_bundle(stream, name, selected_host=None):
         pair_order = payload.get('pair_order') or 'solver-major'
         if pair_order not in workflows.PAIR_ORDERS:
             raise ValueError('Invalid solver-problem pair order in workflow archive.')
-        (staging/'jobpairs.csv').write_text(workflows.csv_text(normalized))
-        (staging/'building.txt').write_text(json.dumps(resources, indent=2))
-        (staging/'resource_limiter_template.txt').write_text(limiter + '\n')
+        (staging/'solver-problem-pairs.csv').write_text(workflows.csv_text(normalized))
+        (staging/'building.json').write_text(json.dumps(resources, indent=2))
+        (staging/'resource-limiter.txt').write_text(limiter + '\n')
         # Validate local definitions before publication, without SSH or execution.
         validation_rows = [{**row, 'problem': row['problem'].replace(str(destination), str(staging), 1),
                             'solver_directory': row['solver_directory'].replace(str(destination), str(staging), 1),
@@ -391,7 +392,7 @@ def import_bundle(stream, name, selected_host=None):
         makefile += 'include $(REPO_ROOT)/implementation/templates/workflow.mk\n'
         (staging/'Makefile').write_text(makefile)
         data = dict(postprocessor=global_post,get_computer_info=computer_info, name=name, host=host, partition=partition, reservation=reservation, account=account, batch_size=batch, max_outstanding=maximum, pair_order=pair_order,
-                    mode='jobpairs', jobpairs=str(destination/'jobpairs.csv'), building_mode='existing', building_file=str(destination/'building.txt'),
+                    mode='jobpairs', jobpairs=str(destination/'solver-problem-pairs.csv'), building_mode='existing', building_file=str(destination/'building.json'),
                     limiter_mode='inline', limiter=limiter, axiom_mode='custom' if axiom_lines else 'cluster', axiom_globs=axiom_lines, _created_at=time.time())
         if payload.get('editor_mode') in {'interactive', 'configurations'} and len(shared_roots) <= 1:
             configs = []

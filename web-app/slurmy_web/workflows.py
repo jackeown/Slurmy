@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from slurmy_archives import expand_cluster_tptp_many
 import problem_selection
+from .workflow_paths import ALIASES, workflow_file
 
 import csv
 import io
@@ -390,25 +391,23 @@ def specification(data, destination_override=None, progress=None):
         raise ValueError('The limiter template is empty.')
     executable = path_at(executable_word, base)
     limiter = shlex.quote(str(executable)) + ' ' + limiter[lexer.instream.tell():]
-    files = {'jobpairs.csv': csv_text(rows), 'resource_limiter_template.txt': limiter + '\n', **recipes}
+    files = {'solver-problem-pairs.csv': csv_text(rows), 'resource-limiter.txt': limiter + '\n', **recipes}
     if axiom_patterns:
         files['axiom-globs.txt'] = '\n'.join(axiom_patterns) + '\n'
     def building_text(staged=None):
-        if data.get('building_mode') == 'existing' and not any(build.artifact or build.arguments or build.build_policy != 'always' for build in builds):
-            return ''.join(str(build.root) + '\n' + (str(build.recipe) if build.recipe else '') + '\n' for build in builds)
         return json.dumps([{'root': str(build.root), 'source': str(build.source) if build.source else '',
                             'recipe': str(staged / build.recipe.name) if staged and build.recipe and build.recipe.name in recipes and build.recipe.parent == destination else str(build.recipe) if build.recipe else '',
                             'artifact': build.artifact or '', 'arguments': list(build.arguments), 'build_policy': build.build_policy, 'legacy': bool(build.recipe and not build.artifact)} for build in builds], indent=2) + '\n'
-    files['building.txt'] = building_text()
+    files['building.json'] = building_text()
     # Reuse the core validator/planner. Preview never builds, submits or keeps files.
     with tempfile.TemporaryDirectory(prefix='slurmy-preview-') as folder:
         staging = Path(folder)
         for filename, body in files.items():
             (staging / filename).write_text(body, encoding='utf-8')
-        (staging / 'building.txt').write_text(building_text(staging))
+        (staging / 'building.json').write_text(building_text(staging))
         if progress:
             progress('phase', 'Checking solver-problem pairs and generating submission scripts', 0, 0)
-        generate(staging / 'jobpairs.csv', staging / 'building.txt', staging / 'resource_limiter_template.txt',
+        generate(staging / 'solver-problem-pairs.csv', staging / 'building.json', staging / 'resource-limiter.txt',
                  staging / 'axiom-globs.txt' if axiom_patterns else None, batch_size, progress=progress,
                  max_outstanding=max_outstanding, pair_order=pair_order,materialize_calls=False,host=host,partition=partition,
                  get_computer_info=data['get_computer_info'])
@@ -420,7 +419,7 @@ def specification(data, destination_override=None, progress=None):
     if axiom_patterns:
         files['Makefile'] = 'AXIOMS := axiom-globs.txt\n' + files['Makefile']
     if configs:
-        files['configurations.csv'] = csv_text(configs, tuple(c for c in COLUMNS if c != 'problem'))
+        files['solvers.csv'] = csv_text(configs, tuple(c for c in COLUMNS if c != 'problem'))
         files['problem-globs.txt'] = '\n'.join(patterns) + '\n'
         selections=data.get('problem_selections') or []
         selection_flag=''
@@ -428,18 +427,30 @@ def specification(data, destination_override=None, progress=None):
             files['problem-selection.json']=json.dumps(selections,indent=2)+'\n'
             selection_flag=' --problem-selection-file problem-selection.json'
 
-        files['Makefile'] += ('\n.PHONY: pairs refresh-problems\npairs: jobpairs.csv\n\n'
-                             'jobpairs.csv: configurations.csv problem-globs.txt refresh-problems\n'
-                             '\t"$(SLURMY_PYTHON)" "$(REPO_ROOT)/implementation/slurmy-pairs.py" --configurations configurations.csv '
+        files['Makefile'] += ('\n.PHONY: pairs refresh-problems\npairs: solver-problem-pairs.csv\n\n'
+                             'solver-problem-pairs.csv: solvers.csv problem-globs.txt refresh-problems\n'
+                             '\t"$(SLURMY_PYTHON)" "$(REPO_ROOT)/implementation/slurmy-pairs.py" --configurations solvers.csv '
                              '--problem-globs-file problem-globs.txt'+selection_flag+' --order "$(PAIR_ORDER)" --output $@\n')
+    canonicalize_file_references(data, destination, files)
     files['workflow.json'] = json.dumps({key:value for key,value in data.items() if key!='host'}, indent=2, sort_keys=True) + '\n'
     return destination, files, len(rows)
+
+
+def canonicalize_file_references(data, directory, files=ALIASES):
+    """Keep editor sources attached to their renamed managed definitions."""
+    for field in ('jobpairs', 'configurations_file', 'building_file', 'limiter_file'):
+        value = data.get(field)
+        if not value:
+            continue
+        for current, old in ALIASES.items():
+            if current in files and path_at(value, directory) == (directory / old).resolve():
+                data[field] = str(directory / current)
 
 
 def write_definitions(source, files, destination=None):
     """Publish staged definitions, restoring originals on a failed save or rename."""
     destination = destination or source
-    obsolete = {'configurations.csv', 'problem-globs.txt', 'axiom-globs.txt', 'problem-selection.json', 'submit.sh'} - files.keys()
+    obsolete = (set(ALIASES.values()) | {'solvers.csv', 'problem-globs.txt', 'axiom-globs.txt', 'problem-selection.json', 'submit.sh'}) - files.keys()
     changed = set(files) | obsolete
     if source.is_symlink():
         raise ValueError('Workflow directory must not be a symlink.')
@@ -688,8 +699,8 @@ def migrate_user_runs():
         files = {}
         # Relocate definitions without validating resources: a workflow with a
         # Missing solver/problem inputs must still migrate and remain editable.
-        for filename in ('jobpairs.csv', 'configurations.csv'):
-            file = source / filename
+        for filename in ('solver-problem-pairs.csv', 'solvers.csv'):
+            file = workflow_file(source, filename)
             if not file.is_file():
                 continue
             with file.open(encoding='utf-8-sig', newline='') as stream:
@@ -700,10 +711,12 @@ def migrate_user_runs():
                     if row.get(key):
                         row[key] = str(path_at(row[key], source))
             files[filename] = remap(csv_text(rows, columns))
-        file = source / 'building.txt'
-        files[file.name] = remap(''.join(str(path_at(line.strip(), source)) + '\n' if line.strip() else '\n'
-                                        for line in file.read_text().splitlines()))
-        file = source / 'resource_limiter_template.txt'
+        file = workflow_file(source, 'building.json')
+        files['building.json'] = json.dumps(remap([dict(root=str(build.root), source=str(build.source) if build.source else '',
+            recipe=str(build.recipe) if build.recipe else '', artifact=build.artifact or '',
+            arguments=list(build.arguments), build_policy=build.build_policy,
+            legacy=bool(build.recipe and not build.artifact)) for build in read_builds(file, check_paths=False)]), indent=2) + '\n'
+        file = workflow_file(source, 'resource-limiter.txt')
         invocation = file.read_text().strip()
         lexer = shlex.shlex(invocation, posix=True)
         lexer.whitespace_split = True
@@ -711,7 +724,7 @@ def migrate_user_runs():
         executable = lexer.get_token()
         if executable:
             invocation = shlex.quote(str(path_at(executable, source))) + ' ' + invocation[lexer.instream.tell():]
-        files[file.name] = remap(invocation) + '\n'
+        files['resource-limiter.txt'] = remap(invocation) + '\n'
         file = source / 'problem-globs.txt'
         if file.is_file():
             files[file.name] = remap(''.join(str(expand_repo_root(line) or path_at(line, source)) + '\n'
@@ -722,8 +735,11 @@ def migrate_user_runs():
                                             for line in file.read_text().splitlines() if line.strip()))
         files['Makefile'] = re.sub(r'(?m)^REPO_ROOT\s*:?=.*$', 'REPO_ROOT := ../../..',
                                    remap((source / 'Makefile').read_text()), count=1)
+        for current, old in ALIASES.items():
+            files['Makefile'] = files['Makefile'].replace(old, current)
         for recipe in source.glob('build-resource-*.sh'):
             files[recipe.name] = remap(recipe.read_text())
+        canonicalize_file_references(data, destination, files)
         files['workflow.json'] = json.dumps({key:value for key,value in data.items() if key!='host'}, indent=2, sort_keys=True) + '\n'
         plans.append((source, destination, files))
     for source, destination, files in plans:
@@ -800,7 +816,7 @@ def decisions(directory, check_paths=True):
             row.update(effective_postprocessor(row, data, directory))
         data = resource_roles(data)
         if any(item.get('role') == 'solver' and item.get('mode') == 'commands' for item in data.get('resources', [])):
-            builds = {build.root: build for build in read_builds(directory / 'building.txt', check_paths=False)}
+            builds = {build.root: build for build in read_builds(workflow_file(directory, 'building.json'), check_paths=False)}
             for item in data['resources']:
                 if item.get('role') == 'solver' and item.get('mode') == 'commands':
                     build = builds.get(path_at(item['root'], BASE))
@@ -811,7 +827,7 @@ def decisions(directory, check_paths=True):
     def setting(name, default):
         match = re.search(rf'(?m)^{name}\s*(?:\?|:)?=\s*(\S+)', makefile)
         return match.group(1) if match else default
-    config_file, globs_file = directory / 'configurations.csv', directory / 'problem-globs.txt'
+    config_file, globs_file = workflow_file(directory, 'solvers.csv'), directory / 'problem-globs.txt'
     axiom_file = directory / 'axiom-globs.txt'
     axiom_globs = [line if line.startswith('tptp://') else str(expand_repo_root(line) or path_at(line, directory))
                    for line in axiom_file.read_text().splitlines() if line.strip()] if axiom_file.is_file() else []
@@ -827,12 +843,12 @@ def decisions(directory, check_paths=True):
                  for value in glob_values]
         jobpairs = ''
     else:
-        configs, globs, mode, jobpairs = [], [], 'jobpairs', str(directory / 'jobpairs.csv')
-    builds = read_builds(directory / 'building.txt', check_paths=check_paths)
+        configs, globs, mode, jobpairs = [], [], 'jobpairs', str(workflow_file(directory, 'solver-problem-pairs.csv'))
+    builds = read_builds(workflow_file(directory, 'building.json'), check_paths=check_paths)
     resources = [dict(root=str(build.root), mode='script' if build.recipe else 'none',
                       script=shlex.join([str(build.recipe),*build.arguments]) if build.recipe else '', commands='',
                       source=str(build.source) if build.source else '', artifact=build.artifact or '', build_policy=build.build_policy) for build in builds]
-    limiter = (directory / 'resource_limiter_template.txt').read_text(encoding='utf-8').strip()
+    limiter = (workflow_file(directory, 'resource-limiter.txt')).read_text(encoding='utf-8').strip()
     lexer = shlex.shlex(limiter, posix=True)
     lexer.whitespace_split = True
     lexer.commenters = ''
@@ -854,8 +870,8 @@ def copyable_solver_configurations(directory):
     """Return editable solver cards from a saved workflow, including build settings."""
     data = decisions(directory, check_paths=False)
     configs = data.get('configurations') or []
-    if not configs and (directory / 'jobpairs.csv').is_file():
-        configs = imported_rows(directory / 'jobpairs.csv', check_paths=False)
+    if not configs and (workflow_file(directory, 'solver-problem-pairs.csv')).is_file():
+        configs = imported_rows(workflow_file(directory, 'solver-problem-pairs.csv'), check_paths=False)
     resources = {str(path_at(item.get('root', ''), BASE)): item
                  for item in data.get('resources', []) if item.get('role') == 'solver'}
     fields = ('solver_name', 'solver_directory', 'command', 'wc_limit', 'cpu_limit', 'mem_limit',
@@ -958,8 +974,9 @@ def duplicate(source, name):
                                       artifact=build.artifact or '', build_policy=build.build_policy)
                                  for build in read_builds(definition, check_paths=False)]
             data['resources'] = remap(data['resources'])
-            data['building_file'] = str(destination / 'building.txt')
+            data['building_file'] = str(destination / 'building.json')
         data['name'] = name
+        canonicalize_file_references(data, destination)
         data['_created_at'] = time.time()
         data.pop('_previous_directories', None)
         (destination / 'workflow.json').write_text(
@@ -979,17 +996,19 @@ def duplicate(source, name):
             builds.append(dict(root=item['root'],source=item.get('source',''),recipe=recipe,arguments=list(arguments),
                                artifact=item.get('artifact',''),build_policy=item.get('build_policy','always'),
                                legacy=bool(recipe and not item.get('artifact'))))
-        (destination/'building.txt').write_text(json.dumps(builds,indent=2)+'\n',encoding='utf-8')
+        (destination/'building.json').write_text(json.dumps(builds,indent=2)+'\n',encoding='utf-8')
         text=makefile.read_text()
+        for current, old in ALIASES.items():
+            text=text.replace(old, current)
         text=re.sub(r'(?m)^BUILD_RECIPES\s*:?=.*$',lambda _: 'BUILD_RECIPES := '+' '.join(path.replace(' ','\\ ') for path in recipes),text)
         makefile.write_text(text,encoding='utf-8')
-        (destination / 'resource_limiter_template.txt').write_text(remap(data['limiter']).rstrip() + '\n', encoding='utf-8')
-        for filename,configurations in [('configurations.csv',True),('jobpairs.csv',False)]:
-            if (source/filename).is_file():
-                rows=remap(imported_rows(source/filename,configurations,check_paths=False))
+        (destination / 'resource-limiter.txt').write_text(remap(data['limiter']).rstrip() + '\n', encoding='utf-8')
+        for filename,configurations in [('solvers.csv',True),('solver-problem-pairs.csv',False)]:
+            if workflow_file(source, filename).is_file():
+                rows=remap(imported_rows(workflow_file(source, filename),configurations,check_paths=False))
                 (destination/filename).write_text(csv_text(rows,tuple(c for c in COLUMNS if not configurations or c!='problem')),encoding='utf-8')
         for filename,key in [('problem-globs.txt','globs'),('axiom-globs.txt','axiom_globs')]:
-            if (source/filename).is_file():
+            if workflow_file(source, filename).is_file():
                 (destination/filename).write_text('\n'.join(data.get(key,[]))+'\n',encoding='utf-8')
     except Exception:
         shutil.rmtree(destination)

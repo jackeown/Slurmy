@@ -32,7 +32,7 @@ def snapshot(directory):
     except FileNotFoundError as exc:
         raise ValueError('No prepared batch plan yet. Choose Prepare only, then open this section.') from exc
     job=_read(directory,(metadata.st_mtime_ns,metadata.st_size,metadata.st_ctime_ns),(manifest.st_mtime_ns,manifest.st_size,manifest.st_ctime_ns))
-    inputs=['Makefile','workflow.json','jobpairs.csv','configurations.csv','problem-globs.txt','problem-selection.json','axiom-globs.txt','building.txt','resource_limiter_template.txt']
+    inputs=['configurations.csv','jobpairs.csv','resource_limiter_template.txt','building.txt','Makefile','workflow.json','solver-problem-pairs.csv','solvers.csv','problem-globs.txt','problem-selection.json','axiom-globs.txt','building.json','resource-limiter.txt']
     stale=any((directory/name).is_file() and (directory/name).stat().st_mtime_ns>prepared.st_mtime_ns for name in inputs)
     return job,dict(updated=max(metadata.st_mtime,manifest.st_mtime),stale=stale,refreshing=False)
 
