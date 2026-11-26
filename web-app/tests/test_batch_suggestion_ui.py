@@ -71,6 +71,11 @@ const result={batch_size:20,total_pairs:1280,maximum_parallelism:32,assumed_hard
  field('batch').value='7';field('batch').listeners.input();
  pending=vm.runInContext('suggestBatchSize()',context);resolve(result);await pending;
  assert.equal(field('batch').value,'7');assert.equal(field('#use-batch-suggestion').hidden,false);
+ pending=vm.runInContext('suggestBatchSize()',context);resolve({...result,account:'cpuopt',account_submit_limit:null,workflow_submit_limit:500,submission_budget:500,estimated_batches:440,suggested_fits:false});await pending;
+ assert.match(field('#batch-suggestion').textContent,/Your batch size creates 440 batches. Fits/);
+ assert.match(field('#batch-suggestion').textContent,/No submission cap was reported for cpuopt/);
+ assert.doesNotMatch(field('#batch-suggestion').textContent,/Some batches will need to wait/);
+
  field('batch').value='';field('batch').listeners.input();
  assert.equal(field('batch').value,'');
  pending=vm.runInContext('suggestBatchSize()',context);resolve(result);await pending;

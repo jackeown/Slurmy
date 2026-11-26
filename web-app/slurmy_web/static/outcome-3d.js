@@ -45,13 +45,13 @@ function labelFor(item) { return (item.label === 'Not finished' ? 'Not Finished'
 function renderTable() {
   table.replaceChildren(); legend.replaceChildren();
   const head = make('thead'), header = make('tr');
-  for (const [index, title] of ['Solver', ...statuses.map(labelFor), 'Total'].entries()) {
+  for (const [index, title] of ['Solver', ...statuses.map(item => (window.szsCode?window.szsCode(item.label):item.label) + (item.source?` (${item.source})`:'')), 'Total'].entries()) {
     const key = index === 0 ? 'solver' : index === statuses.length + 1 ? 'total' : `status-${index - 1}`;
     const cell = make('th'), control = make('button', `${title} ${countSort.key === key ? countSort.direction === 'asc' ? '↑' : '↓' : '↕'}`);
     cell.scope = 'col';
     if (countSort.key === key) cell.setAttribute('aria-sort', countSort.direction === 'asc' ? 'ascending' : 'descending');
     control.type = 'button'; control.className = 'sort-button secondary';
-    control.title = `Sort by ${title}`; control.setAttribute('aria-label', `Sort by ${title}`);
+    control.title = `Sort by ${index>0&&index<=statuses.length?labelFor(statuses[index-1]):title}`; control.setAttribute('aria-label', `Sort by ${title}`);
     control.addEventListener('click', () => {
       countSort.direction = countSort.key === key && countSort.direction === 'asc' ? 'desc' : 'asc';
       countSort.key = key; renderTable();

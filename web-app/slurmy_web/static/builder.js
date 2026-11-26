@@ -165,7 +165,7 @@ if(document.body.dataset.page==='new'){
    accountSelect.replaceChildren();
    for(const name of result.accounts)accountSelect.add(new Option(name,name));
    const selected=result.accounts.includes(requested)?requested:result.preferred;
-   accountSelect.value=selected;accountSelect.dataset.loaded='true';
+   accountSelect.value=selected;accountSelect.dataset.loaded='true';accountSelect.dispatchEvent(new Event('change',{bubbles:true}));
    accountField.hidden=result.accounts.length===1;
    accountStatus.textContent=(requested&&requested!==selected?`“${requested}” is unavailable for this cluster user; using ${selected||'the cluster default'}. `:'')+'Accounts available to your cluster user. '+(result.cached?'Checked within the last five minutes.':'Memberships just checked.');
    accountLoading.hidden=true;accountsReady=true;
@@ -693,12 +693,12 @@ if(document.body.dataset.page==='new'){
    if(request!==batchRequest)return;
    lastBatchSuggestion=data.batch_size;lastBatchPlan=data;renderBatchExplanation(data);updateBatchTimeWarning();
    status.className='validation valid';
-   status.textContent=`Suggested: ${data.batch_size} ${data.batch_size===1?'pair':'pairs'} per batch · ${data.suggested_batches} ${data.suggested_batches===1?'batch':'batches'}. ${data.suggested_fits?'Fits the current submission window.':'Some batches will need to wait.'}${data.wall_time_policy?.policy_verified===false?' Account/QOS policy could not be fully verified; the reported limits are used conservatively.':''}`;
+   status.textContent=`Suggested: ${data.batch_size} ${data.batch_size===1?'pair':'pairs'} per batch · ${data.suggested_batches} ${data.suggested_batches===1?'batch':'batches'}. ${Number(batchInput.value)>0?`Your batch size creates ${data.estimated_batches} batches. ${data.estimated_batches<=data.submission_budget?'Fits the current submission window.':'Some batches will need to wait.'}`:(data.suggested_fits?'Fits the current submission window.':'Some batches will need to wait.')} ${data.account_submit_limit===null?`No submission cap was reported for ${data.account||'the selected account'}; your ${data.workflow_submit_limit}-task setting applies.`:`Account submission cap: ${data.account_submit_limit??50} tasks.`}${data.wall_time_policy?.policy_verified===false?' Account/QOS policy could not be fully verified; the reported limits are used conservatively.':''}`;
    use.hidden=Number(batchInput.value)===data.batch_size;
    updateStepStates();
   }catch(error){if(request!==batchRequest)return;lastBatchSuggestion=null;lastBatchPlan=null;updateBatchTimeWarning();status.className='validation invalid';status.textContent=`Could not suggest a batch size: ${error.message} You can enter a size manually.`;}
  }
- batchInput.addEventListener('input',()=>{updateBatchTimeWarning();$('#use-batch-suggestion').hidden=lastBatchSuggestion===null||Number(batchInput.value)===lastBatchSuggestion;});
+ batchInput.addEventListener('input',()=>{++batchRequest;clearTimeout(batchTimer);if(Number(batchInput.value)>0)batchTimer=setTimeout(suggestBatchSize,400);updateBatchTimeWarning();$('#use-batch-suggestion').hidden=lastBatchSuggestion===null||Number(batchInput.value)===lastBatchSuggestion;});
  $('#use-batch-suggestion').addEventListener('click',()=>{if(lastBatchSuggestion!==null){batchInput.value=lastBatchSuggestion;$('#use-batch-suggestion').hidden=true;updateBatchTimeWarning();updateStepStates();}});
  form.addEventListener('input',event=>{
   if(event.target===batchInput)return;

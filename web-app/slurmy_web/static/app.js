@@ -19,6 +19,8 @@ const outcomeColors={'not finished':'#87938f','theorem':'#278866','unsatisfiable
 const szsCatalog=Object.assign(Object.create(null),JSON.parse(document.querySelector('#szs-catalog')?.textContent||'{}'));
 for(const [alias,info] of Object.entries(szsCatalog))outcomeColors[alias.toLowerCase()]=outcomeColors[info.name.toLowerCase()]||({'solver-error':'#bb555b','time-limit':'#e7b251','memory-limit':'#bb684a','resource-limit':'#9f5241'}[info.category]||(info.ontology==='Success'?'#278866':'#b58d48'));
 function szsLabel(value){const parts=value.match(/^Assumed\(([^,]+),([^()]+)\)$/);const info=szsCatalog[parts?'Assumed':value];if(!info||(!parts&&info.name!==value))return value;const code=parts?`ASS(${parts.slice(1).map(name=>szsCatalog[name]?.code||name).join(',')})`:info.code;return `${parts?value:info.name} (${code})`;}
+function szsCode(value){const parts=value.match(/^Assumed\(([^,]+),([^()]+)\)$/);return parts?`ASS(${parts.slice(1).map(name=>szsCatalog[name]?.code||name).join(',')})`:(szsCatalog[value]?.code||value);}
+
 const otherOutcomeColors=['#6d70b7','#a66b8b','#628b51','#ac7650','#568d9c','#a5a047'];
 let selectedOutcomes=[];
 const outcomeSelected=item=>selectedOutcomes.some(selected=>selected.label===item.label&&selected.source===item.source);
@@ -31,6 +33,7 @@ function updateOutcomeFilter(){
 function chooseOutcome(item){
  selectedOutcomes=outcomeSelected(item)?selectedOutcomes.filter(selected=>selected.label!==item.label||selected.source!==item.source):[...selectedOutcomes,{label:item.label,source:item.source}];
  taskPage=0;syncTableUrl(true);updateOutcomeFilter();renderOutcomes(jobData?.outcomes);refresh();
+ if($('#remote-data'))$('#remote-data').open=true;
  $('#remote-data')?.scrollIntoView({behavior:'smooth',block:'start'});
 }
 $('#clear-outcome-filter')?.addEventListener('click',()=>{selectedOutcomes=[];taskPage=0;syncTableUrl(true);updateOutcomeFilter();renderOutcomes(jobData?.outcomes);refresh();});
@@ -256,7 +259,7 @@ function scheduleStaleWarning(){
 }
 let jobStatusTooltip = null;
 function taskStatus(task){
- const status=badge(task.state||'Unknown');status.classList.add('task-status');status.tabIndex=0;
+ const status=badge(task.state||'Unknown');status.textContent=szsCode(task.state||'Unknown');status.classList.add('task-status');status.tabIndex=0;
  const lines=[`Status: ${task.state||'Unknown'}`];
  if(task.szs_code)lines.push(`SZS: ${task.szs_code} · ${task.szs_ontology}`);
  if(task.finished!==undefined)lines.push(task.finished?'Finished solver-problem pair.':'Not finished.');

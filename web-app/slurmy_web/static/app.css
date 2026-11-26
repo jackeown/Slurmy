@@ -14,3 +14,6 @@
 .batch-calculation{display:block;margin:10px 0;padding:10px 12px;border:1px solid var(--line);border-left:3px solid var(--green);border-radius:6px;background:color-mix(in srgb,var(--green) 6%,var(--surface-2,var(--paper)));color:var(--ink);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;font-weight:500;line-height:1.8;font-variant-numeric:tabular-nums;text-shadow:none;white-space:normal;overflow-wrap:anywhere}.batch-calculation .math-function{color:var(--ink);font-weight:750;text-decoration:underline;text-decoration-color:var(--green);text-underline-offset:3px}.batch-calculation .math-number{color:var(--green);font-weight:750}.batch-calculation .math-operator{color:var(--ink);font-weight:650}.batch-calculation .math-unit{color:var(--muted)}.batch-solver-name{font-weight:650;margin-bottom:4px}
 
 .batch-math-flow{grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr))}.batch-math-card:last-child{grid-column:1/-1}
+
+/* Preserve canonical SZS spelling and custom status names in the counts table. */
+#outcome-cube-table th, #outcome-cube-table .sort-button { text-transform: none; }

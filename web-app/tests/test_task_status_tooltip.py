@@ -32,13 +32,13 @@ const source=fs.readFileSync(process.argv[1],'utf8');
 function el(){return {style:{},hidden:true,attributes:{},events:{},offsetWidth:200,offsetHeight:80,classList:{add(){}},
  setAttribute(key,value){this.attributes[key]=value;},removeAttribute(key){delete this.attributes[key];},addEventListener(key,fn){this.events[key]=fn;},getBoundingClientRect(){return {left:100,bottom:100};}};}
 const context={el,badge:state=>{const node=el();node.textContent=state;return node;},document:{body:{append(){}}},innerWidth:1000,innerHeight:800};
-vm.createContext(context);vm.runInContext(source.slice(source.indexOf('let jobStatusTooltip'),source.indexOf('function jobCompletionLabel')),context);
+context.szsCatalog={Theorem:{name:'Theorem',code:'THM'}};vm.createContext(context);vm.runInContext(source.slice(source.indexOf('function szsCode('),source.indexOf('const otherOutcomeColors=')),context);vm.runInContext(source.slice(source.indexOf('let jobStatusTooltip'),source.indexOf('function jobCompletionLabel')),context);
 const queued=context.taskStatus({state:'queued',finished:false,will_run:'Yes',reason:'Waiting for SLURM capacity.'});
 assert.equal(queued.textContent,'queued');assert.equal(queued.tabIndex,0);
 queued.events.focus();assert.match(vm.runInContext('jobStatusTooltip.textContent',context),/Will run: Yes/);assert.match(vm.runInContext('jobStatusTooltip.textContent',context),/Not finished/);
 queued.events.keydown({key:'Escape'});assert.equal(vm.runInContext('jobStatusTooltip.hidden',context),true);
-const done=context.taskStatus({state:'Theorem',finished:true});done.events.pointermove({clientX:200,clientY:300});
-assert.match(vm.runInContext('jobStatusTooltip.textContent',context),/Finished solver-problem pair/);assert.doesNotMatch(vm.runInContext('jobStatusTooltip.textContent',context),/SLURM capacity|Will run/);
+const done=context.taskStatus({state:'Theorem',finished:true});assert.equal(done.textContent,'THM');done.events.pointermove({clientX:200,clientY:300});
+assert.match(vm.runInContext('jobStatusTooltip.textContent',context),/Status: Theorem[\s\S]*Finished solver-problem pair/);assert.doesNotMatch(vm.runInContext('jobStatusTooltip.textContent',context),/SLURM capacity|Will run/);
 done.events.blur();assert.equal(vm.runInContext('jobStatusTooltip.hidden',context),true);
 queued.events.click();assert.match(vm.runInContext('jobStatusTooltip.textContent',context),/SLURM capacity/);
 '''

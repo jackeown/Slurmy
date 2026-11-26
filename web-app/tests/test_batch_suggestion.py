@@ -68,7 +68,8 @@ class BatchSuggestionTests(unittest.TestCase):
                 batch.estimate(configurations, count, outstanding, self.nodes)
         self.assertEqual(batch.estimate([config()], 1, 32, self.nodes)['batch_size'], 1)
 
-    def test_live_topology_deduplicates_nodes_and_rejects_errors(self):
+    @patch("slurm_api.enabled", return_value=False)
+    def test_live_topology_deduplicates_nodes_and_rejects_errors(self, enabled):
         with patch.object(batch.subprocess, 'run', return_value=SimpleNamespace(
                 returncode=0, stdout='n1|2|32|2\nn1|2|32|2\nn2|1|16|1\n')) as run:
             self.assertEqual(len(batch.partition_nodes('datalab', 'CPU-amd')), 2)
@@ -211,3 +212,15 @@ class BatchSuggestionTests(unittest.TestCase):
         full=batch.submission_fit([config(1)],[1000],1000,'problem-major',32,self.nodes,active_tasks=50)
         self.assertEqual(full['submission_budget'],0)
         self.assertIsNone(full['recommended_batch_size'])
+
+    def test_issue32_cpuopt_440_batches_fit_500_slots_but_not_default_account(self):
+        configurations=[config(1,wc_limit=1)]
+        for account,limit,expected in [('cpuopt',None,500),('default',50,50)]:
+            nodes=batch.Topology(self.nodes,active_tasks=0,submit_limit=limit)
+            with patch.object(batch,'partition_nodes',return_value=nodes),patch.object(batch.workflows,'problem_glob',return_value=('pattern',list(range(440)))):
+                result=batch.suggest(dict(host='datalab',partition='CPU-amd',account=account,
+                    mode='interactive',configurations=configurations,globs=['pattern'],
+                    max_outstanding=500,batch_size=1))
+            self.assertEqual(result['estimated_batches'],440)
+            self.assertEqual(result['submission_budget'],expected)
+            self.assertEqual(result['estimated_batches']<=result['submission_budget'],account=='cpuopt')

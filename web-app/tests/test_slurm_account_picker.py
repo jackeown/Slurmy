@@ -45,14 +45,14 @@ class AccountTests(unittest.TestCase):
         program="""
 const assert=require('assert');
 let editing=false,initial={},accountsReady=false;
-const accountField={},accountSelect={dataset:{},value:'',replaceChildren(){},add(){}},accountLoading={},accountStatus={},accountRetry={};
+const accountField={},accountSelect={dataset:{},value:'',replaceChildren(){},add(){},events:[],dispatchEvent(event){this.events.push(event.type);}},accountLoading={},accountStatus={},accountRetry={};
 const Option=function(text,value){this.value=value;};
 const params=()=>'',rootValue=()=> 'test-host',updateStepStates=()=>{};
 let result={accounts:['cpuopt','default'],preferred:'cpuopt',cached:false};
 const api=async()=>{if(result instanceof Error)throw result;return result;};
 """+function+"""
 (async()=>{
- await loadAccounts(); assert.equal(accountSelect.value,'cpuopt');assert.equal(accountField.hidden,false);
+ await loadAccounts(); assert.equal(accountSelect.value,'cpuopt');assert.equal(accountField.hidden,false);assert.deepEqual(accountSelect.events,['change']);
  result={accounts:['default'],preferred:'default',cached:false};
  await loadAccounts();assert.equal(accountSelect.value,'default');assert.equal(accountField.hidden,true);assert.equal(accountsReady,true);
  result={accounts:['research'],preferred:'research',cached:false};
