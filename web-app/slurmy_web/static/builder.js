@@ -149,7 +149,7 @@ if(document.body.dataset.page==='new'){
   if(mode.value==='files')row.querySelector('.problem-names-status').textContent=row._nameFiles.length?`${row._nameFiles.length} name ${row._nameFiles.length===1?'file':'files'} selected.`:'No name files added yet.';
   mode.refreshShell?.();
  }
- function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field){if(field.type==='checkbox')field.checked=value===true;else if(name==='cores')setCoreRequest(field,value??'1');else field.value=name==='problem_selection'&&Array.isArray(value)?value.join('\n'):name.startsWith('omit_')?String(value||false).toLowerCase():(value??'');field.refreshShell?.();}}if(node.matches('.glob-row'))initializeProblemNames(node,values);if(node.matches('.configuration')){configurationTitle(node);updateSolverStatus(node);queueMicrotask(()=>validateSolverCommand(node));queueMicrotask(()=>validatePostprocessor(node));queueMicrotask(()=>validateEnvironment(node));queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}}
+ function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field){if(field.type==='checkbox')field.checked=value===true;else if(name==='cores')setCoreRequest(field,value??'1');else field.value=name==='problem_selection'&&Array.isArray(value)?value.join('\n'):name.startsWith('omit_')?String(value||false).toLowerCase():(value??'');field.refreshShell?.();}}if(node.matches('.glob-row'))initializeProblemNames(node,values);if(node.matches('.configuration')){initializePostprocessor(node,values);configurationTitle(node);updateSolverStatus(node);queueMicrotask(()=>validateSolverCommand(node));queueMicrotask(()=>validatePostprocessor(node));queueMicrotask(()=>validateEnvironment(node));queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}}
  fill($('#workflow-postprocessing'),Object.fromEntries(Object.entries(initial.postprocessor||{mode:'default',timeout:30}).map(([key,value])=>['workflow_postprocessor_'+key,value])));
  for(const name of ['name','partition','account','reservation','batch_size','max_outstanding','pair_order','mode','jobpairs','configurations_file','limiter_mode','limiter_file','limiter']){const field=form.querySelector(`[name="${name}"]`);if(field&&initial[name]!==undefined)field.value=initial[name];}
  $('[name="get_computer_info"]').checked=initial.get_computer_info!==false;
@@ -445,12 +445,12 @@ if(document.body.dataset.page==='new'){
    value('command')&&value('command')!==card.querySelector('[name="command"]').placeholder&&
    card.querySelector('[name="command"]').dataset.commandValidated===solverCommandKey(card);
   const postMode=value('postprocessor_mode');
+  inheritPostprocessorLabels(card);
   card.querySelector('[data-postprocessor-custom]').hidden=postMode!=='custom';
   card.querySelector('[data-postprocessor-default]').hidden=postMode!=='default';
-  card.querySelector('[data-postprocessor-active]').hidden=postMode==='none';
-  const override=card.querySelector('[name="postprocessor_override"]').checked;
-  card.querySelector('[data-postprocessor-override]').hidden=!override;
-  const postReady=!override||postMode==='none'||(positiveTimeout(card)&& (postMode==='default'||(pathReady('postprocessor_directory')&&card.querySelector('[name="postprocessor_command"]').dataset.commandValidated===postprocessorKey(card))));
+  card.querySelector('[data-postprocessor-active]').hidden=postMode==='none'||(postMode==='workflow'&&postField($('#workflow-postprocessing'),'mode').value==='none');
+  const override=postMode!=='workflow';
+  const postReady=positiveTimeout(card)&&(!override||postMode==='none'||postMode==='default'||(pathReady('postprocessor_directory')&&card.querySelector('[name="postprocessor_command"]').dataset.commandValidated===postprocessorKey(card)));
   const buildReady=!buildSelected||((!value('build_source')||pathReady('build_source'))&&pathReady('build_script'));
   const positive=name=>{const input=card.querySelector(`[name="${name}"]`);return input.value.trim()!==''&&input.validity.valid&&Number(input.value)>0;};
   const limitsReady=card.querySelector('[name="threads_per_core"]').dataset.threadValid==='true'&&['wc_limit','cpu_limit'].every(name=>/^(0|[1-9][0-9]*)$/.test(value(name)))&&positive('threads_per_core')&&positive('cores')&&card.querySelector('[name="cores"]').dataset.coreValid==='true'&&
@@ -485,7 +485,19 @@ if(document.body.dataset.page==='new'){
  form.addEventListener('focusout',event=>{if(event.target.name==='environment')validateEnvironment(event.target.closest('.configuration'));});
  for(const card of document.querySelectorAll('.configuration'))queueMicrotask(()=>validateEnvironment(card));
  function postField(card,name){return card.querySelector(`[name="${card.id==='workflow-postprocessing'?'workflow_':''}postprocessor_${name}"]`);}
- function positiveTimeout(card){const input=postField(card,'timeout');return /^[1-9][0-9]*$/.test(input.value)&&Number(input.value)<=600;}
+ function positiveTimeout(card){const input=postField(card,'timeout');return (card.id!=='workflow-postprocessing'&&input.value==='')||(/^[1-9][0-9]*$/.test(input.value)&&Number(input.value)<=600);}
+ function initializePostprocessor(card,values){
+  const legacy=values?.postprocessor_override;
+  if(values?.postprocessor_mode_inherit===true||legacy===false)postField(card,'mode').value='workflow';
+  if(values?.postprocessor_timeout_inherit===true||legacy===false)postField(card,'timeout').value='';
+ }
+ function inheritPostprocessorLabels(card){
+  const workflow=$('#workflow-postprocessing'),mode=postField(workflow,'mode').value;
+  const label={default:'Built-in SZS Parser',custom:'Custom postprocessor',none:'None'}[mode];
+  const option=postField(card,'mode').querySelector('[value="workflow"]');
+  if(option&&option.textContent!==`From workflow (${label})`){option.textContent=`From workflow (${label})`;postField(card,'mode').refreshShell?.();}
+  postField(card,'timeout').placeholder=`From workflow (${postField(workflow,'timeout').value||30} seconds)`;
+ }
  function postprocessorData(card){return {directory:postField(card,'directory').value,command:postField(card,'command').value};}
  function postprocessorKey(card){return JSON.stringify(postprocessorData(card));}
  function syncGlobalPostprocessor(){
@@ -495,9 +507,9 @@ if(document.body.dataset.page==='new'){
   const ready=mode==='none'||(positiveTimeout(card)&&(mode==='default'||(root.value.trim()&&root.dataset.validated===root.value&&command.dataset.commandValidated===postprocessorKey(card))));
   card.dataset.state=ready?'valid':'invalid';card.querySelector('.solver-section-status').textContent=ready?(mode==='none'?'Disabled':mode==='default'?'Built-in SZS parser':'Custom parser ready'):'Set folder, command and timeout';
  }
- function refreshPostprocessing(card){if(card.id==='workflow-postprocessing'){syncGlobalPostprocessor();updateStepStates();}else updateSolverStatus(card);}
+ function refreshPostprocessing(card){if(card.id==='workflow-postprocessing'){syncGlobalPostprocessor();document.querySelectorAll('.configuration').forEach(updateSolverStatus);updateStepStates();}else updateSolverStatus(card);}
  async function validatePostprocessor(card){
-  if(card.id!=='workflow-postprocessing'&&!card.querySelector('[name="postprocessor_override"]').checked)return true;
+  if(card.id!=='workflow-postprocessing'&&postField(card,'mode').value==='workflow')return true;
   if(postField(card,'mode').value!=='custom')return true;
   const input=postField(card,'command'),status=card.querySelector('.postprocessor-validation'),key=postprocessorKey(card),data=postprocessorData(card);
   if(input.dataset.commandValidated===key)return true;
@@ -507,6 +519,8 @@ if(document.body.dataset.page==='new'){
   catch(error){if(key!==postprocessorKey(card))return false;delete input.dataset.commandValidated;status.className='postprocessor-validation validation invalid';status.textContent=error.message;refreshPostprocessing(card);return false;}
  }
  const postprocessorTimers=new WeakMap();
+ form.addEventListener('input',event=>{if(event.target.name?.startsWith('workflow_postprocessor_'))document.querySelectorAll('.configuration').forEach(updateSolverStatus);});
+ form.addEventListener('change',event=>{if(event.target.name?.startsWith('workflow_postprocessor_'))document.querySelectorAll('.configuration').forEach(updateSolverStatus);});
  function queuePostprocessor(event){if(!/^(workflow_)?postprocessor_/.test(event.target.name))return;const card=event.target.closest('.configuration,#workflow-postprocessing');if(!card)return;delete postField(card,'command').dataset.commandValidated;clearTimeout(postprocessorTimers.get(card));postprocessorTimers.set(card,setTimeout(()=>validatePostprocessor(card),350));}
  form.addEventListener('input',queuePostprocessor);form.addEventListener('change',queuePostprocessor);
  form.addEventListener('focusout',event=>{if(/^(workflow_)?postprocessor_(directory|command)$/.test(event.target.name))validatePostprocessor(event.target.closest('.configuration,#workflow-postprocessing'));});

@@ -173,8 +173,19 @@ def effective_postprocessor(row, data, base=None, check_paths=False):
     override = row.get('postprocessor_override', any(key in row for key in POSTPROCESSOR_DEFAULTS))
     if not isinstance(override, bool):
         raise ValueError('Postprocessor override must be true or false.')
-    source = row if override else {'postprocessor_' + key: value for key, value in workflow_postprocessor(data, base, check_paths).items()}
-    return {**postprocessor_settings(source, base, check_paths), 'postprocessor_override': override}
+    mode_inherit = row.get('postprocessor_mode_inherit', not override or row.get('postprocessor_mode') == 'workflow')
+    timeout_inherit = row.get('postprocessor_timeout_inherit', not override or row.get('postprocessor_timeout') == '')
+    if not isinstance(mode_inherit, bool) or not isinstance(timeout_inherit, bool):
+        raise ValueError('Postprocessor inheritance settings must be true or false.')
+    inherited = {'postprocessor_' + key: value for key, value in workflow_postprocessor(data, base, check_paths).items()}
+    source = dict(inherited if mode_inherit else row)
+    source['postprocessor_timeout'] = inherited['postprocessor_timeout'] if timeout_inherit else row.get('postprocessor_timeout', 30)
+    result = {**postprocessor_settings(source, base, check_paths),
+              'postprocessor_override': not (mode_inherit and timeout_inherit)}
+    if row.get('postprocessor_mode') == 'workflow' or row.get('postprocessor_timeout') == '' or any(key in row for key in ('postprocessor_mode_inherit', 'postprocessor_timeout_inherit')):
+        result.update(postprocessor_mode_inherit=mode_inherit, postprocessor_timeout_inherit=timeout_inherit)
+    return result
+
 
 
 def validate_postprocessor_command(command, directory, allowed_roots=(), allow_external=False):

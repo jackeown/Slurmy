@@ -35,8 +35,9 @@ class BuilderUpdateTests(unittest.TestCase):
         self.assertNotIn(b'Custom axiom globs',response.data)
         self.assertIn(b'id="workflow-postprocessing"',response.data)
         self.assertIn(b'name="workflow_postprocessor_mode"',response.data)
-        self.assertIn(b'name="postprocessor_override"',response.data)
-        self.assertIn(b'data-postprocessor-override hidden',response.data)
+        self.assertNotIn(b'name="postprocessor_override"',response.data)
+        self.assertIn(b'value="workflow">From workflow (Built-in SZS Parser)',response.data)
+        self.assertIn(b'placeholder="From workflow (30 seconds)"',response.data)
         self.assertIn(b'tptp://TPTP-v10.0.0/Axioms/**/*.ax',response.data)
         self.assertIn(b'Add another axiom source',response.data)
 

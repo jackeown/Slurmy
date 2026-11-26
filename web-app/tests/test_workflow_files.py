@@ -76,6 +76,42 @@ class WorkflowFileTests(unittest.TestCase):
         workflow_files.replace(self.directory,'configurations.csv',(self.directory/'configurations.csv').read_text())
         self.assertTrue(all(c['postprocessor_override'] for c in workflows.decisions(self.directory)['configurations']))
 
+    def test_parser_and_timeout_inherit_independently_after_save(self):
+        data=workflows.decisions(self.directory)
+        data['postprocessor']=dict(mode='default',timeout=40)
+        row=data['configurations'][0]
+        row.pop('postprocessor_override',None)
+        row.update(postprocessor_mode='workflow',postprocessor_timeout='7')
+        workflows.save(data,self.directory)
+        saved=workflows.decisions(self.directory)
+        self.assertTrue(saved['configurations'][0]['postprocessor_mode_inherit'])
+        self.assertFalse(saved['configurations'][0]['postprocessor_timeout_inherit'])
+        saved['postprocessor'].update(mode='none',timeout=80)
+        workflows.save(saved,self.directory)
+        result=self.rows('configurations.csv')[0]
+        self.assertEqual(result['postprocessor_mode'],'none')
+        self.assertEqual(result['postprocessor_timeout'],'7')
+        saved=workflows.decisions(self.directory)
+        # Simulate selecting a parser explicitly and clearing its timeout.
+        row=saved['configurations'][0]
+        for key in ('postprocessor_override','postprocessor_mode_inherit','postprocessor_timeout_inherit'):
+            row.pop(key,None)
+        row.update(postprocessor_mode='default',postprocessor_timeout='')
+        workflows.save(saved,self.directory)
+        saved=workflows.decisions(self.directory)
+        self.assertFalse(saved['configurations'][0]['postprocessor_mode_inherit'])
+        self.assertTrue(saved['configurations'][0]['postprocessor_timeout_inherit'])
+        saved['postprocessor']['timeout']=90
+        workflows.save(saved,self.directory)
+        result=self.rows('jobpairs.csv')[0]
+        self.assertEqual(result['postprocessor_mode'],'default')
+        self.assertEqual(result['postprocessor_timeout'],'90')
+
+    def test_inherited_postprocessor_timeout_rejects_invalid_explicit_values(self):
+        for value in ('0','1.5','abc','601'):
+            with self.subTest(value=value),self.assertRaisesRegex(ValueError,'whole number'):
+                workflows.effective_postprocessor(dict(postprocessor_mode='workflow',postprocessor_timeout=value),{})
+
     def test_invalid_postprocessor_never_replaces_definition(self):
         original=self.snapshot()
         data=workflows.decisions(self.directory)
