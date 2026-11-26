@@ -595,7 +595,7 @@ def create_app():
 
     def page(template, **kwargs):
         session.setdefault('csrf', secrets.token_hex(32))
-        return render_template(template, host=host(), csrf=session['csrf'],
+        return render_template(template, host=host(), csrf=session['csrf'], local_platform=__import__('platform').system(),
                                tptp_version=TPTP_DEFAULT_VERSION, tptp_default_root=TPTP_DEFAULT_ROOT,
                                szs_catalog={alias: dict(name=name, code=code, ontology=szs.ontology(name), category=szs.execution_status(name))
                                             for name,code in szs.STATUSES.items() for alias in (name,code)}, **kwargs)

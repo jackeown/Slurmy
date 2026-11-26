@@ -42,8 +42,22 @@ def atomic_json(path, value):
     finally:Path(name).unlink(missing_ok=True)
 
 
+def process_library():
+    try:import psutil
+    except ImportError as error:raise ValueError('macOS local execution needs psutil. Install the project requirements: python3 -m pip install -r requirements.txt') from error
+    return psutil
+
+
+def affinity_command(logical, command):
+    return ['taskset','-c',logical,*command] if platform.system()=='Linux' else list(command)
+
+
 def cpu_groups():
     """Physical cores and their available logical CPUs, respecting affinity."""
+    if platform.system()=='Darwin':
+        library=process_library();physical=library.cpu_count(logical=False) or 1;logical=library.cpu_count() or physical
+        threads=max(1,logical//physical)
+        return {(0,index):list(range(index*threads,(index+1)*threads)) for index in range(physical)}
     allowed=sorted(os.sched_getaffinity(0)) if hasattr(os,'sched_getaffinity') else list(range(os.cpu_count() or 1))
     groups={}
     for cpu in allowed:
@@ -61,12 +75,13 @@ def topology():
 
 
 def memory_mib():
+    if platform.system()=='Darwin':return max(1,process_library().virtual_memory().total//2**20)
     return max(1,os.sysconf('SC_PAGE_SIZE')*os.sysconf('SC_PHYS_PAGES')//2**20)
 
 
 def settings():
     saved=read_json(root()/'settings.json')
-    return dict(mode='local',max_cores=min(int(saved.get('max_cores',len(cpu_groups()))),len(cpu_groups())),
+    return dict(mode='local',platform=platform.system(),cpu_pinning=platform.system()=='Linux',max_cores=min(int(saved.get('max_cores',len(cpu_groups()))),len(cpu_groups())),
                 max_parallel_batches=int(saved.get('max_parallel_batches',max(1,len(cpu_groups())//2))),
                 memory_mib=int(saved.get('memory_mib',max(1,memory_mib()*3//4))),
                 tptp_root=saved.get('tptp_root',str(Path.home()/'TPTP')))
@@ -104,6 +119,12 @@ def jobs():
 
 
 def process_identity(pid):
+    if platform.system()=='Darwin':
+        library=process_library()
+        try:
+            process=library.Process(pid)
+            return None if process.status()==library.STATUS_ZOMBIE else str(process.create_time())
+        except library.Error:return None
     try:
         content=Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()
         return None if content[0]=='Z' else content[19]
@@ -115,8 +136,11 @@ def alive(state):
 
 
 def require_tools():
-    if platform.system()!='Linux':raise ValueError('The local backend currently requires Linux; its resource limiter and CPU affinity tools are Linux executables.')
-    missing=[name for name in ('bash','taskset','setsid','timeout','tar','awk','tee') if shutil.which(name) is None]
+    system=platform.system()
+    if system not in {'Linux','Darwin'}:raise ValueError('Native local execution supports Linux and macOS; Windows is not supported.')
+    if system=='Darwin':process_library()
+    tools=('bash','taskset','setsid','timeout','tar','awk','tee') if system=='Linux' else ('bash','tee')
+    missing=[name for name in tools if shutil.which(name) is None]
     if missing:raise ValueError('Missing local execution tools: '+', '.join(missing))
 
 
@@ -142,8 +166,18 @@ def prepare(workflow):
         for config in (assets/'calls').glob('*/config.sh'):
             config.write_text(re.sub(r'(?m)^TPTP_DEFAULT_ROOT=.*$', 'TPTP_DEFAULT_ROOT='+shlex.quote(str(tptp) if tptp.is_dir() else ''), config.read_text()))
         metadata=read_json(assets/'metadata.json');metadata.update(backend='local',workflow_directory=str(workflow),workflow_name=data['name'])
+        limiter=Path(shlex.split(files['resource-limiter.txt'])[0])
+        portable=platform.system()=='Darwin' and limiter.name.startswith('runsolver')
+        if portable:
+            from portable_runtime import native_options
+            for line in (assets/'manifest.jsonl').read_text().splitlines():native_options(json.loads(line)['limiter_command'])
+        metadata.update(execution_platform=platform.system(),portable_limiter=portable,local_limiter_path=str(limiter))
         atomic_json(assets/'metadata.json',metadata)
-        shutil.copy2(stage/'building.json',assets/'local-builds.json')
+        builds=read_json(stage/'building.json',[])
+        if portable:
+            bundled=REPO/'implementation/build/runsolver'
+            builds=[build for build in builds if Path(build.get('root','')).resolve()!=bundled.resolve() and (Path(build.get('root',''))/build.get('artifact','')).resolve()!=limiter.resolve()]
+        atomic_json(assets/'local-builds.json',builds)
         for name in files:
             if name.startswith('build-resource-'):
                 shutil.copy2(stage/name,assets/name)
@@ -212,7 +246,7 @@ def build_resources(job):
                 command=[*interpreter,str(recipe)]
             command+=build.get('arguments',[])
             logical=','.join(str(cpu) for cpus in list(cpu_groups().values())[:settings()['max_cores']] for cpu in cpus[:1])
-            process=subprocess.Popen(['taskset','-c',logical,*command],cwd=work,env=environment,start_new_session=True)
+            process=subprocess.Popen(affinity_command(logical,command),cwd=work,env=environment,start_new_session=True)
             try:
                 while process.poll() is None:
                     if (job/'stop-requested').exists():
@@ -232,6 +266,18 @@ def build_resources(job):
 
 def commit_inputs(job):
     build_resources(job)
+    if platform.system()=='Darwin':
+        sys.path.insert(0,str(REPO/'web-app'))
+        from slurmy_web.workflows import validate_solver_command
+        for row in (json.loads(line) for line in (job/'manifest.jsonl').read_text().splitlines()):
+            executable=Path(validate_solver_command(row['command'],row['solver_root'])['path'])
+            with executable.open('rb') as stream:signature=stream.read(4)
+            if signature==b'\x7fELF':raise ValueError(f'{executable} is a Linux executable. Select a macOS binary or build this solver locally from source.')
+        metadata=read_json(job/'metadata.json')
+        if not metadata.get('portable_limiter'):
+            executable=Path(metadata['local_limiter_path'])
+            with executable.open('rb') as stream:signature=stream.read(4)
+            if signature==b'\x7fELF':raise ValueError('The custom resource limiter is a Linux executable. Select a native macOS limiter or the bundled runsolver setting.')
     mirror=job/'rootfs';mirror.mkdir(exist_ok=True)
     raw=(job/'archive-paths.txt').read_bytes().split(b'\0')
     paths=[Path('/'+os.fsdecode(value)) for value in raw if value]
@@ -251,6 +297,7 @@ def dispatch(workflow,name=None):
     workflow=Path(workflow).resolve();assets=workflow/'submit.sh.files'
     metadata=read_json(assets/'metadata.json')
     if metadata.get('backend')!='local':raise ValueError('Prepare this workflow with the local backend before dispatching it.')
+    if metadata.get('execution_platform',platform.system())!=platform.system():raise ValueError('Prepare these local batches again on this operating system before dispatching them.')
     rows=[json.loads(line) for line in (assets/'manifest.jsonl').read_text().splitlines()]
     capacity=settings()
     for row in rows:
@@ -288,12 +335,17 @@ def batch(job,batch_id,logical):
         stop=True
         if child and child.poll() is None:os.killpg(child.pid,signal.SIGTERM)
     signal.signal(signal.SIGTERM,cancel);signal.signal(signal.SIGINT,cancel)
+    rows={row['task_id']:row for row in (json.loads(line) for line in (job/'manifest.jsonl').read_text().splitlines())} if platform.system()=='Darwin' else {}
     for task in metadata['planned_batch_tasks'][batch_id]:
         if stop or (job/'stop-requested').exists():break
         if str(results(job).get(task,{}).get('complete','')).lower()=='true':continue
+        if platform.system()=='Darwin':
+            from portable_runtime import run_pair
+            if not run_pair(job,rows[task],batch_id,cancel=lambda:stop or (job/'stop-requested').exists()):return 130
+            continue
         environment={**os.environ,'JOB_DIR':str(job),'SLURM_JOB_ID':str(os.getppid()),'SLURM_ARRAY_JOB_ID':str(os.getppid()),
                      'SLURM_ARRAY_TASK_ID':str(batch_id),'SLURMD_NODENAME':platform.node()}
-        child=subprocess.Popen(['taskset','-c',logical,'bash',str(job/'call.sh'),str(task),str(batch_id)],env=environment,start_new_session=True)
+        child=subprocess.Popen(affinity_command(logical,['bash',str(job/'call.sh'),str(task),str(batch_id)]),env=environment,start_new_session=True)
         child.wait()
         if child.returncode and not stop:
             # A runner error must remain visible and resumable, not spin forever.

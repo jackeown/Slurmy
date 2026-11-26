@@ -72,12 +72,12 @@
     <p class="muted">Submission waits on this computer between short waves. Keep the local server running and the computer awake until all batches are accepted. Already submitted SLURM tasks continue if you disconnect.</p>
     </div>
     <div id="connection-local-fields"{% if host != 'local' %} hidden{% endif %}>
-      <p>Runs on this computer without SSH or SLURM. Keep this computer awake while jobs run. Native execution currently requires Linux.</p>
+      <p>Runs on this computer without SSH or SLURM. Keep this computer awake while jobs run. Native execution supports Linux and macOS.</p>
       <label>Physical cores available to Slurmy<input id="local-max-cores" type="number" min="1" step="1"></label>
       <label>Maximum concurrent batches<input id="local-max-batches" type="number" min="1" step="1"></label>
       <label>Memory budget (MiB)<input id="local-memory" type="number" min="1" step="1"></label>
       <label>Local TPTP directory<input id="local-tptp-root" placeholder="/home/you/TPTP"><small>Contains version folders such as TPTP-v10.0.0. You can also use ordinary local problem and axiom sources.</small></label>
-      <p class="muted">CPU and memory budgets are shared across local Slurmy jobs. Dedicated cluster CPU/node settings reserve the full local Slurmy CPU budget. Other applications can still use this computer; local execution cannot reserve hardware against them.</p>
+      <p class="muted">{% if local_platform == 'Darwin' %}macOS uses core slots to limit Slurmy concurrency and sets solver parallelism variables; it does not pin processes to particular CPUs. CPU and memory accounting is sampled across the process tree. {% endif %}CPU and memory budgets are shared across local Slurmy jobs. Dedicated cluster CPU/node settings reserve the full local Slurmy CPU budget. Other applications can still use this computer; local execution cannot reserve hardware against them.</p>
     </div>
     <p id="connection-status" role="status"></p><div class="tools"><button id="connection-save" type="button">Save connection</button><button id="connection-test" class="secondary" type="button">Test saved connection</button></div>
   </div>

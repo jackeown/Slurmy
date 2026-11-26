@@ -18,7 +18,7 @@ from slurmy_web.app import create_app
 from slurmy_web.local_monitor import collect
 
 
-@unittest.skipUnless(sys.platform.startswith('linux') and shutil.which('taskset'),'Native backend requires Linux')
+@unittest.skipUnless(sys.platform in {'linux','darwin'},'Native backend requires Linux or macOS')
 class LocalBackendTests(unittest.TestCase):
     def setUp(self):
         temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup)
@@ -126,7 +126,7 @@ class LocalBackendTests(unittest.TestCase):
 
     def test_real_runsolver_wall_limit_and_native_result_statistics(self):
         limiter=local.REPO/'implementation/build/runsolver/runsolver'
-        if not limiter.is_file():self.skipTest('Bundled Linux runsolver is unavailable')
+        if not limiter.is_file():self.skipTest('Bundled runsolver definition is unavailable')
         shutil.copy2(limiter,self.runtime/'runsolver')
         self.solver.write_text('#!/bin/sh\nsleep 5\n')
         (self.workflow/'resource-limiter.txt').write_text(str(self.runtime/'runsolver')+' --cpu-limit {{cpu_limit}} --wall-clock-limit {{wc_limit}} --rss-swap-limit {{mem_limit_mib}} --watcher-data {{watcher_log}} --var {{var_file}} --solver-data {{solver_log}} --timestamp --add-eof {{solver_command}}')

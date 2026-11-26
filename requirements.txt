@@ -3,3 +3,6 @@ waitress>=3,<4
 
 # Used only by download.py --interactive; ordinary downloads use the standard library.
 rich>=13.7,<15
+
+# Native macOS process-tree accounting and resource limits (also used by tests).
+psutil>=5.9,<8
