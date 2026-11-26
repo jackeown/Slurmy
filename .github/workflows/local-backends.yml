@@ -18,7 +18,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r requirements.txt
-      - name: Native execution and portable limits
-        run: |
-          python -m unittest discover -s web-app/tests -p 'test_local_backend.py'
-          python -m unittest discover -s implementation/tests -p 'test_portable_runtime.py'
+      - name: Native execution
+        run: python -m unittest discover -s web-app/tests -p 'test_local_backend.py'
+      - name: Portable limits
+        if: always()
+        run: python -m unittest discover -s implementation/tests -p 'test_portable_runtime.py'

@@ -133,7 +133,10 @@ class LocalBackendTests(unittest.TestCase):
         with (self.workflow/'solver-problem-pairs.csv').open() as stream:rows=list(csv.DictReader(stream))
         (self.workflow/'solver-problem-pairs.csv').write_text(workflows.csv_text(rows[:1]))
         identifier=self.run_job();self.wait_state(identifier,{'done','incomplete'})
-        result=collect(identifier).find_job(identifier).results[0]
+        job=collect(identifier).find_job(identifier)
+        logs='\n'.join(path.read_text(errors='replace') for path in (local.job_path(identifier)/'logs').glob('*'))
+        self.assertIn(0,job.results,job.controller_log+'\n'+logs)
+        result=job.results[0]
         self.assertTrue(result.complete);self.assertEqual(result.status,'time-limit')
         self.assertIsNotNone(result.cpu_seconds);self.assertIsNotNone(result.wall_seconds)
 
