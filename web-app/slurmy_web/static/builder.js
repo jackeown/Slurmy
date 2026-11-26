@@ -46,6 +46,7 @@ if(document.body.dataset.page==='new'){
  function nameFileContents(files){return files.map(file=>file.content).join('\n');}
  function renderNameFiles(row){
   const list=row.querySelector('.problem-name-file-list');if(!list)return;
+  row._cancelNameFileDrag?.();
   list.replaceChildren();
   for(const [index,file] of (row._nameFiles||[]).entries()){
    const item=document.createElement('li'),name=document.createElement('span'),remove=document.createElement('button');
@@ -57,6 +58,81 @@ if(document.body.dataset.page==='new'){
     row.querySelector('.problem-names-status').textContent=row._nameFiles.length?`${row._nameFiles.length} name ${row._nameFiles.length===1?'file':'files'} selected.`:'No files selected.';
     text.dispatchEvent(new Event('input',{bubbles:true}));await validatePath(row.querySelector('[name="glob"]'));
    });
+   item.title='Drag to reorder';name.textContent='⠿ '+file.name;
+    let drag = null;
+    const clearDrag = () => {
+      if (drag?.placeholder) drag.placeholder.remove();
+      if (drag?.active) {
+        item.hidePopover();
+        item.removeAttribute('popover');
+        item.style.cssText = drag.originalStyle;
+      }
+      drag = null; item.classList.remove('name-file-dragging');
+    };
+    item.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || !event.isPrimary || event.target.closest('button')) return;
+      row._cancelNameFileDrag?.();row._cancelNameFileDrag=clearDrag;
+      const bounds = item.getBoundingClientRect();
+      drag = {pointer: event.pointerId, x: event.clientX, y: event.clientY,
+        offsetX: event.clientX - bounds.left, offsetY: event.clientY - bounds.top,
+        width: bounds.width, height: bounds.height, originalStyle: item.style.cssText,
+        active: false, to: index};
+      item.setPointerCapture(event.pointerId);
+    });
+    item.addEventListener('pointermove', event => {
+      if (!drag || event.pointerId !== drag.pointer) return;
+      if (!drag.active && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 5) return;
+      if (!drag.active) {
+        drag.active = true;
+        const placeholder = document.createElement('li');
+        placeholder.className = 'name-file-placeholder';
+        placeholder.setAttribute('aria-hidden', 'true');
+        placeholder.style.width = `${drag.width}px`; placeholder.style.height = `${drag.height}px`;
+        item.before(placeholder); drag.placeholder = placeholder;
+        item.classList.add('name-file-dragging');
+        // Glass/filtered panels establish a containing block for fixed children.
+        // The browser's top layer uses viewport coordinates regardless of those
+        // ancestors, while keeping the real item and pointer capture intact.
+        item.setAttribute('popover', 'manual');
+        item.showPopover();
+        item.style.width = `${drag.width}px`; item.style.height = `${drag.height}px`;
+      }
+      // Move the actual item with the pointer, preserving the initial grab offset.
+      item.style.left = `${event.clientX - drag.offsetX}px`;
+      item.style.top = `${event.clientY - drag.offsetY}px`;
+      const bounds = list.getBoundingClientRect();
+      if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) {
+        drag.to = -1; return;
+      }
+      const hit = document.elementFromPoint(event.clientX, event.clientY);
+      if (hit === drag.placeholder) {
+        drag.to = [...list.children].filter(node => node !== item).indexOf(drag.placeholder);
+        return;
+      }
+      const candidates = [...list.querySelectorAll('li:not(.name-file-placeholder)')].filter(node => node !== item);
+      // Nearest rectangle also handles gaps between chips and wrapped rows.
+      const distance = node => {
+        const box = node.getBoundingClientRect();
+        return Math.max(box.left - event.clientX, 0, event.clientX - box.right) ** 2 +
+          Math.max(box.top - event.clientY, 0, event.clientY - box.bottom) ** 2;
+      };
+      const target = candidates.sort((a, b) => distance(a) - distance(b))[0];
+      if (target) {
+        const box = target.getBoundingClientRect();
+        if (event.clientX >= box.left + box.width / 2) target.after(drag.placeholder);
+        else target.before(drag.placeholder);
+      }
+      drag.to = [...list.children].filter(node => node !== item).indexOf(drag.placeholder);
+    });
+    item.addEventListener('pointerup', event => {
+      if (!drag || event.pointerId !== drag.pointer) return;
+      const dropped = drag;
+      clearDrag();
+      if (item.hasPointerCapture(event.pointerId)) item.releasePointerCapture(event.pointerId);
+      if (dropped.active && dropped.to >= 0) { const [moved]=row._nameFiles.splice(index,1);row._nameFiles.splice(dropped.to,0,moved);renderNameFiles(row);const text=row.querySelector('[name="problem_selection"]');text.value=nameFileContents(row._nameFiles);row._filesDraft=text.value;text.dispatchEvent(new Event('input',{bubbles:true}));void validatePath(row.querySelector('[name="glob"]')); }
+    });
+    item.addEventListener('pointercancel', clearDrag);
+    item.addEventListener('lostpointercapture', clearDrag);
    item.append(name,remove);list.append(item);
   }
  }
