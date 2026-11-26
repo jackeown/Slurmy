@@ -19,7 +19,8 @@ class AboutTests(unittest.TestCase):
         html=response.text
         for value in (VERSION,'abc1234','Jack McKeown','TU Wien dataLAB','FORSYTE','APRe','<span>About</span>','/logo.svg'):
             self.assertIn(value,html)
-        self.assertIn('<details class="panel" open>\n  <summary>Slurmy</summary>',html)
+        self.assertIn('<section class="panel" data-collapsible-ready="true">',html)
+        self.assertNotIn('<summary>Slurmy</summary>',html)
         self.assertNotIn('<h2>Slurmy</h2>',html)
         self.assertNotIn('paid for',html)
         self.assertIn('aria-current="page"',html)

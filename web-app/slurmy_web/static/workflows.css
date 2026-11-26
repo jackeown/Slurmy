@@ -663,4 +663,4 @@ details[data-section-state="closing"] > summary::before { transform: rotate(0deg
 .problem-name-file-list .name-file-placeholder { border:1px dashed var(--line); flex:none; padding:0; }
 .problem-name-file-list .name-file-dragging { position:fixed; inset:auto; margin:0; pointer-events:none; cursor:grabbing; background:var(--panel, var(--bg)); box-shadow:0 6px 20px #0003; }
 .name-file-dragging::backdrop { background:transparent; pointer-events:none; }
-.about-identity { margin-top:16px; }
+.about-identity { margin-bottom:24px; }
