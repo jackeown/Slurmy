@@ -111,7 +111,12 @@ The job inspector shows the exact rendered invocation and distinguishes empty
 output from a file omitted by the limiter configuration.
 
 By default, the bundled `tools/GetComputerInfo` runs on the compute node before
-every solver-problem pair. Its hardware, operating-system and configured-limit
+every solver-problem pair. The bundled Linux script comes from
+<https://tptp.org/Guest/GetComputerInfo>. The invocation requests
+`THIS Model CPUModel RAMPerCPU OS CPULimit WCLimit MemLimit DateTime`, with
+`-p --prefix '% '` and the pair's `--cpu-limit`, `--wc-limit`, and `--mem-limit`
+(in MiB). macOS uses the native report supplied by its local supervisor.
+Its hardware, operating-system and configured-limit
 report appears at the start of the full runsolver output as TPTP comments,
 without being added to the prover's raw stdout. Report lines use
 `0.00/0.00` timestamps only when the limiter invocation contains `--timestamp`.

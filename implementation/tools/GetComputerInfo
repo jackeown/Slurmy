@@ -1,103 +1,204 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #--------------------------------------------------------------------------------------------------
-# GetComputerInfo - report hardware/OS information about the LOCAL computer.
+# GetComputerInfo - report hardware/OS information about the LOCAL Linux computer.
 #
-# Drop-in replacement for the old Perl GetComputerInfo, but it never uses ssh/rsh,
-# ping or nslookup of other hosts. Everything is read from /proc and uname, with fallbacks.
+# Drop-in replacement for the old Perl GetComputerInfo, without ssh/rsh, ping, or
+# lookups of other hosts. Everything is read from /proc and uname, with fallbacks.
 #
-# Usage: GetComputerInfo [-h] [-p] [-d] [-a file] [-r] [-s]
-#                        [--cpu-limit N] [--wc-limit N] [--mem-limit X] [--timestamp]
+# Requirements: Linux (/proc) and Bash 4.0+.
+# Note: In containers with CPU quotas (cgroups), /proc/cpuinfo and /proc/stat report
+#       host CPU topology and counters rather than cgroup-throttled quotas.
+#
+# Usage: GetComputerInfo [-h|--help] [-p] [-d] [-a file] [-r] [-s]
+#                        [--no-lookup] [--lookup-timeout N]
+#                        [--cpu-limit N] [--wc-limit N] [--mem-limit X]
+#                        [--timestamp] [--prefix S]
 #                        ComputerName Field ...
-#   ComputerName  : THIS, the local host name (short or qualified), or localhost.
-#                   Other hosts and ALL are rejected because there is no remote access.
-#   -p            : pretty print ("% Name     : value" per line)
-#   -d            : debug - show the output of each host name lookup on stderr
-#   -a, -r, -s    : accepted for backward compatibility and ignored
-#   --cpu-limit N : CPU time limit (integer), reported by the CPULimit field
-#   --wc-limit N  : wall clock limit (integer), reported by the WCLimit field
-#   --mem-limit X : memory limit (real number), reported by the MemLimit field. The value is
-#                   in MiB, or in MB (10^6 bytes) if it ends in "MB", e.g. 2456MB
-#                   (the limit options also accept the --name=value form)
-#   --prefix TEXT : set the pretty-print comment prefix (default "% ")
-#   --timestamp   : prefix each output line with a zero time stamp "0.00/0.00<TAB>"
-#   Fields        : Model CPUModel TotalCPUs SpareCPUs RAMPerCPU TotalRAM FreeRAM
-#                   SwapInUse FreeSwap OS CPULimit WCLimit MemLimit DateTime, or ALL
+#   ComputerName       : THIS, the local host name (short or qualified), or localhost
+#                        (case-insensitive). Other hosts and ALL are rejected.
+#   -p                 : pretty print ("Name     : value" per line)
+#   -d                 : debug - show the output of each host name lookup on stderr
+#   -a file, -r, -s    : accepted for backward compatibility and ignored
+#   --no-lookup        : skip DNS/network FQDN lookups (still checks local /etc/hosts)
+#   --lookup-timeout N : per-command timeout in seconds for FQDN lookups (default: 2;
+#                        total network lookup budget is capped at 3 * N seconds)
+#   --cpu-limit N      : CPU time limit (integer), reported by the CPULimit field
+#   --wc-limit N       : wall clock limit (integer), reported by the WCLimit field
+#   --mem-limit X      : memory limit (real number), reported by the MemLimit field.
+#                        In MiB (optional "MiB" suffix), or in MB (10^6 bytes) if it
+#                        ends in "MB", e.g. 2456MB or 2048MiB.
+#                        (limit and timeout options also accept the --name=value form)
+#   --timestamp        : prefix each output line with a zero time stamp "0.00/0.00<TAB>"
+#   --prefix S         : prefix each output line with exactly the string S, with no
+#                        space added (after the time stamp, if there is one), e.g. '% '
+#   Fields             : Model CPUModel AllCPUs FreeCPUs RAMPerCPU TotalRAM FreeRAM
+#                        SwapUsed FreeSwap OS CPULimit WCLimit MemLimit DateTime, or ALL
+#                        (case-insensitive; repeated fields are reported once; unknown
+#                        fields report "NO INFORMATION")
 #--------------------------------------------------------------------------------------------------
 set -f
 export LC_ALL=C
-export PATH="/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:${PATH}}"
 
-AllFields=(Model CPUModel TotalCPUs SpareCPUs RAMPerCPU TotalRAM FreeRAM SwapInUse FreeSwap OS
+if (( BASH_VERSINFO[0] < 4 )); then
+    echo "ERROR: GetComputerInfo requires Bash 4.0 or newer" >&2
+    exit 1
+fi
+
+AllFields=(Model CPUModel AllCPUs FreeCPUs RAMPerCPU TotalRAM FreeRAM SwapUsed FreeSwap OS
            CPULimit WCLimit MemLimit DateTime)
 
 #--------------------------------------------------------------------------------------------------
-Usage() {
+PrintUsage() {
 cat << 'EOF'
 
-    GetComputerInfo Options ComputerName RequiredFields
+    GetComputerInfo Options ComputerName RequiredFields...
 
-    Options are -h            = Print this help
-                -p            = Pretty print
-                -d            = Show how the fully qualified name was looked up (stderr)
-                -a, -r, -s    = Ignored (kept for compatibility)
-                --cpu-limit N = CPU time limit (integer)
-                --wc-limit N  = Wall clock limit (integer)
-                --mem-limit X = Memory limit (real number) in MiB, or in MB if
-                                it ends in "MB" (e.g. 2456MB)
-                --timestamp   = Prefix each output line with "0.00/0.00<TAB>"
+    Options are -h, --help         = Print this help and exit 0
+                -p                 = Pretty print
+                -d                 = Show how the fully qualified name was looked up (stderr)
+                -a file, -r, -s    = Ignored (kept for compatibility; -a requires a file argument)
+                --no-lookup        = Skip DNS/network FQDN lookups (still checks local /etc/hosts)
+                --lookup-timeout N = Timeout in seconds per lookup command (default: 2;
+                                     total lookup budget capped at 3 * N seconds)
+                --cpu-limit N      = CPU time limit (integer)
+                --wc-limit N       = Wall clock limit (integer)
+                --mem-limit X      = Memory limit (real number) in MiB (optional "MiB" suffix),
+                                     or in MB (10^6 bytes) if it ends in "MB" (e.g. 2456MB)
+                --timestamp        = Prefix each output line with "0.00/0.00<TAB>"
+                --prefix S         = Prefix each output line with exactly string S
+                                     (include a space if wanted, e.g. '% ')
 
-    ComputerName              = THIS (or this computer's own name)
+    ComputerName                   = THIS, localhost, or this computer's own name (case-insensitive)
 
-    Fields are  Model         = Computer model
-                CPUModel      = CPU model
-                TotalCPUs     = Number of CPUs
-                SpareCPUs     = Idle CPUs
-                RAMPerCPU     = RAM per CPU
-                TotalRAM      = Total RAM
-                FreeRAM       = Free RAM
-                SwapInUse     = Swap space in use
-                FreeSwap      = Free swap space
-                OS            = Operating system
-                CPULimit      = Value of --cpu-limit
-                WCLimit       = Value of --wc-limit
-                MemLimit      = Value of --mem-limit
-                DateTime      = Current date and time
-                ALL           = All fields
+    Fields are  Model              = Computer model
+                CPUModel           = CPU model
+                AllCPUs            = CPU sockets, cores per socket and hyperthreading,
+                                     e.g. "2 CPUs, 32 cores per CPU, hyperthreading on"
+                FreeCPUs           = Idle CPUs (idle + iowait, 1-second sample)
+                RAMPerCPU          = RAM per CPU socket (MiB)
+                TotalRAM           = Total RAM (MiB)
+                FreeRAM            = Free RAM, not counting cache (MiB)
+                SwapUsed           = Swap space in use (MiB)
+                FreeSwap           = Free swap space (MiB)
+                OS                 = Operating system distribution and kernel,
+                                     e.g. "Ubuntu 24.04.5 LTS, Linux 6.8.0-151-generic"
+                CPULimit           = Value of --cpu-limit
+                WCLimit            = Value of --wc-limit
+                MemLimit           = Value of --mem-limit
+                DateTime           = Current date and time
+                ALL                = Expand to all fields above (repeats are reported once)
 EOF
-exit 1
 }
 
-#----Check and store the value of a limit option
+Usage() {
+    local ExitCode="${1:-1}"
+    if (( ExitCode == 0 )); then
+        PrintUsage
+    else
+        PrintUsage >&2
+    fi
+    exit "$ExitCode"
+}
+
+#----Check and store the value of numeric options
 IntRE='^[0-9]+$'
+PosIntRE='^[1-9][0-9]*$'
 RealRE='^([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?(MB|MiB)?$'
 SetLimit() {
     local Option="$1" Value="$2"
     case "$Option" in
         --cpu-limit|--wc-limit)
             if [[ ! "$Value" =~ $IntRE ]]; then
-                echo "ERROR: $Option needs an integer argument, not '$Value'"
-                Usage
+                echo "ERROR: $Option needs an integer argument, not '$Value'" >&2
+                Usage 1
             fi
             if [[ "$Option" == "--cpu-limit" ]]; then CPULimit="$Value"; else WCLimit="$Value"; fi
             ;;
         --mem-limit)
             if [[ ! "$Value" =~ $RealRE ]]; then
-                echo "ERROR: $Option needs a real number argument, not '$Value'"
-                Usage
+                echo "ERROR: $Option needs a real number argument, not '$Value'" >&2
+                Usage 1
             fi
             MemLimit="$Value"
             ;;
+        --lookup-timeout)
+            if [[ ! "$Value" =~ $PosIntRE ]]; then
+                echo "ERROR: $Option needs a positive integer argument, not '$Value'" >&2
+                Usage 1
+            fi
+            LookupTimeout="$Value"
+            ;;
     esac
+}
+
+#----Extract a valid FQDN matching this machine's short name (portable across gawk/mawk)
+ExtractFQDN() {
+    local Mode="$1"
+    awk -v mode="$Mode" -v s="$ShortName" '
+        function normalize(n) {
+            sub(/\.$/, "", n)
+            return n
+        }
+        function is_valid(n,    f) {
+            f = tolower(n)
+            return (f ~ /\./ &&
+                    f !~ /^localhost(\.|$)/ &&
+                    f !~ /\.localdomain$/ &&
+                    f !~ /^[0-9.]+$/ &&
+                    f !~ /[:#]/ &&
+                    index(f, short_prefix) == 1)
+        }
+        BEGIN { short_prefix = tolower(s) "." }
+        mode == "name" && tolower($0) ~ /^name:[ \t]+/ {
+            n = normalize($2)
+            if (is_valid(n)) { print n; exit }
+        }
+        mode == "ptr" && tolower($0) ~ /name = / {
+            n = normalize($NF)
+            if (is_valid(n)) { print n; exit }
+        }
+        mode == "hosts" {
+            sub(/#.*/, "")
+            for (i = 2; i <= NF; i++) {
+                n = normalize($i)
+                if (is_valid(n)) { print n; exit }
+            }
+        }
+        mode == "any" {
+            for (i = 1; i <= NF; i++) {
+                n = normalize($i)
+                if (is_valid(n)) { print n; exit }
+            }
+        }
+    '
+}
+
+#----Resolve FQDN strictly from local /etc/hosts (0 ms, no network or NSS calls)
+LookupEtcHosts() {
+    local Resolved=""
+    if [[ -r /etc/hosts ]]; then
+        Resolved=$(ExtractFQDN hosts < /etc/hosts)
+    fi
+    if (( Debug )); then
+        {
+            echo "DEBUG: ---- etc-hosts (/etc/hosts) ----"
+            echo "DEBUG: => '$Resolved'"
+        } >&2
+    fi
+    printf '%s' "$Resolved"
 }
 
 #----Parse options (combined flags like -pr are allowed, options may appear anywhere)
 PrettyPrint=0
 Debug=0
+NoLookup=0
+LookupTimeout=2
 CPULimit=""
 WCLimit=""
 MemLimit=""
-Prefix=""
-CommentPrefix="% "
+TimeStamp=""
+LinePrefix=""
 Args=()
 while (( $# > 0 )); do
     case "$1" in
@@ -106,30 +207,45 @@ while (( $# > 0 )); do
             Args+=("$@")
             break
             ;;
-        --cpu-limit|--wc-limit|--mem-limit)
+        --help)
+            Usage 0
+            ;;
+        --no-lookup)
+            NoLookup=1
+            shift
+            ;;
+        --cpu-limit|--wc-limit|--mem-limit|--lookup-timeout)
             if (( $# < 2 )); then
-                echo "ERROR: $1 needs an argument"
-                Usage
+                echo "ERROR: $1 needs an argument" >&2
+                Usage 1
             fi
             SetLimit "$1" "$2"
             shift 2
             ;;
-        --prefix)
-            (( $# >= 2 )) || { echo 'ERROR: --prefix needs an argument'; Usage; }
-            CommentPrefix="$2"
-            shift 2
-            ;;
-        --timestamp)
-            Prefix=$'0.00/0.00\t'
-            shift
-            ;;
-        --cpu-limit=*|--wc-limit=*|--mem-limit=*)
+        --cpu-limit=*|--wc-limit=*|--mem-limit=*|--lookup-timeout=*)
             SetLimit "${1%%=*}" "${1#*=}"
             shift
             ;;
+        --timestamp)
+            TimeStamp=$'0.00/0.00\t'
+            shift
+            ;;
+        --prefix|--prefix=*)
+            if [[ "$1" == --prefix=* ]]; then
+                Value="${1#*=}"
+                shift
+            elif (( $# < 2 )); then
+                echo "ERROR: --prefix needs an argument" >&2
+                Usage 1
+            else
+                Value="$2"
+                shift 2
+            fi
+            LinePrefix="$Value"
+            ;;
         --*)
-            echo "ERROR: Unknown option $1"
-            Usage
+            echo "ERROR: Unknown option $1" >&2
+            Usage 1
             ;;
         -?*)
             Opts="${1#-}"
@@ -137,14 +253,24 @@ while (( $# > 0 )); do
             for (( i = 0; i < ${#Opts}; i++ )); do
                 Opt="${Opts:i:1}"
                 case "$Opt" in
-                    h)   Usage ;;
+                    h)   Usage 0 ;;
                     p)   PrettyPrint=1 ;;
                     d)   Debug=1 ;;
-                    a)   (( $# > 0 )) && shift ;;
+                    a)
+                        if (( i + 1 < ${#Opts} )); then
+                            # Attached file argument, e.g. -afile
+                            break
+                        elif (( $# < 1 )); then
+                            echo "ERROR: -a needs a file argument" >&2
+                            Usage 1
+                        else
+                            shift
+                        fi
+                        ;;
                     r|s) ;;
                     *)
-                        echo "ERROR: Unknown option -$Opt"
-                        Usage
+                        echo "ERROR: Unknown option -$Opt" >&2
+                        Usage 1
                         ;;
                 esac
             done
@@ -156,25 +282,45 @@ while (( $# > 0 )); do
     esac
 done
 
-if (( ${#Args[@]} < 1 )); then Usage; fi
-Requested="${Args[0]}"
-Fields=("${Args[@]:1}")
-if (( ${#Fields[@]} == 1 )) && [[ "${Fields[0]}" == "ALL" ]]; then
-    Fields=("${AllFields[@]}")
+if (( ${#Args[@]} < 1 )); then
+    echo "ERROR: Missing ComputerName and RequiredFields" >&2
+    Usage 1
+fi
+if (( ${#Args[@]} < 2 )); then
+    echo "ERROR: At least one field must be specified" >&2
+    Usage 1
 fi
 
+Requested="${Args[0]}"
+#----Expand ALL and drop repeated fields (case-insensitive), keeping the first occurrence
+Fields=()
+declare -A SeenField=()
+for Arg in "${Args[@]:1}"; do
+    if [[ "${Arg,,}" == "all" ]]; then
+        Expanded=("${AllFields[@]}")
+    else
+        Expanded=("$Arg")
+    fi
+    for Field in "${Expanded[@]}"; do
+        if [[ -z "${SeenField[${Field,,}]+set}" ]]; then
+            SeenField[${Field,,}]=1
+            Fields+=("$Field")
+        fi
+    done
+done
+
 #----Short name of this computer
-ShortName=$(hostname -s 2>/dev/null | head -1)
+ShortName=$(hostname -s 2>/dev/null | head -n 1)
 if [[ -z "$ShortName" ]]; then ShortName=$(uname -n); fi
 ShortName="${ShortName%%.*}"
 
-#----The target must be this computer - there is no remote access
-RequestedShort="${Requested%%.*}"
-RequestedShort="${RequestedShort,,}"
+#----The target must be this computer - there is no remote access (case-insensitive)
+RequestedLower="${Requested,,}"
+RequestedShort="${RequestedLower%%.*}"
 LowerShort="${ShortName,,}"
-if [[ "$Requested" != "THIS" && "$Requested" != "localhost" && \
+if [[ "$RequestedLower" != "this" && "$RequestedLower" != "localhost" && \
       "$RequestedShort" != "$LowerShort" ]]; then
-    echo "ERROR: Cannot get information about $Requested - only THIS computer is supported"
+    echo "ERROR: Cannot get information about $Requested - only THIS computer is supported" >&2
     exit 1
 fi
 
@@ -185,72 +331,126 @@ fi
 #----  4. getent hosts of the short name (/etc/hosts, DNS, NIS, ...)
 #----  5. host of the short name
 #----  6. hostname -A
-#----A name is accepted if it has a domain part and is not localhost, *.localdomain or
-#----an IP address. Methods 3-6 can also report aliases, so for them the name must also
-#----start with this machine's short name. Each lookup is limited to 5 seconds.
-TimeLimit=()
-if command -v timeout > /dev/null 2>&1; then TimeLimit=(timeout 5); fi
-mapfile -t IPs < <(hostname -I 2>&1 | \
-    awk '{for (i = 1; i <= NF; i++) if ($i ~ /^[0-9.]+$/) print $i}')
-if (( ${#IPs[@]} == 0 )); then
-    mapfile -t IPs < <(getent hosts "$ShortName" 2>&1 | \
-        awk '$1 ~ /^[0-9.]+$/ && $1 !~ /^127\./ {print $1}')
-fi
-#----Filters that pick a usable name out of each kind of output
-OK='f ~ /\./ && f !~ /^localhost/ && f !~ /\.localdomain$/ && f !~ /^[0-9.]+$/ && f !~ /[:#]/'
-NameLine='BEGIN {IGNORECASE = 1} /^Name:/ {n = $2; sub(/\.$/, "", n); f = tolower(n); if ('"$OK"') {print n; exit}}'
-PTRLine='/name = / {n = $NF; sub(/\.$/, "", n); f = tolower(n); if ('"$OK"') {print n; exit}}'
-AnyWord='BEGIN {s = tolower(s)} {for (i = 1; i <= NF; i++) {n = $i; sub(/\.$/, "", n); f = tolower(n); if ('"$OK"' && index(f, s ".") == 1) {print n; exit}}}'
-
+#----  7. local /etc/hosts fallback (also used directly when --no-lookup is set)
+#----A name is accepted for ALL methods only if it has a domain part, starts with
+#----"<short_name>.", and is not localhost/localhost.*, *.localdomain, or an IP.
+#----Network lookups are bounded per command by LookupTimeout and overall by 3 * LookupTimeout.
 FullName=""
-for Method in nslookup nslookup-silent nslookup-reverse hostname-f getent host hostname-A; do
-    if [[ -n "$FullName" ]]; then break; fi
-    case "$Method" in
-        nslookup)
-            Output=$("${TimeLimit[@]}" nslookup "$ShortName" 2>&1)
-            Filter="$NameLine"
-            ;;
-        nslookup-silent)
-            Output=$("${TimeLimit[@]}" nslookup -sil "$ShortName" 2>&1)
-            Filter="$NameLine"
-            ;;
-        nslookup-reverse)
-            Output=""
-            for IP in "${IPs[@]}"; do
-                Output+=$("${TimeLimit[@]}" nslookup "$IP" 2>&1)$'\n'
-            done
-            Filter="$PTRLine"
-            ;;
-        hostname-f)
-            Output=$("${TimeLimit[@]}" hostname -f 2>&1)
-            Filter="$AnyWord"
-            ;;
-        getent)
-            Output=$("${TimeLimit[@]}" getent hosts "$ShortName" 2>&1)
-            Filter="$AnyWord"
-            ;;
-        host)
-            Output=$("${TimeLimit[@]}" host "$ShortName" 2>&1)
-            Filter="$AnyWord"
-            ;;
-        hostname-A)
-            Output=$("${TimeLimit[@]}" hostname -A 2>&1)
-            Filter="$AnyWord"
-            ;;
-    esac
-    FullName=$(printf '%s\n' "$Output" | awk -v s="$ShortName" "$Filter")
-    if (( Debug )); then
-        {
-            echo "DEBUG: ---- $Method ----"
-            printf '%s\n' "$Output" | sed 's/^/DEBUG: | /'
-            echo "DEBUG: => '$FullName'"
-        } >&2
+if (( ! NoLookup )); then
+    HasTimeout=0
+    if command -v timeout >/dev/null 2>&1; then
+        HasTimeout=1
     fi
-done
-#----Otherwise fall back to the name given (for THIS, the name from hostname)
+
+    LookupStart=$SECONDS
+    LookupBudget=$(( LookupTimeout * 3 ))
+
+    IPs=()
+    if command -v hostname >/dev/null 2>&1; then
+        mapfile -t IPs < <(hostname -I 2>/dev/null | \
+            awk '{for (i = 1; i <= NF; i++) if ($i ~ /^[0-9.]+$/) print $i}')
+    fi
+    if (( ${#IPs[@]} == 0 )) && command -v getent >/dev/null 2>&1; then
+        Remaining=$(( LookupBudget - (SECONDS - LookupStart) ))
+        if (( Remaining > 0 )); then
+            CmdTimeout=$(( Remaining < LookupTimeout ? Remaining : LookupTimeout ))
+            if (( HasTimeout )); then
+                mapfile -t IPs < <(timeout "$CmdTimeout" getent hosts "$ShortName" 2>/dev/null | \
+                    awk '$1 ~ /^[0-9.]+$/ && $1 !~ /^127\./ {print $1}')
+            else
+                mapfile -t IPs < <(getent hosts "$ShortName" 2>/dev/null | \
+                    awk '$1 ~ /^[0-9.]+$/ && $1 !~ /^127\./ {print $1}')
+            fi
+        fi
+    fi
+
+    for Method in nslookup nslookup-reverse hostname-f getent host hostname-A; do
+        if [[ -n "$FullName" ]]; then break; fi
+        Remaining=$(( LookupBudget - (SECONDS - LookupStart) ))
+        if (( Remaining <= 0 )); then
+            if (( Debug )); then
+                echo "DEBUG: ---- budget exhausted (${LookupBudget}s), stopping network lookups ----" >&2
+            fi
+            break
+        fi
+        CmdTimeout=$(( Remaining < LookupTimeout ? Remaining : LookupTimeout ))
+        TimeLimit=()
+        if (( HasTimeout )); then TimeLimit=(timeout "$CmdTimeout"); fi
+
+        Output=""
+        Mode=""
+        RC=0
+        case "$Method" in
+            nslookup)
+                command -v nslookup >/dev/null 2>&1 || continue
+                Output=$("${TimeLimit[@]}" nslookup "$ShortName" 2>&1)
+                Mode="name"
+                ;;
+            nslookup-reverse)
+                command -v nslookup >/dev/null 2>&1 || continue
+                (( ${#IPs[@]} > 0 )) || continue
+                for IP in "${IPs[@]}"; do
+                    Remaining=$(( LookupBudget - (SECONDS - LookupStart) ))
+                    if (( Remaining <= 0 )); then break; fi
+                    CmdTimeout=$(( Remaining < LookupTimeout ? Remaining : LookupTimeout ))
+                    TimeLimit=()
+                    if (( HasTimeout )); then TimeLimit=(timeout "$CmdTimeout"); fi
+                    IPOut=$("${TimeLimit[@]}" nslookup "$IP" 2>&1)
+                    RC=$?
+                    Output+="${IPOut}"$'\n'
+                    FullName=$(printf '%s\n' "$IPOut" | ExtractFQDN ptr)
+                    if [[ -n "$FullName" ]]; then break; fi
+                    if (( RC == 124 )); then
+                        if (( Debug )); then
+                            echo "DEBUG: | reverse lookup timed out on $IP; skipping remaining IPs" >&2
+                        fi
+                        break
+                    fi
+                done
+                ;;
+            hostname-f)
+                command -v hostname >/dev/null 2>&1 || continue
+                Output=$("${TimeLimit[@]}" hostname -f 2>&1)
+                Mode="any"
+                ;;
+            getent)
+                command -v getent >/dev/null 2>&1 || continue
+                Output=$("${TimeLimit[@]}" getent hosts "$ShortName" 2>&1)
+                Mode="any"
+                ;;
+            host)
+                command -v host >/dev/null 2>&1 || continue
+                Output=$("${TimeLimit[@]}" host "$ShortName" 2>&1)
+                Mode="any"
+                ;;
+            hostname-A)
+                command -v hostname >/dev/null 2>&1 || continue
+                Output=$("${TimeLimit[@]}" hostname -A 2>&1)
+                Mode="any"
+                ;;
+        esac
+        if [[ -n "$Mode" ]]; then
+            FullName=$(printf '%s\n' "$Output" | ExtractFQDN "$Mode")
+        fi
+        if (( Debug )); then
+            {
+                echo "DEBUG: ---- $Method ----"
+                printf '%s\n' "$Output" | sed 's/^/DEBUG: | /'
+                echo "DEBUG: => '$FullName'"
+            } >&2
+        fi
+    done
+fi
+
+#----Local /etc/hosts lookup (used both with --no-lookup and as zero-cost fallback)
 if [[ -z "$FullName" ]]; then
-    if [[ "$Requested" == "THIS" || "$Requested" == "localhost" ]]; then
-        FullName=$(hostname 2>/dev/null | head -1)
+    FullName=$(LookupEtcHosts)
+fi
+
+#----Otherwise fall back to the name given (for THIS/localhost, the name from hostname)
+if [[ -z "$FullName" ]]; then
+    if [[ "$RequestedLower" == "this" || "$RequestedLower" == "localhost" ]]; then
+        FullName=$(hostname 2>/dev/null | head -n 1)
         if [[ -z "$FullName" ]]; then FullName=$(uname -n); fi
     else
         FullName="$Requested"
@@ -260,8 +460,8 @@ fi
 #----Model (same as the old "uname -mp")
 Model=$(uname -m -p)
 
-#----CPU model and count from /proc/cpuinfo, with lscpu/nproc fallbacks
-TotalCPUs=$(awk '/^processor[ \t]*:/ {n++} END {print n+0}' /proc/cpuinfo 2>/dev/null)
+#----CPU model and logical CPU count from /proc/cpuinfo, with lscpu/nproc fallbacks
+LogicalCPUs=$(awk '/^processor[ \t]*:/ {n++} END {print n+0}' /proc/cpuinfo 2>/dev/null)
 CPUModel=$(awk '/^model name[^:]*:/ {sub(/^[^:]*:[ \t]*/, ""); sub(/[ \t]+$/, ""); print; exit}' \
     /proc/cpuinfo 2>/dev/null)
 if [[ -z "$CPUModel" ]]; then
@@ -269,28 +469,62 @@ if [[ -z "$CPUModel" ]]; then
         awk '/^Model name[^:]*:/ {sub(/^[^:]*:[ \t]*/, ""); sub(/[ \t]+$/, ""); print; exit}')
 fi
 if [[ -z "$CPUModel" ]]; then CPUModel="Unknown"; fi
-if [[ -z "$TotalCPUs" || "$TotalCPUs" == "0" ]]; then
-    TotalCPUs=$(nproc --all 2>/dev/null | head -1)
+if [[ -z "$LogicalCPUs" || "$LogicalCPUs" == "0" ]]; then
+    LogicalCPUs=$(nproc --all 2>/dev/null | head -n 1)
 fi
-if [[ ! "$TotalCPUs" =~ ^[1-9][0-9]*$ ]]; then
-    echo "ERROR: Cannot determine the number of CPUs"
+if [[ ! "$LogicalCPUs" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: Cannot determine the number of CPUs" >&2
     exit 1
 fi
 
-#----Memory in MB from /proc/meminfo (same numbers as "free -m")
-read -r -a Mem < <(awk '/^MemTotal:/ {t=int($2/1024)} /^MemFree:/ {f=int($2/1024)}
-    /^SwapTotal:/ {st=int($2/1024)} /^SwapFree:/ {sf=int($2/1024)}
-    END {print t+0, f+0, st-sf, sf+0}' /proc/meminfo 2>/dev/null)
-if (( ${#Mem[@]} != 4 )) || [[ "${Mem[0]}" == "0" ]]; then
-    read -r -a Mem < <(free -m | awk '/^Mem/ {t=$2; f=$4} /^Swap/ {su=$3; sf=$4}
-        END {print t+0, f+0, su+0, sf+0}')
+#----Sockets (CPU chips) and physical cores per socket. Counted from the distinct
+#----"physical id" values and distinct (physical id, core id) pairs in /proc/cpuinfo,
+#----then lscpu, and if neither has topology information, 1 socket with one core per
+#----logical CPU. Hyperthreading is on if there are more logical CPUs than physical cores.
+read -r Sockets PhysCores < <(awk -F: '
+    /^physical id/ {p = $2 + 0; if (!(p in S)) {S[p] = 1; ns++}}
+    /^core id/     {k = p SUBSEP ($2 + 0); if (!(k in C)) {C[k] = 1; nc++}}
+    /^processor/   {p = 0}
+    END {print ns + 0, nc + 0}' /proc/cpuinfo 2>/dev/null)
+if [[ ! "$Sockets" =~ ^[1-9][0-9]*$ || ! "$PhysCores" =~ ^[1-9][0-9]*$ ]]; then
+    read -r Sockets CoresPerSocket < <(lscpu 2>/dev/null | awk -F: '
+        /^Socket\(s\)/          {s = $2 + 0}
+        /^Core\(s\) per socket/ {c = $2 + 0}
+        END {print s + 0, c + 0}')
+    PhysCores=$(( Sockets * CoresPerSocket ))
 fi
-TotalRAM="${Mem[0]}MB"
-FreeRAM="${Mem[1]}MB"
-SwapInUse="${Mem[2]}MB"
-FreeSwap="${Mem[3]}MB"
-#----Rounded to whole MiB (/proc/meminfo "kB" are KiB, so t is in MiB)
-RAMPerCPU=$(awk -v t="${Mem[0]}" -v c="$TotalCPUs" 'BEGIN {printf("%dMiB", int(t/c + 0.5))}')
+if [[ ! "$Sockets" =~ ^[1-9][0-9]*$ ]] || (( PhysCores < 1 )); then
+    Sockets=1
+    PhysCores=$LogicalCPUs
+fi
+CoresPerSocket=$(( PhysCores / Sockets ))
+if (( LogicalCPUs > PhysCores )); then HyperThreading="on"; else HyperThreading="off"; fi
+if (( Sockets == 1 )); then SocketWord="CPU"; else SocketWord="CPUs"; fi
+if (( CoresPerSocket == 1 )); then CoreWord="core"; else CoreWord="cores"; fi
+AllCPUs="$Sockets $SocketWord, $CoresPerSocket $CoreWord per CPU, hyperthreading $HyperThreading"
+
+#----Memory in MiB from /proc/meminfo ("kB" there means KiB).
+#----FreeRAM is MemFree, i.e. RAM not used for anything, so page cache and other
+#----reclaimable memory are not counted as free. SwapUsed subtracts in KiB before
+#----converting to MiB.
+read -r -a Mem < <(awk '
+    /^MemTotal:/     { t  = $2 + 0 }
+    /^MemFree:/      { mf = $2 + 0 }
+    /^SwapTotal:/    { st = $2 + 0 }
+    /^SwapFree:/     { sf = $2 + 0 }
+    END {
+        su = (st > sf) ? (st - sf) : 0
+        print int(t / 1024), int(mf / 1024), int(su / 1024), int(sf / 1024)
+    }' /proc/meminfo 2>/dev/null)
+if (( ${#Mem[@]} != 4 )) || [[ "${Mem[0]}" == "0" ]]; then
+    echo "ERROR: Cannot read memory information from /proc/meminfo" >&2
+    exit 1
+fi
+TotalRAM="${Mem[0]}MiB"
+FreeRAM="${Mem[1]}MiB"
+SwapUsed="${Mem[2]}MiB"
+FreeSwap="${Mem[3]}MiB"
+RAMPerCPU=$(awk -v t="${Mem[0]}" -v c="$Sockets" 'BEGIN {printf("%dMiB", int(t / c + 0.5))}')
 
 #----Memory limit rounded to whole MiB. A value ending in "MB" is in units of 10^6 bytes,
 #----so it is converted (1 MB = 10^6/2^20 MiB), otherwise it is already in MiB.
@@ -302,58 +536,92 @@ if [[ -n "$MemLimit" ]]; then
     MemLimit=$(awk -v m="$MemLimit" -v f="$MemFactor" 'BEGIN {printf("%dMiB", int(m * f + 0.5))}')
 fi
 
-#----Operating system
-OS=$(uname -s -r)
+#----Operating system: distribution name, then kernel, e.g.
+#----"Ubuntu 24.04.5 LTS, Linux 6.8.0-151-generic". The distribution comes from
+#----PRETTY_NAME in /etc/os-release (or /usr/lib/os-release), read as text rather than
+#----sourced, then lsb_release, then /etc/redhat-release or similar. If none is found,
+#----only the kernel is reported.
+Kernel=$(uname -s -r)
+Distro=""
+for OSRelease in /etc/os-release /usr/lib/os-release; do
+    if [[ -r "$OSRelease" ]]; then
+        Distro=$(awk -F= '/^PRETTY_NAME=/ {v = substr($0, index($0, "=") + 1);
+            gsub(/^["\047]|["\047][ \t]*$/, "", v); print v; exit}' "$OSRelease")
+        if [[ -n "$Distro" ]]; then break; fi
+    fi
+done
+if [[ -z "$Distro" ]] && command -v lsb_release >/dev/null 2>&1; then
+    Distro=$(lsb_release -ds 2>/dev/null | head -n 1)
+    Distro="${Distro#\"}"
+    Distro="${Distro%\"}"
+fi
+if [[ -z "$Distro" ]]; then
+    for ReleaseFile in /etc/redhat-release /etc/centos-release /etc/SuSE-release /etc/alpine-release; do
+        if [[ -r "$ReleaseFile" ]]; then
+            Distro=$(head -n 1 "$ReleaseFile")
+            if [[ "$ReleaseFile" == /etc/alpine-release ]]; then Distro="Alpine Linux $Distro"; fi
+            break
+        fi
+    done
+fi
+if [[ -n "$Distro" ]]; then OS="$Distro, $Kernel"; else OS="$Kernel"; fi
 
 #----Current date and time, e.g. "Tue Nov  3 17:43:12 UTC 2026"
 DateTime=$(date '+%a %b %e %H:%M:%S %Z %Y')
 
-#----Idle CPUs, only measured if asked for because it takes a second
-SpareCPUs=""
+#----Idle CPUs, only measured if asked for because it takes a second.
+#----Counts idle ($5) + iowait ($6) as idle time and formats to 2 decimal places.
+FreeCPUs=""
 for Field in "${Fields[@]}"; do
-    if [[ "$Field" == "SpareCPUs" ]]; then
-        read -r -a Stat1 < <(awk '/^cpu / {print $2+$3+$4+$5+$6+$7+$8+$9, $3, $5; exit}' /proc/stat)
+    if [[ "${Field,,}" == "freecpus" ]]; then
+        if [[ ! -r /proc/stat ]]; then
+            echo "ERROR: Cannot read CPU statistics from /proc/stat" >&2
+            exit 1
+        fi
+        read -r -a Stat1 < <(awk '/^cpu / {print $2+$3+$4+$5+$6+$7+$8+$9, $5+$6; exit}' /proc/stat)
         sleep 1
-        read -r -a Stat2 < <(awk '/^cpu / {print $2+$3+$4+$5+$6+$7+$8+$9, $3, $5; exit}' /proc/stat)
-        SpareCPUs=$(awk -v t1="${Stat1[0]}" -v n1="${Stat1[1]}" -v i1="${Stat1[2]}" \
-                        -v t2="${Stat2[0]}" -v n2="${Stat2[1]}" -v i2="${Stat2[2]}" -v c="$TotalCPUs" \
-            'BEGIN {dt=t2-t1; if (dt<=0) {print c; exit}
-                    idle=100*(i2-i1)/dt + 100*(n2-n1)/dt/4; if (idle>100) idle=100;
-                    printf("%.15g\n", c*idle/100)}')
+        read -r -a Stat2 < <(awk '/^cpu / {print $2+$3+$4+$5+$6+$7+$8+$9, $5+$6; exit}' /proc/stat)
+        FreeCPUs=$(awk -v t1="${Stat1[0]}" -v i1="${Stat1[1]}" \
+                       -v t2="${Stat2[0]}" -v i2="${Stat2[1]}" -v c="$LogicalCPUs" \
+            'BEGIN {
+                dt = t2 - t1
+                if (dt <= 0) { printf("%.2f\n", c); exit }
+                idle = (i2 - i1) / dt
+                if (idle < 0) idle = 0
+                if (idle > 1) idle = 1
+                printf("%.2f\n", c * idle)
+            }')
         break
     fi
 done
 
 #----Print it out
 if (( PrettyPrint )); then
-    printf '%s%s%-8s : %s\n' "$Prefix" "$CommentPrefix" "Computer" "$FullName"
+    printf '%s%s%-8s : %s\n' "$TimeStamp" "$LinePrefix" "Computer" "$FullName"
 else
-    printf '%s%-20s => ' "$Prefix" "$FullName"
+    printf '%s%s%-20s => ' "$TimeStamp" "$LinePrefix" "$FullName"
 fi
 for Field in "${Fields[@]}"; do
     Value="NO INFORMATION"
     Label="$Field"
-    case "$Field" in
-        Model)     Value="$Model" ;;
-        CPUModel)  Value="$CPUModel"; Label="CPU" ;;
-        TotalCPUs) Value="$TotalCPUs" ;;
-        SpareCPUs) Value="$SpareCPUs" ;;
-        RAMPerCPU)
-            Label="Memory"
-            Value="$RAMPerCPU"
-            ;;
-        TotalRAM)  Value="$TotalRAM" ;;
-        FreeRAM)   Value="$FreeRAM" ;;
-        SwapInUse) Value="$SwapInUse" ;;
-        FreeSwap)  Value="$FreeSwap" ;;
-        OS)        Value="$OS" ;;
-        CPULimit)  Value="${CPULimit:-0}" ;;
-        WCLimit)   Value="${WCLimit:-0}" ;;
-        MemLimit)  Value="${MemLimit:-0MiB}" ;;
-        DateTime)  Value="$DateTime" ;;
+    case "${Field,,}" in
+        model)     Value="$Model"; Label="Model" ;;
+        cpumodel)  Value="$CPUModel"; Label="CPU" ;;
+        allcpus)   Value="$AllCPUs"; Label="AllCPUs" ;;
+        freecpus)  Value="$FreeCPUs"; Label="FreeCPUs" ;;
+        rampercpu) Value="$RAMPerCPU"; Label="Memory" ;;
+        totalram)  Value="$TotalRAM"; Label="TotalRAM" ;;
+        freeram)   Value="$FreeRAM"; Label="FreeRAM" ;;
+        swapused)  Value="$SwapUsed"; Label="SwapUsed" ;;
+        freeswap)  Value="$FreeSwap"; Label="FreeSwap" ;;
+        os)        Value="$OS"; Label="OS" ;;
+        cpulimit)  Value="${CPULimit:-0}"; Label="CPULimit" ;;
+        wclimit)   Value="${WCLimit:-0}"; Label="WCLimit" ;;
+        memlimit)  Value="${MemLimit:-0MiB}"; Label="MemLimit" ;;
+        datetime)  Value="$DateTime"; Label="DateTime" ;;
     esac
     if (( PrettyPrint )); then
-        printf '%s%s%-8s : %s\n' "$Prefix" "$CommentPrefix" "$Label" "$Value"
+        printf '%s%s%-8s : %s\n' "$TimeStamp" "$LinePrefix" "$Label" "$Value"
     else
         printf '%s; ' "$Value"
     fi

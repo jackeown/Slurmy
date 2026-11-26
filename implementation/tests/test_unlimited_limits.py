@@ -93,7 +93,7 @@ class UnlimitedLimitTests(unittest.TestCase):
     def test_real_updated_computer_report_uses_comments_and_optional_timestamps(self):
         program=Path(__file__).parent.parent/'tools/GetComputerInfo'
         for timestamp in (False,True):
-            result=subprocess.run(['bash',str(program),'-p','--cpu-limit','0','--wc-limit','0',
+            result=subprocess.run(['bash',str(program),'-p','--prefix','% ','--cpu-limit','0','--wc-limit','0',
                 '--mem-limit','0MiB',*(['--timestamp'] if timestamp else []),
                 'THIS','CPULimit','WCLimit','MemLimit'],capture_output=True,text=True,check=True,timeout=45)
             lines=result.stdout.splitlines()
@@ -103,3 +103,17 @@ class UnlimitedLimitTests(unittest.TestCase):
             self.assertIn('CPULimit : 0',result.stdout)
             self.assertIn('WCLimit  : 0',result.stdout)
             self.assertIn('MemLimit : 0MiB',result.stdout)
+
+    def test_computer_info_accepts_geoffs_invocation_with_options_after_fields(self):
+        program=Path(__file__).parent.parent/'tools/GetComputerInfo'
+        fields=['Model','CPUModel','RAMPerCPU','OS','CPULimit','WCLimit','MemLimit','DateTime']
+        result=subprocess.run(['bash',str(program),'-p','THIS',*fields,
+            '--prefix','% ','--cpu-limit','12','--wc-limit','34','--mem-limit','256MiB'],
+            capture_output=True,text=True,check=True,timeout=45)
+        lines=result.stdout.splitlines()
+        self.assertEqual(len(lines),9)
+        self.assertTrue(all(line.startswith('% ') for line in lines),result.stdout)
+        self.assertIn('CPULimit : 12',result.stdout)
+        self.assertIn('WCLimit  : 34',result.stdout)
+        self.assertIn('MemLimit : 256MiB',result.stdout)
+        self.assertNotIn('NO INFORMATION',result.stdout)
