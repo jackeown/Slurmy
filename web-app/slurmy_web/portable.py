@@ -123,6 +123,22 @@ def export_bundle(directory, host):
                 text = Path(row['problem']).read_text(encoding='utf-8', errors='replace')
                 text = re.sub(r'/\*.*?\*/|%[^\n]*', '', text, flags=re.S)
                 local_includes.extend(re.findall(r'''\binclude\s*\(\s*['"]([^'"]+)['"]''', text))
+    if host=='local' and local_includes:
+        from local_backend import settings as local_settings
+        from slurmy_archives import TPTP_DEFAULT_VERSION
+        collection=Path(local_settings()['tptp_root'])/TPTP_DEFAULT_VERSION
+        queue=list(local_includes);seen=set()
+        while queue:
+            include=queue.pop()
+            if include in seen:continue
+            seen.add(include);source=(collection/include).resolve()
+            if not source.is_relative_to(collection.resolve()) or not source.is_file():
+                raise ValueError('Local TPTP include is missing or escapes its collection: '+include)
+            relative=Path(include)
+            if relative.parts[0]=='Axioms':relative=Path(*relative.parts[1:])
+            paths.add(source);axioms.append(dict(source=str(source),relative=str(relative)))
+            queue.extend(re.findall(r"\binclude\s*\(\s*['\"]([^'\"]+)['\"]",source.read_text(errors='replace')))
+        local_includes=[]
     remote_roots = set()
     for problem in remote:
         root = tptp_collection_root(problem)

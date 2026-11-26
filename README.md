@@ -454,3 +454,14 @@ receive a unique suffix; existing download folders are never reused. The stable
 internal job ID still selects the remote results. Explicit output paths retain
 the existing behavior; relative paths resolve from your current directory. Debug downloads require rsync,
 just like the debug button in the interface.
+
+
+### Running on This Computer
+
+Clear the SSH host field to select **(local backend)**. A blank host (or `--host local` in the download CLI) uses native local execution, without SSH or SLURM. The local backend currently requires **Linux**, Bash, `taskset`, `setsid`, `timeout`, `tar`, `awk`, and `tee`; compiler/build-tool requirements depend on your chosen solvers. The included Linux runsolver handles per-pair CPU, wall-clock and memory limits.
+
+**Connection** configures the physical-core budget, memory budget, maximum concurrent batches, and local TPTP directory. That directory contains version folders such as `TPTP-v10.0.0`; ordinary local problem and axiom sources work too. Local workflows may leave axiom sources empty when their problems need no extra axioms.
+
+Prepare and dispatch builds configured resources locally, commits runtime/problem inputs to a separate job directory, and runs batches within the shared local budgets. Builds receive `MAKEFLAGS`, `CMAKE_BUILD_PARALLEL_LEVEL`, and `SLURM_CPUS_PER_TASK` as a compatibility variable; this does not invoke SLURM. Unchanged-source build reuse is supported. Batches run pairs sequentially; different batches can run in parallel. Other applications can still use the same hardware: Slurmy controls its own CPU affinity and admission budgets, without claiming OS-wide reservations.
+
+Local jobs use the same history, output inspection, postprocessing, batching inspection and download formats. Stop terminates active work and keeps finished results. Resume retries unfinished pairs from the job's committed inputs. Keep the computer awake; after a crash, an interrupted job is resumable. Local jobs and settings are stored under `web-app/.state/local-backend/`, separately from cluster jobs. Preparing again changes the next job, not jobs already dispatched. Switching back to a cluster requires preparing its submission again.

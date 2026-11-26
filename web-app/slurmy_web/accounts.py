@@ -12,6 +12,7 @@ TTL = 300
 
 
 def memberships(host):
+    if host=='local':return dict(accounts=['default'],selected='default',cached=False)
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', host):
         raise ValueError('Invalid SSH host.')
     with _lock:

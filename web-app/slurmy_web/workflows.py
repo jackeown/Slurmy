@@ -237,7 +237,7 @@ def specification(data, destination_override=None, progress=None):
     if destination_override is None and destination.exists():
         raise ValueError(f'Workflow already exists: {destination}')
     from flask import has_request_context, request
-    selected_host=(request.args.get('host') or os.environ.get('SLURMY_HOST','datalab')) if has_request_context() else data.get('host') or os.environ.get('SLURMY_HOST','datalab')
+    selected_host=(request.args.get('host') or 'local') if has_request_context() and 'host' in request.args else data.get('host') or os.environ.get('SLURMY_HOST','datalab')
     host, partition = alias(selected_host), alias(data.get('partition'))
     data['host']=host
     reservation = alias(data['reservation'].strip()) if data.get('reservation', '').strip() else ''
@@ -315,7 +315,7 @@ def specification(data, destination_override=None, progress=None):
         check_requested(host, partition, maximum)
     rows = order_jobpairs(rows, pair_order)
     axiom_patterns = []
-    if data.get('axiom_mode') == 'custom' and not data.get('axiom_globs'):
+    if host!='local' and data.get('axiom_mode') == 'custom' and not data.get('axiom_globs'):
         raise ValueError('Add at least one axiom source, such as the default cluster TPTP glob.')
     for value in data.get('axiom_globs', []):
         if not isinstance(value, str) or not value.strip():

@@ -28,7 +28,7 @@
     <a href="{{ url_for('new', host=host) }}" {% if request.path == '/new' %}aria-current="page"{% endif %}>＋ <span>New Workflow</span></a>
     <a href="{{ url_for('workflow_list', host=host) }}" {% if request.path.startswith('/workflow') %}aria-current="page"{% endif %}>▤ <span>Workflows</span></a>
     <a href="{{ url_for('index', host=host) }}" {% if request.path == '/' or request.path.startswith('/jobs/') %}aria-current="page"{% endif %}>◫ <span>Job History</span></a>
-    <a href="{{ url_for('cluster_page', host=host) }}" {% if request.path == '/cluster' %}aria-current="page"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="5" rx="1.2"/><rect x="3" y="10" width="18" height="5" rx="1.2"/><rect x="3" y="17" width="18" height="5" rx="1.2"/><circle cx="6.5" cy="5.5" r="0.7" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r="0.7" fill="currentColor" stroke="none"/><circle cx="6.5" cy="19.5" r="0.7" fill="currentColor" stroke="none"/><path d="M10 5.5h8m-8 7h8m-8 7h8"/></svg><span>Cluster Status</span></a>
+    <a href="{{ url_for('cluster_page', host=host) }}" {% if request.path == '/cluster' %}aria-current="page"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="5" rx="1.2"/><rect x="3" y="10" width="18" height="5" rx="1.2"/><rect x="3" y="17" width="18" height="5" rx="1.2"/><circle cx="6.5" cy="5.5" r="0.7" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r="0.7" fill="currentColor" stroke="none"/><circle cx="6.5" cy="19.5" r="0.7" fill="currentColor" stroke="none"/><path d="M10 5.5h8m-8 7h8m-8 7h8"/></svg><span>{{ 'Local Status' if host == 'local' else 'Cluster Status' }}</span></a>
   </nav>
   <div class="sidebar-footer">
   <a class="sidebar-footer-link" href="{{ url_for('about', host=host) }}"{% if request.path == '/about' %} aria-current="page"{% endif %}><img src="/logo.svg" alt="" width="18" height="18"><span>About</span></a>
@@ -60,15 +60,25 @@
 <main>
   <header class="topbar"><div class="topbar-title">{% block page_heading %}<h1>Slurmy</h1>{% endblock %}</div>
     <button id="connection-toggle" class="secondary" type="button" popovertarget="connection-settings" title="Scheduler connection settings">Connection ▾</button>
-    <form id="host-form"><label for="host">SSH host</label><input id="host" name="host" value="{{ host }}" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]*"><button class="secondary">Connect</button></form>
+    <form id="host-form"><label for="host">SSH host</label><input id="host" name="host" value="{{ '' if host == 'local' else host }}" placeholder="(local backend)" pattern="[A-Za-z0-9][A-Za-z0-9_.-]*"><button class="secondary">Connect</button></form>
   </header>
   <div id="connection-settings" popover role="dialog" aria-labelledby="connection-title" class="connection-settings">
-    <div class="section-heading"><h2 id="connection-title">Cluster Connection</h2><button type="button" class="secondary" popovertarget="connection-settings" popovertargetaction="hide">Close</button></div>
+    <div class="section-heading"><h2 id="connection-title">{{ 'Local Execution' if host == 'local' else 'Cluster Connection' }}</h2><button type="button" class="secondary" popovertarget="connection-settings" popovertargetaction="hide">Close</button></div>
+    <div id="connection-cluster-fields"{% if host == 'local' %} hidden{% endif %}>
     <p class="muted">Settings for <strong id="connection-host"></strong>. File transfers, builds and historical accounting still use this SSH host.</p>
     <label>Live scheduler operations<select id="connection-mode"><option value="ssh">SSH commands</option><option value="rest">SLURM REST API</option></select></label>
     <div id="connection-api-fields"><label>API server URL (including port)<input id="connection-url" type="url" placeholder="http://slurmapi.datalab.tuwien.ac.at:6820"></label><label>API version<input id="connection-version" value="v0.0.40"></label></div>
     <p class="muted">REST uses HTTP requests for live scheduler status, topology checks, batch submission and cancellation. Slurmy obtains a short-lived token through SSH and renews it when needed. Tokens stay in local server memory and are never sent to your browser. Datalab’s HTTP address requires your trusted cluster network/VPN.</p>
     <p class="muted">Submission waits on this computer between short waves. Keep the local server running and the computer awake until all batches are accepted. Already submitted SLURM tasks continue if you disconnect.</p>
+    </div>
+    <div id="connection-local-fields"{% if host != 'local' %} hidden{% endif %}>
+      <p>Runs on this computer without SSH or SLURM. Keep this computer awake while jobs run. Native execution currently requires Linux.</p>
+      <label>Physical cores available to Slurmy<input id="local-max-cores" type="number" min="1" step="1"></label>
+      <label>Maximum concurrent batches<input id="local-max-batches" type="number" min="1" step="1"></label>
+      <label>Memory budget (MiB)<input id="local-memory" type="number" min="1" step="1"></label>
+      <label>Local TPTP directory<input id="local-tptp-root" placeholder="/home/you/TPTP"><small>Contains version folders such as TPTP-v10.0.0. You can also use ordinary local problem and axiom sources.</small></label>
+      <p class="muted">CPU and memory budgets are shared across local Slurmy jobs. Dedicated cluster CPU/node settings reserve the full local Slurmy CPU budget. Other applications can still use this computer; local execution cannot reserve hardware against them.</p>
+    </div>
     <p id="connection-status" role="status"></p><div class="tools"><button id="connection-save" type="button">Save connection</button><button id="connection-test" class="secondary" type="button">Test saved connection</button></div>
   </div>
   <div class="page">{% block content %}{% endblock %}</div>

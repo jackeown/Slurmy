@@ -56,11 +56,11 @@ if(['job','workflow'].includes(document.body.dataset.page)&&document.querySelect
     const title=el('span',`Batch ${batch.id}`),progress=el('span',prepared?`${batch.total} solver-problem pairs · Prepared`:`${batch.finished} / ${batch.total} finished${batch.state==='Finished'?'':' · '+batch.state}`,'muted');summary.append(title,progress);
     const timings=el('span',undefined,'batch-timings');
     const formatTime=value=>value?value.replace('T',' '):'Not recorded';
-    const scheduled=el('span',`Scheduled: ${formatTime(batch.scheduled)}`);scheduled.title='Time SLURM accepted this batch (Submit time). SSH timestamps are in cluster time; REST timestamps include their UTC offset.';
+    const scheduled=el('span',`Scheduled: ${formatTime(batch.scheduled)}`);scheduled.title=host==='local'?'Time this local job was dispatched.':'Time SLURM accepted this batch (Submit time). SSH timestamps are in cluster time; REST timestamps include their UTC offset.';
     const started=el('span',`Started: ${batch.started?formatTime(batch.started):['Pending','Not submitted'].includes(batch.state)?'Not started':'Not recorded'}`);
     if(!prepared){timings.append(scheduled,started);summary.append(timings);}
     const names=el('p',batch.solvers.length?`Solver configurations in this batch: ${batch.solvers.join(', ')}`:'Solver configurations unavailable','muted');
-    if(batch.slurm_id)names.append(document.createTextNode(` · SLURM ${batch.slurm_id}${batch.node?' · '+batch.node:''}`));
+    if(batch.slurm_id)names.append(document.createTextNode(` · ${host==='local'?'Process':'SLURM'} ${batch.slurm_id}${batch.node?' · '+batch.node:''}`));
     details.append(summary,names,content);details.addEventListener('toggle',()=>{if(details.open)loadPairs(details,content,batch,expanded.get(batch.id)||0);else expanded.delete(batch.id);});
     if(expanded.has(batch.id))details.open=true;children.push(details);
    }

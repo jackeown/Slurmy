@@ -219,6 +219,10 @@ def unfinished_call(job, task_id, progress, batch_records=None):
     """Explain a missing result using this solver-problem pair's actual SLURM batch."""
     if job.submission_state == 'stopped':
         return 'stopped', 'After resume', 'This job was stopped. Resume it to run this unfinished solver-problem pair.', ''
+    if job.metadata.get('backend')=='local':
+        if job.controller_state=='active':
+            return ('running','Now','Running on this computer.','') if progress and progress.state in {'running','postprocessing'} else ('queued','Yes','Waiting for local CPU and memory capacity, or for the preceding pair in its batch.','')
+        return 'not running','After resume','Resume this local job to retry unfinished solver-problem pairs.',''
     batch_id = job.task_batches.get(task_id)
     if batch_id is None and progress:
         batch_id = progress.batch_id
@@ -479,17 +483,17 @@ def create_app():
             code, message = 500, 'Unexpected error. See web-app/.state/server.log.'
         if request.path.startswith('/api/'):
             return jsonify(error=message), code
-        selected_host = request.args.get('host') or os.environ.get('SLURMY_HOST', 'datalab')
+        selected_host = (request.args.get('host') or 'local') if 'host' in request.args else os.environ.get('SLURMY_HOST', 'datalab')
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', selected_host):
             selected_host = 'datalab'
         session.setdefault('csrf', secrets.token_hex(32))
         return render_template('error.html', message=message, host=selected_host, csrf=session['csrf']), code
 
     def host():
-        return workflows.alias(request.args.get('host') or os.environ.get('SLURMY_HOST', 'datalab'))
+        return workflows.alias((request.args.get('host') or 'local') if 'host' in request.args else os.environ.get('SLURMY_HOST', 'datalab'))
 
     def consider_recovery(value, selected_host):
-        if request.method != 'GET' or app.config.get('SHUTTING_DOWN'):
+        if selected_host=='local' or request.method != 'GET' or app.config.get('SHUTTING_DOWN'):
             return
         with guard:
             busy = {scope for op in operations.values() if op['state'] == 'running' for scope in (op['scope'], op['operation_host']+':'+str(op.get('job_id', '')))}
@@ -520,7 +524,7 @@ def create_app():
         key = (selected_host, detail)
         previous_value = cache.peek(key)
         previous = previous_value.find_job(detail) if previous_value and detail else None
-        ttl = 30 if detail is None or (previous and previous.task_count > 10000) else 10
+        ttl = 1 if selected_host=='local' else 30 if detail is None or (previous and previous.task_count > 10000) else 10
         def load():
             # Background workers need their own request context for host selection
             # and automatic-recovery operations; no browser request is kept open.
@@ -598,6 +602,9 @@ def create_app():
 
     @app.get('/api/connection')
     def connection_settings():
+        if host()=='local':
+            from local_backend import settings
+            return jsonify(settings())
         return jsonify(slurm_api.settings(host()))
 
     @app.post('/api/connection')
@@ -605,7 +612,11 @@ def create_app():
         with guard:
             if any(op['state'] == 'running' for op in operations.values()):
                 raise ValueError('Wait for current operations to finish before changing the scheduler connection.')
-        value = slurm_api.save_settings(host(), request.get_json() or {})
+        if host()=='local':
+            from local_backend import save_settings
+            value=save_settings(request.get_json() or {})
+        else:
+            value = slurm_api.save_settings(host(), request.get_json() or {})
         with guard:
             cluster_cache.clear()
             cache.invalidate()
@@ -613,6 +624,10 @@ def create_app():
 
     @app.post('/api/connection/test')
     def test_connection_settings():
+        if host()=='local':
+            from local_backend import require_tools
+            require_tools()
+            return jsonify(message='Local backend ready. No SSH or SLURM is used.')
         if not slurm_api.enabled(host()):
             result = subprocess.run(['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host(), 'true'], capture_output=True, timeout=20)
             if result.returncode:
@@ -632,10 +647,22 @@ def create_app():
 
     @app.get('/cluster')
     def cluster_page():
-        return page('cluster.html')
+        return page('local_status.html') if host()=='local' else page('cluster.html')
+
+    @app.get('/api/local-status')
+    def local_status():
+        from local_backend import jobs,job_path,read_json,alive,settings
+        value=settings();tasks=[]
+        for job in jobs():
+            directory=job_path(job['id'])
+            if not alive(read_json(directory/'controller.json')):continue
+            for batch,state in read_json(directory/'local-state.json').get('active',{}).items():
+                tasks.append(dict(id=job['id'],name=job['name'],batch=batch,cores=state['cores'],memory=state['memory']))
+        return jsonify(**value,tasks=tasks,running=len(tasks),allocated_cores=len({core for task in tasks for core in task['cores']}))
 
     @app.get('/api/cluster')
     def cluster_status():
+        if host()=='local':return local_status()
         partition = request.args.get('partition', 'CPU-amd')
         key = (host(), partition)
         with guard:
@@ -651,6 +678,7 @@ def create_app():
 
     @app.get('/api/cluster/node')
     def cluster_node_jobs():
+        if host()=='local':return jsonify(node=__import__('platform').node(),partition='local',updated=time.time(),jobs=[])
         partition = request.args.get('partition', 'CPU-amd')
         node = request.args.get('node', '')
         value = app.config.get('CLUSTER_NODE_COLLECTOR', fetch_status)(
@@ -862,6 +890,12 @@ def create_app():
                    (op['scope'] == host() + ':' + job_id or op.get('job_id') == job_id)
                    for op in operations.values()):
                 abort(409, 'Wait for the active job operation to finish before renaming it.')
+        if host()=='local':
+            from local_backend import job_path,read_json,atomic_json
+            metadata=read_json(job_path(job_id)/'metadata.json');metadata['job_name']=name
+            atomic_json(job_path(job_id)/'metadata.json',metadata)
+            cache.invalidate()
+            return jsonify(id=job_id,name=name,warning='')
         new_id = renamed_job_id(job_id, name)
         local_old = REPO / 'job-results' / job_id
         local_new = REPO / 'job-results' / new_id
@@ -1507,6 +1541,14 @@ def create_app():
             raise ValueError('Unknown workflow action.')
         environment = workflow_environment({**os.environ, 'SLURMY_HOST': host(), 'SLURMY_PYTHON': sys.executable,
                        'PATH': str(Path(sys.executable).parent) + os.pathsep + os.environ.get('PATH', '')})
+        if host()=='local':
+            target='prepare' if action in {'all','prepare'} else action
+            command='dispatch' if target=='submit' else target
+            argv=[sys.executable,str(REPO/'implementation/local_backend.py'),command,str(path)]
+            requested_name=display_name(data['name']) if command!='prepare' and data.get('name','').strip() else None
+            if requested_name:argv+=['--name',requested_name]
+            label={'prepare':'prepare local batches','prepare-submit':'prepare and dispatch SLURM job','dispatch':'dispatch prepared SLURM job'}[command]
+            return operation(argv,path,environment,label,str(path),requested_name)
         missing = [tool for tool in ('make', 'bash', 'ssh', 'scp', 'tar')
                    if shutil.which(tool) is None]
         if missing:
@@ -1518,6 +1560,8 @@ def create_app():
                  'prepare-submit': 'prepare and dispatch SLURM job',
                  'submit': 'dispatch prepared SLURM job'}[target]
         requested_name = display_name(data['name']) if target != 'prepare' and data.get('name', '').strip() else None
+        if target=='submit' and (path/'submit.sh.files/metadata.json').is_file() and json.loads((path/'submit.sh.files/metadata.json').read_text()).get('backend')=='local':
+            raise ValueError('These batches were prepared for the local backend. Use Prepare & dispatch job to prepare them for the cluster.')
         if target == 'submit' and not (path/'submit.sh.files/local_dispatch.py').is_file():
             raise ValueError('Prepared submission files use an archived submitter. Use Prepare & dispatch job to refresh them.')
         if requested_name and target == 'submit' and (path / 'submit.sh').is_file() and \
@@ -1550,6 +1594,11 @@ def create_app():
                     data['action'], safe_job(job_id), '--host', host()]
         elif data.get('action') == 'cancel':
             slurm_id = str(data.get('slurm_id', ''))
+            if host()=='local':
+                valid={record.display_id for record in job.active_records}
+                if slurm_id not in valid:raise ValueError('Choose an active local batch.')
+                argv=[sys.executable,str(REPO/'implementation/local_backend.py'),'cancel-batch',job_id,slurm_id.rsplit('_',1)[-1]]
+                return operation(argv,REPO,{**os.environ,'SLURMY_HOST':'local'},'cancel','local:'+job_id)
             valid = {r.array_job_id for r in job.active_records}
             if slurm_id not in valid or not slurm_id.isdigit():
                 raise ValueError('Choose an active SLURM ID from this job.')
@@ -1628,6 +1677,7 @@ def create_app():
                   'stop': 'Stop job', 'resume': 'Resume unfinished solver-problem pairs',
                   'delete': 'Stop and delete job', 'cancel': 'Cancel SLURM task'}.get(op['label'])
                  or submission_phase(content))
+        if op.get('operation_host')=='local':phase=phase.replace('SLURM','local')
         return jsonify(**op, log=content, phase='Automatically resuming idle job' if op.get('automatic') else phase)
 
     @app.get('/api/workflow/active-operation')

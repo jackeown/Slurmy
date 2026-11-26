@@ -16,6 +16,10 @@ class Topology(list):
 
 
 def partition_nodes(host, partition, account=''):
+    if host=='local':
+        from local_backend import topology,settings
+        node=topology();node.update(sockets=1,cores_per_socket=settings()['max_cores'])
+        return Topology([node],active_tasks=0,submit_limit=None)
     host, partition = workflows.alias(host), workflows.alias(partition)
     import slurm_api
     submit_limit = slurm_api.account_limit(host, account, partition)

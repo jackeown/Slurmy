@@ -94,6 +94,8 @@ def local_policy(partition, account='', partition_info=None):
 
 
 def query_remote(host, partition, account=''):
+    if host=='local':
+        return dict(limit_seconds=None,partition_limit_seconds=None,source='local backend',account='',warnings=[])
     """Editor-only short cache; actual submissions always query on the cluster."""
     from ssh_transport import connection_options
     import shlex

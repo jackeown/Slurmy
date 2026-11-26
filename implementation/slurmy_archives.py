@@ -91,6 +91,16 @@ else:
             for path in files: sys.stdout.buffer.write(path.encode() + b'\0')
     if mode in {'globs','axiom_globs'}: print(json.dumps(matches))
 '''
+    if host == 'local':
+        from local_backend import settings
+        local_root = Path(settings()['tptp_root'])
+        if not local_root.is_dir():
+            raise ValueError('Local TPTP directory is missing. Set it in Connection, or browse local problem/axiom files.')
+        arguments = ['python3','-',str(local_root),base64.b64encode(relative.encode()).decode() or '-',
+                     'browse' if browse else ('axiom_globs' if grouped else 'axioms') if axioms else 'globs' if grouped else 'glob']
+        result = subprocess.run(arguments,input=script.encode(),capture_output=True,timeout=120)
+        if result.returncode:raise ValueError(result.stderr.decode(errors='replace').strip())
+        return result.stdout
     try:
         result = subprocess.run(['ssh', *connection_options(), '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host,
                                  'python3', '-', TPTP_ROOT, base64.b64encode(relative.encode()).decode() or '-',
@@ -114,7 +124,7 @@ def expand_cluster_tptp(pattern: str, host: str) -> list[str]:
     relative = tptp_relative(pattern)
     if not relative:
         raise ValueError('Select a TPTP version and Problems glob.')
-    files = ['tptp:' + path.decode() for path in remote_tptp(host, relative).split(b'\0') if path]
+    files = [('' if host=='local' else 'tptp:') + path.decode() for path in remote_tptp(host, relative).split(b'\0') if path]
     if not files:
         raise ValueError(f'No TPTP problems matched {pattern} on {host}.')
     return files
@@ -130,7 +140,7 @@ def expand_cluster_tptp_many(patterns: list[str], host: str) -> dict[str, list[s
     matches=json.loads(remote_tptp(host,json.dumps(relative),grouped=True))
     result={}
     for pattern,key in zip(unique,relative):
-        files=['tptp:'+name for name in matches.get(key,[])]
+        files=[('' if host=='local' else 'tptp:')+name for name in matches.get(key,[])]
         if not files:raise ValueError(f'No TPTP problems matched {pattern} on {host}.')
         result[pattern]=files
     return result
@@ -145,7 +155,7 @@ def expand_axiom_source(pattern: str, host: str = 'datalab', materialize=True, p
     paths = [Path(value.decode()) for value in remote_tptp(host, relative, axioms=True).split(b'\0') if value]
     if not paths:
         raise ValueError(f'No TPTP axioms matched {pattern} on {host}.')
-    return [(Path('tptp:'+str(path)), Path(*path.parts[path.parts.index('Axioms')+1:])) for path in paths]
+    return [(path if host=='local' else Path('tptp:'+str(path)), Path(*path.parts[path.parts.index('Axioms')+1:])) for path in paths]
 
 
 def is_archive(path: Path) -> bool:

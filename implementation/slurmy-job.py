@@ -24,12 +24,20 @@ def main():
     parser.add_argument('--delete-local', action='store_true')
     parser.add_argument('--if-idle', action='store_true', help='resume only if no controller or SLURM tasks remain')
     args = parser.parse_args()
+    args.host=args.host or 'local'
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', args.job_id):
         parser.error('Invalid Slurmy job ID.')
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', args.host):
         parser.error('Invalid SSH host alias.')
     if args.if_idle and args.action != 'resume':
         parser.error('--if-idle is only valid with resume')
+    if args.host=='local':
+        from local_backend import action
+        action(args.action,args.job_id)
+        if args.action=='delete' and args.delete_local:
+            for directory in snapshots(Path(__file__).resolve().parent.parent/'job-results','local',args.job_id):
+                __import__('shutil').rmtree(directory)
+        return 0
     templates = Path(__file__).with_name('templates')
     local_paths = [Path(__file__).resolve().parent.parent / 'job-results' / args.job_id,
                    Path(__file__).resolve().parent.parent / 'job-results' / 'verbose' / args.job_id,

@@ -13,6 +13,12 @@ import sys
 
 
 def rest_nodes(host, partition):
+    if host=='local':
+        from local_backend import topology
+        value=topology()
+        from local_backend import settings
+        value.update(sockets=1,cores_per_socket=settings()['max_cores'])
+        return [value]
     if not slurm_api.enabled(host):return None
     try:
         return slurm_api.partition_nodes(host,partition)
@@ -23,6 +29,9 @@ def rest_nodes(host, partition):
 
 
 def dedicated_core_topology(host, partition):
+    if host=='local':
+        from local_backend import settings
+        return 1,settings()['max_cores']
     for value in (host, partition):
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', value):
             raise ValueError('Invalid cluster host or partition.')

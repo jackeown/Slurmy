@@ -77,6 +77,7 @@ class Job:
 
 def _settings(host, ssh_timeout):
     host = host if host is not None else os.environ.get('SLURMY_HOST', 'datalab')
+    if host=='':host='local'
     if not isinstance(host,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*',host):
         raise ValueError('Use an SSH host alias containing letters, numbers, dots, underscores or hyphens.')
     timeout=float(ssh_timeout)
@@ -88,6 +89,10 @@ def _settings(host, ssh_timeout):
 def list_jobs(*, host=None, ssh_timeout=10) -> list[Job]:
     """Read available jobs in descending original-dispatch order."""
     host,timeout=_settings(host,ssh_timeout)
+    if host=='local':
+        sys.path.insert(0,str(ROOT/'implementation'))
+        from local_backend import jobs as local_jobs
+        return [Job(item['id'],item['name'],item['submitted']) for item in local_jobs()]
     result=subprocess.run(['ssh',*connection_options(),'-T','-o','BatchMode=yes',
         '-o',f'ConnectTimeout={max(1,int(timeout))}','--',host,
         shlex.join(['env','-u','BASH_ENV','-u','ENV','python3','-'])],
@@ -240,7 +245,7 @@ def build_parser():
     selection.add_argument('--interactive',action='store_true',help='pick the mode and job from Rich lists')
     parser.add_argument('--incremental',action='store_true',help='export only newly completed results (not available in debug mode)')
     parser.add_argument('--mode',choices=MODES,default='default',help='download format (default: default)')
-    parser.add_argument('--host',default=os.environ.get('SLURMY_HOST','datalab'),help='SSH alias (default: $SLURMY_HOST or datalab)')
+    parser.add_argument('--host',default=os.environ.get('SLURMY_HOST','datalab'),help='SSH alias, or local for this computer (default: $SLURMY_HOST or datalab)')
     parser.add_argument('--output',type=Path,help='destination directory (relative paths use the current directory)')
     parser.add_argument('--ssh-timeout',type=float,default=10,help='SSH connection timeout in seconds (default: 10)')
     return parser

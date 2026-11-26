@@ -151,6 +151,7 @@ if(document.body.dataset.page==='new'){
  }
  function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field){if(field.type==='checkbox')field.checked=value===true;else if(name==='cores')setCoreRequest(field,value??'1');else field.value=name==='problem_selection'&&Array.isArray(value)?value.join('\n'):name.startsWith('omit_')?String(value||false).toLowerCase():(value??'');field.refreshShell?.();}}if(node.matches('.glob-row'))initializeProblemNames(node,values);if(node.matches('.configuration')){initializePostprocessor(node,values);configurationTitle(node);updateSolverStatus(node);queueMicrotask(()=>validateSolverCommand(node));queueMicrotask(()=>validatePostprocessor(node));queueMicrotask(()=>validateEnvironment(node));queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}}
  fill($('#workflow-postprocessing'),Object.fromEntries(Object.entries(initial.postprocessor||{mode:'default',timeout:30}).map(([key,value])=>['workflow_postprocessor_'+key,value])));
+ if(document.body.dataset.host==='local'){for(const name of ['partition','reservation','account','max_outstanding'])form.querySelector(`[name="${name}"]`)?.closest('label')?.setAttribute('hidden','');for(const button of form.querySelectorAll('[data-browse-tptp]'))button.textContent='Browse local TPTP…';}
  for(const name of ['name','partition','account','reservation','batch_size','max_outstanding','pair_order','mode','jobpairs','configurations_file','limiter_mode','limiter_file','limiter']){const field=form.querySelector(`[name="${name}"]`);if(field&&initial[name]!==undefined)field.value=initial[name];}
  $('[name="get_computer_info"]').checked=initial.get_computer_info!==false;
  const accountField=$('#slurm-account-field'),accountSelect=form.querySelector('[name="account"]'),accountLoading=$('#slurm-account-loading'),accountStatus=$('#slurm-account-status'),accountRetry=$('#slurm-account-retry');
@@ -178,7 +179,7 @@ if(document.body.dataset.page==='new'){
  if(!editing&&!initial.limiter){$('[name="limiter_mode"]').value='inline';$('[name="limiter"]').value=`${repoRoot}/implementation/build/runsolver/runsolver --cpu-limit {{cpu_limit}} --wall-clock-limit {{wc_limit}} --rss-swap-limit {{mem_limit_mib}} --timestamp --add-eof --watcher-data {{watcher_log}} --var {{var_file}} --solver-data {{solver_log}} {{solver_command}}`;}
  for(const values of initial.configurations||[]){const card=add('configuration-template','configurations');fill(card,{...values,solver_name:values.solver_name||values.command?.trim().split(/\s+/)[0]?.split('/').pop()||''});const resource=(initial.resources||[]).find(item=>item.role==='solver'&&item.root===values.solver_directory);if(resource)fill(card,{build_mode:resource.mode,build_source:resource.source,build_script:resource.script,build_policy:resource.build_policy||'always'});}
  const globs=initial.globs?.length?initial.globs:[];for(const [index,value] of globs.entries())fill(add('glob-template','globs'),value===null?null:{glob:value,problem_selection:initial.problem_selections?.[index]||'',problem_selection_mode:initial.problem_selection_modes?.[index],problem_selection_files:initial.problem_selection_files?.[index]});
- for(const value of initial.axiom_globs?.length?initial.axiom_globs:[`tptp://${document.body.dataset.tptpVersion}/Axioms/**/*.ax`])fill(add('axiom-glob-template','axiom-globs'),{axiom_glob:value});
+ for(const value of initial.axiom_globs?.length?initial.axiom_globs:document.body.dataset.host==='local'?[]:[`tptp://${document.body.dataset.tptpVersion}/Axioms/**/*.ax`])fill(add('axiom-glob-template','axiom-globs'),{axiom_glob:value});
  let limiterLoaded=false;
  for(const values of initial.resources||[])if(values.role==='limiter'){if(!limiterLoaded){addResource('limiter',values);limiterLoaded=true;}}else if(initial.mode!=='interactive')addResource('solver',values);
  const copyDialog=$('#copy-configuration-dialog'),copyWorkflow=$('#copy-workflow'),copySolver=$('#copy-solver'),copyPreview=$('#copy-configuration-preview'),copyConfirm=$('#confirm-copy-configuration');
@@ -254,7 +255,7 @@ if(document.body.dataset.page==='new'){
   if(directory===pendingDirectory)return;pendingDirectory=directory;
   const request=++browseRequest;const remote=remoteBrowser,selectedHost=rootValue('host');
   $('#path-items').replaceChildren();$('#path-select-directory').disabled=true;$('#path-parent').disabled=true;text('#path-help',remote?'Loading cluster directories…':'Loading local directories…');
-  $('#path-browser h2').textContent=remoteBrowser?`Choose Cluster TPTP ${pickedInput?.name==='axiom_glob'?'Axioms':'Problems'} (${rootValue('host')})`:'Choose a Local Path';$('#path-select-directory').textContent=remoteBrowser?'Use this directory as a glob':'Choose this directory';
+  $('#path-browser h2').textContent=remoteBrowser?`Choose ${rootValue('host')==='local'?'Local':'Cluster'} TPTP ${pickedInput?.name==='axiom_glob'?'Axioms':'Problems'} (${rootValue('host')})`:'Choose a Local Path';$('#path-select-directory').textContent=remoteBrowser?'Use this directory as a glob':'Choose this directory';
   try{if(!remote&&directory.startsWith('tptp://'))throw new Error('This browser shows local files. Use Browse cluster TPTP for tptp:// paths.');
    const data=await api(remote?'/api/browse-tptp':'/api/browse-path',{directory,host:selectedHost});if(request!==browseRequest)return;pickerDirectory=data.directory;if(remote)remoteDirectories.set(selectedHost+':'+pickedInput?.name,pickerDirectory);else{localDirectory=pickerDirectory;try{localStorage.setItem(browserLocationKey,localDirectory);}catch{}}$('#path-select-directory').disabled=remote&&pickerDirectory==='tptp://';$('#path-parent').disabled=false;$('#path-location').value=data.directory;const ancestors=$('#path-ancestors');ancestors.replaceChildren();let current=data.directory;while(true){const ancestor=current;ancestors.append(button(ancestor,()=>{closeAncestors();browse(ancestor);},'path-ancestor'));if(current===(remoteBrowser?'tptp://':'/'))break;current=remoteBrowser?(current.slice(8).includes('/')?current.replace(/\/[^/]+$/,''):'tptp://'):(current.replace(/\/[^/]+$/,'')||'/');}closeAncestors();const items=$('#path-items');items.replaceChildren();
    for(const item of data.items){const selectable=item.directory||['file','glob','build-script'].includes(pickedInput?.dataset.path);const row=button(`${item.directory?'📁':'📄'}  ${item.name}`,()=>{if(item.directory)browse(item.path);else if(selectable){if(pickedInput.dataset.path==='build-script'){const first=pickedInput.value.match(/^(?:'[^']*'|"[^"]*"|\S+)/)?.[0]||'';const rest=pickedInput.value.slice(first.length);pickedInput.value="'"+item.path.replace(/'/g,"'\\''")+"'"+rest;}else pickedInput.value=item.path;picker.close();if(pickedPathCallback){const callback=pickedPathCallback;pickedPathCallback=null;callback(item.path);}else validatePath(pickedInput);}},'path-item');row.disabled=!selectable;items.append(row);}
@@ -273,7 +274,7 @@ if(document.body.dataset.page==='new'){
    if(input.dataset.path==='build-script'){const word=current.match(/^(?:'([^']*)'|"([^"]*)"|(\S+))/);start=(word?.slice(1).find(Boolean)||'').replace(/\/[^/]*$/,'');}
    if(input.dataset.path==='file')start=current.replace(/\/[^/]*$/,'');
    $('#path-select-directory').hidden=['file','build-script'].includes(input.dataset.path);picker.showModal();browse((current!==input.placeholder&&start.startsWith('/')?start:'')||localDirectory);},'secondary path-browse');
-   const row=el('div',undefined,'path-input-row');input.replaceWith(row);row.append(input,choose);if(['glob','axiom_glob'].includes(input.name))row.append(button('Browse cluster TPTP…',()=>{pickedInput=input;remoteBrowser=true;$('#path-select-directory').hidden=false;picker.showModal();const value=input.value.trim();const prefix=value.startsWith('tptp://')?value.split(/[?*\[]/,1)[0].replace(/\/$/,''):'';const start=prefix&&prefix!=='tptp:/'?(prefix.endsWith('.p')||prefix.endsWith('.tptp')||prefix.endsWith('.ax')?prefix.replace(/\/[^/]*$/,''):prefix):'';browse(start||remoteDirectories.get(rootValue('host')+':'+input.name)||`tptp://${document.body.dataset.tptpVersion}/${input.name==='axiom_glob'?'Axioms':'Problems'}`);},'secondary path-browse'));
+   const row=el('div',undefined,'path-input-row');input.replaceWith(row);row.append(input,choose);if(['glob','axiom_glob'].includes(input.name))row.append(button(rootValue('host')==='local'?'Browse local TPTP…':'Browse cluster TPTP…',()=>{pickedInput=input;remoteBrowser=true;$('#path-select-directory').hidden=false;picker.showModal();const value=input.value.trim();const prefix=value.startsWith('tptp://')?value.split(/[?*\[]/,1)[0].replace(/\/$/,''):'';const start=prefix&&prefix!=='tptp:/'?(prefix.endsWith('.p')||prefix.endsWith('.tptp')||prefix.endsWith('.ax')?prefix.replace(/\/[^/]*$/,''):prefix):'';browse(start||remoteDirectories.get(rootValue('host')+':'+input.name)||`tptp://${document.body.dataset.tptpVersion}/${input.name==='axiom_glob'?'Axioms':'Problems'}`);},'secondary path-browse'));
  });}
  setupBrowsers(form);
  picker.addEventListener('close',()=>{++browseRequest;pendingDirectory=null;pickedPathCallback=null;});
@@ -312,7 +313,7 @@ if(document.body.dataset.page==='new'){
   const mode=rootValue('mode');const problems=[...document.querySelectorAll('[name="glob"]')];
   const inputsReady=mode==='jobpairs'||(problems.length>0&&problems.every(ready));
   const axioms=[...document.querySelectorAll('[name="axiom_glob"]')];
-  const axiomsReady=axioms.length>0&&axioms.every(ready);
+  const axiomsReady=(axioms.length>0||rootValue('host')==='local')&&axioms.every(ready);
   for(const [id,valid,label] of [
    ['problem-selection',inputsReady,mode==='jobpairs'?'From solver-problem-pairs.csv':inputsReady?`${problems.length} source${problems.length===1?'':'s'} ready`:'Check problem sources'],
    ['axiom-selection',axiomsReady,axiomsReady?`${axioms.length} axiom source${axioms.length===1?'':'s'} ready`:'Check axiom sources']]){
@@ -609,6 +610,7 @@ if(document.body.dataset.page==='new'){
  $('#close-batch-explanation').addEventListener('click',()=>batchDialog.close());
  $('#explain-batch-suggestion').addEventListener('click',async()=>{batchDialog.showModal();if(!lastBatchPlan)await suggestBatchSize();if(lastBatchPlan)renderBatchExplanation(lastBatchPlan);else text('#batch-explanation-content','The calculation is unavailable. Complete the solver and problem settings, then try again.');});
  function renderBatchExplanation(data){
+  if(rootValue('host')==='local'){text('#batch-explanation-content',`There are ${data.total_pairs} solver-problem pairs. Using half the local CPU capacity gives ${data.assumed_parallelism} parallel batches; dividing the pairs by that capacity and rounding up suggests ${data.batch_size} pairs per batch. Local batches queue automatically without a SLURM submission or wall-time limit. CPU and memory budgets are configured in Connection.`);return;}
   const content=$('#batch-explanation-content');content.replaceChildren();
   const flow=el('div',undefined,'batch-math-flow');content.append(flow);
   const amount=(number,singular,plural=singular+'s')=>`${number.toLocaleString()} ${number===1?singular:plural}`;
@@ -715,6 +717,7 @@ if(document.body.dataset.page==='new'){
   }
  }
  async function checkSubmissionFit(){
+  if(rootValue('host')==='local')return;
   if(batchFitCheck)return batchFitCheck;
   batchFitCheck=checkSubmissionFitNow();
   try{return await batchFitCheck;}finally{batchFitCheck=null;}

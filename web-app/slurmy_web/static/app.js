@@ -137,7 +137,8 @@ function initCollapsibles(){
 window.initCollapsibles=initCollapsibles;
 initTableSorting();
 initCollapsibles();
-$('#host-form')?.addEventListener('submit',event=>{event.preventDefault();const url=new URL(location.href);url.searchParams.set('host',$('#host').value);location.href=url;});
+$('#host')?.addEventListener('change',()=>{if(!$('#host').value.trim())$('#host-form').requestSubmit();});
+$('#host-form')?.addEventListener('submit',event=>{event.preventDefault();const url=new URL(location.href);url.searchParams.set('host',$('#host').value.trim());location.href=url;});
 
 let operationTimer, currentOperationId=null, operationHidden=false, jobAction=null;
 function jobActionControls(){
@@ -616,14 +617,14 @@ $('#workflow-file-replacement')?.addEventListener('change',async event=>{
 const connectionPanel=$('#connection-settings');
 connectionPanel?.addEventListener('toggle',async event=>{
  if(event.newState!=='open')return;
- text('#connection-host',$('#host').value);text('#connection-status','Loading settings…');
- try{const value=await api('/api/connection?'+params({host:$('#host').value}));$('#connection-mode').value=value.mode;$('#connection-url').value=value.url;$('#connection-version').value=value.version;connectionFields();text('#connection-status','');}catch(error){text('#connection-status',error.message);}
+ text('#connection-host',$('#host').value||'this computer');text('#connection-status','Loading settings…');
+ try{const value=await api('/api/connection?'+params({host:$('#host').value}));if(value.mode==='local'){for(const [id,key] of [['local-max-cores','max_cores'],['local-max-batches','max_parallel_batches'],['local-memory','memory_mib'],['local-tptp-root','tptp_root']])$('#'+id).value=value[key];text('#connection-status','');return;}$('#connection-mode').value=value.mode;$('#connection-url').value=value.url;$('#connection-version').value=value.version;connectionFields();text('#connection-status','');}catch(error){text('#connection-status',error.message);}
 });
 function connectionFields(){$('#connection-api-fields').hidden=$('#connection-mode').value!=='rest';}
 $('#connection-mode')?.addEventListener('change',connectionFields);
 $('#connection-save')?.addEventListener('click',async()=>{
  const button=$('#connection-save');button.disabled=true;
- try{await api('/api/connection?'+params({host:$('#host').value}),{mode:$('#connection-mode').value,url:$('#connection-url').value,version:$('#connection-version').value});text('#connection-status','Saved. New requests use this connection.');}
+ try{await api('/api/connection?'+params({host:$('#host').value}),(host==='local'?{max_cores:$('#local-max-cores').value,max_parallel_batches:$('#local-max-batches').value,memory_mib:$('#local-memory').value,tptp_root:$('#local-tptp-root').value}:{mode:$('#connection-mode').value,url:$('#connection-url').value,version:$('#connection-version').value}));text('#connection-status','Saved. New requests use this connection.');}
  catch(error){text('#connection-status',error.message);}finally{button.disabled=false;}
 });
 $('#connection-test')?.addEventListener('click',async()=>{

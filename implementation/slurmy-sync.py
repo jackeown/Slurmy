@@ -91,6 +91,12 @@ class SyncError(RuntimeError):
 
 
 def resolve_job_id(host: str, requested: str | None, timeout: float) -> str:
+    if host=='local':
+        from local_backend import jobs,job_path
+        if requested and job_path(requested).is_dir():return requested
+        available=jobs()
+        if requested or not available:raise SyncError('Local job not found.')
+        return available[0]['id']
     if requested is not None and not JOB_ID_RE.fullmatch(requested):
         raise SyncError("Invalid Slurmy job ID")
     if shutil.which("ssh") is None:
@@ -129,6 +135,9 @@ def resolve_job_id(host: str, requested: str | None, timeout: float) -> str:
 
 
 def rsync_job(host: str, job_id: str, destination: Path, timeout: float, *, mirror=False, results_only=False) -> int:
+    if host=='local':
+        from local_backend import copy_results
+        return copy_results(job_id,destination,results_only=results_only)
     if shutil.which("rsync") is None:
         raise SyncError("Debug downloads require rsync. Install rsync, or use the standard download instead.")
     destination.mkdir(parents=True, exist_ok=True)
@@ -886,7 +895,7 @@ def cached_sync_loop(args):
         raise SyncError('Debug downloads cannot be combined with --incremental.')
     if args.incremental and args.follow:
         raise SyncError('--incremental cannot be combined with --follow.')
-    if shutil.which('rsync') is None:
+    if args.host!='local' and shutil.which('rsync') is None:
         if args.incremental or debug:
             raise SyncError('Debug and incremental downloads require rsync. Install rsync and retry.')
         # Keep standard downloads usable on machines with only OpenSSH.
@@ -1063,6 +1072,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    args.host=args.host or 'local'
     if args.interval < 1:
         raise SystemExit("--interval must be at least 1 second")
     if args.ssh_timeout <= 0:

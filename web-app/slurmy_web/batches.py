@@ -34,6 +34,8 @@ def batch_summaries(job, allocations, page, per_page):
             state = 'Finished'
         elif record:
             state = record.state.replace('_', ' ').capitalize()
+        elif job.metadata.get('backend')=='local' and job.controller_state=='active':
+            state='Queued'
         elif batch in job.submitted_batches or any(task in job.results for task in members):
             state = 'Unfinished'
         else:

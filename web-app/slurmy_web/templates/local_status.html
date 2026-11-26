@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% block title %}Local Status{% endblock %}
+{% block page_heading %}<h1>Local Status</h1>{% endblock %}
+{% block scripts %}<script defer src="{{ url_for('static', filename='local-status.js') }}"></script>{% endblock %}
+{% block content %}
+<p class="muted">Runs on this computer without SSH or SLURM. Budgets cover Slurmy executions; other applications may also use these resources.</p>
+<section class="panel" data-collapsible-ready="true"><h2>Local Execution</h2><p id="local-capacity" role="status">Loading local execution state…</p><div class="table-scroll"><table><thead><tr><th>Job</th><th>Batch</th><th>Assigned CPUs</th><th>Memory Budget</th></tr></thead><tbody id="local-active"></tbody></table></div></section>
+
+{% endblock %}

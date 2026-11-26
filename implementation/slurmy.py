@@ -111,6 +111,12 @@ def read_pairs(filename: Path, host=None, partition=None) -> list[dict]:
             solver_name = (row.get("solver_name") or "").strip()
             if len(solver_name) > 80 or any(ord(char) < 32 or ord(char) == 127 for char in solver_name):
                 raise SlurmyError(f"{label}: solver_name must be at most 80 characters with no control characters")
+            if host=='local' and row['problem'].startswith('tptp:'):
+                from local_backend import settings
+                original=row['problem'][5:]
+                collection=tptp_collection_root(original)
+                if not collection:raise SlurmyError('Cannot map this cluster problem into the local TPTP installation.')
+                row['problem']=str(Path(settings()['tptp_root'])/Path(collection).name/Path(original).relative_to(collection))
             cluster_problem = row["problem"].startswith('tptp:')
             problem = Path(row["problem"][5:]) if cluster_problem else local_problems.setdefault(row["problem"],None)
             if not cluster_problem and problem is None:

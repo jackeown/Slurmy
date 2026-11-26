@@ -770,6 +770,8 @@ class JobSnapshot:
 
     @property
     def attention(self) -> str:
+        if self.metadata.get('backend')=='local':
+            return '' if self.completed>=self.task_count or self.submission_state=='stopped' or self.controller_state=='active' else 'Local job is not running. Resume to retry unfinished solver-problem pairs; completed results are kept. '+self.controller_error
         if self.completed >= self.task_count or self.submission_state == 'stopped':
             return ''
         if self.submission_state == 'failed' or (self.submission_state == 'submitting' and self.controller_state == 'inactive'):
@@ -822,6 +824,7 @@ class JobSnapshot:
 
     @property
     def state(self) -> str:
+        if self.metadata.get('backend')=='local' and self.controller_state=='active' and self.metadata.get('local_state')=='building':return 'BUILDING'
         if not self.metadata and not self.submission_offsets and not self.slurm:
             return "SETUP INCOMPLETE"
         active_states = {record.state.upper() for record in self.active_records}
@@ -1395,6 +1398,9 @@ class RemoteCollector:
         self.timeout = timeout
 
     def fetch(self, detail_job: str | None, since_epoch: float | None = None) -> ClusterSnapshot:
+        if self.host=='local':
+            from .local_monitor import collect
+            return collect(detail_job)
         if shutil.which("ssh") is None:
             raise RuntimeError("ssh is not installed or not on PATH")
         budget = 90 if detail_job is None else 45
@@ -1446,6 +1452,9 @@ class RemoteCollector:
         return value
 
     def fetch_activity(self, job_ids):
+        if self.host=='local':
+            from .local_monitor import activity
+            return activity(job_ids)
         ids=list(job_ids)
         if any(not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', name) for name in ids):
             raise ValueError('Invalid job ID.')
@@ -1479,6 +1488,9 @@ class RemoteCollector:
             raise RuntimeError('Invalid job activity response.') from exc
 
     def fetch_batch_log(self, job_id: str, slurm_id: str) -> str:
+        if self.host=='local':
+            from .local_monitor import batch_log
+            return batch_log(job_id,slurm_id)
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', job_id) or not re.fullmatch(r'[0-9]+_[0-9]+', slurm_id):
             raise ValueError('Invalid job or SLURM task ID.')
         script = r'''set -euo pipefail
@@ -1497,6 +1509,9 @@ if [[ -f "$log" && ! -L "$log" ]]; then tail -c 262144 -- "$log"; fi
         return result.stdout.decode(errors='replace')
 
     def fetch_problem_text(self, job_id: str, problem: str) -> tuple[str, bool]:
+        if self.host=='local':
+            from .local_monitor import problem_text
+            return problem_text(job_id,problem)
         """Read a packaged problem, never an arbitrary path on the SSH host."""
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', job_id):
             raise ValueError('Invalid job ID.')
@@ -1534,6 +1549,23 @@ head -c 1048577 -- "$file"
         return process.stdout[:1048576].decode('utf-8', 'replace'), len(process.stdout) > 1048576
 
     def fetch_task_output(self, job_id: str, result: ResultRecord) -> TaskOutput:
+        if self.host=='local':
+            from local_backend import job_path
+            path=job_path(job_id)/'results'/result.archive
+            if path.parent!=job_path(job_id)/'results':raise ValueError('Invalid local result archive.')
+            import tarfile
+            suffixes={'postprocessor':'.postprocessor.log','postprocessor_stderr':'.postprocessor-stderr.log',
+                      'solver':'.solver.log','solver_combined':'.solver-combined.log','solver_stderr':'.solver-stderr.log',
+                      'limiter_stdout':'.limiter-stdout.log','controller':'.controller.log','watcher':'.watcher.log','variables':'.var'}
+            protocol=[]
+            with tarfile.open(path) as archive:
+                members=[member for member in archive if member.isfile()]
+                for kind,suffix in suffixes.items():
+                    member=next((item for item in members if item.name.endswith(suffix)),None)
+                    data=archive.extractfile(member).read(1024*1024) if member else b''
+                    protocol.extend([b'TASK_OUTPUT',kind.encode(),str(member.size if member else -1).encode(),
+                                     b'true' if member and member.size>len(data) else b'false',base64.b64encode(data)])
+            return parse_task_output(job_id,result.task_id,result.archive,b'\0'.join(protocol)+b'\0')
         if not result.archive or not result.task_key:
             raise RuntimeError("this task has no saved result output yet")
         command = [

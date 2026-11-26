@@ -13,7 +13,7 @@ const render=source.slice(source.indexOf(' function renderBatchExplanation('),so
 function el(tag,text='',className=''){return {tag,text,className,children:[],append(...nodes){this.children.push(...nodes);},replaceChildren(){this.children=[];},setAttribute(){}};}
 const content=el('div');
 const data={total_pairs:30,configuration_count:1,problem_count:30,hardware_parallelism:1280,node_count:20,configuration_parallelism:[1280],configuration_names:['QA Solver'],capacity_breakdown:[[{nodes:20,formula:'floor((2 CPU sockets/compute node × 32 physical cores/CPU socket) ÷ 1 physical core/batch)'}]],assumed_hardware_parallelism:640,assumed_parallelism:50,balance_batch_size:1,fit_batch_size:1,workflow_submit_limit:50,account_active_tasks:0,account_free_slots:50,submission_budget:50,minimum_batches:1,group_pair_counts:[30],batch_size:1,suggested_batches:30,suggested_fits:true};
-const context={el,$:()=>content,data};vm.createContext(context);vm.runInContext(render+';renderBatchExplanation(data);',context);
+const context={el,$:()=>content,data,rootValue:()=>'datalab'};vm.createContext(context);vm.runInContext(render+';renderBatchExplanation(data);',context);
 const nodes=[];function walk(node){nodes.push(node);node.children.forEach(walk);}walk(content);
 const text=node=>String(node.text||'')+node.children.map(text).join('');const output=text(content);
 assert.match(output,/floor\(1,280 parallel batches ÷ 2\) = 640 assumed parallel batches/);
@@ -59,7 +59,7 @@ const fields={};
 function field(name){return fields[name] ||= {value:'',hidden:false,listeners:{},append(){},replaceChildren(){},setAttribute(){},addEventListener(type,fn){this.listeners[type]=fn;}};}
 const form={querySelector:()=>field('batch'),addEventListener:()=>{}};
 let resolve;
-const context={form,initial:{},step:4,$:field,payload:()=>({}),updateStepStates:()=>{},clearTimeout,setTimeout,
+const context={form,initial:{},step:4,rootValue:()=>'datalab',$:field,payload:()=>({}),updateStepStates:()=>{},clearTimeout,setTimeout,
  el:()=>({append(){},setAttribute(){}}),text:()=>{},
  api:()=>new Promise(done=>resolve=done)};
 vm.createContext(context);vm.runInContext(controller,context);
