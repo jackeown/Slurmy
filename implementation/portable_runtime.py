@@ -57,6 +57,11 @@ def terminate(process, known=(), grace=.5):
         if process.returncode is None:
             try:os.killpg(process.pid,sig)
             except ProcessLookupError:pass
+            except PermissionError:
+                # Darwin may reject group signals once its live members have exited.
+                # Signal the owned processes individually as well (including root).
+                try:psutil.Process(process.pid).send_signal(sig)
+                except psutil.NoSuchProcess:pass
         for child in descendants:
             try:child.send_signal(sig)
             except psutil.Error:pass
