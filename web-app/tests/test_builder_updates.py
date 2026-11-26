@@ -114,7 +114,7 @@ const beginWork=()=>()=>{};const validatePath=async()=>{validated++};
 (async()=>{
 await change({target:picker});
 assert.equal(text.value,'B.p\nA.p\n/other/C.p\nrelative/D.p');assert.equal(validated,1);assert.equal(picker.error,'');
-assert(status.textContent.includes('one.txt → two.txt'));
+assert.equal(status.textContent,'2 name files selected.');
 assert.equal(namesPanel.hidden,true);
 assert.equal(list.children.length,2);
 picker.files=[{name:'third.txt',text:async()=> 'E.p'}];await change({target:picker});
@@ -132,6 +132,30 @@ text.value='saved.p';initializeProblemNames(row,{problem_selection_mode:'files'}
 })().catch(error=>{console.error(error);process.exitCode=1});
 '''
         result=subprocess.run(['node','-e',program],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_compact_file_picker_keeps_validation_for_hidden_native_input(self):
+        html=self.client.get('/new').text
+        self.assertIn('class="secondary add-name-files"',html)
+        self.assertIn('class="problem-name-files" multiple data-optional="true" hidden',html)
+        source=(Path(__file__).parent.parent/'slurmy_web/static/builder.js').read_text()
+        start=source.index(' async function validSection(){')
+        prefix=source[start:source.index("  if(step===1",start)]+'}'
+        script=r"""
+const assert=require('assert');let step=2;
+const mode={value:'files'},picker={validationMessage:'',_reading:false},text={value:''};
+const row={querySelector:key=>({'.problem-names-mode':mode,'.problem-name-files':picker,'[name="problem_selection"]':text}[key])};
+const document={querySelectorAll:()=>[row]};
+"""+prefix+r"""
+(async()=>{
+ await assert.rejects(validSection(),/Add a non-empty file/);
+ text.value='A.p';picker._reading=true;await assert.rejects(validSection(),/finish loading/);
+ picker._reading=false;picker.validationMessage='Read failed';await assert.rejects(validSection(),/Read failed/);
+ picker.validationMessage='';await validSection();
+ mode.value='disabled';text.value='';await validSection();
+})().catch(error=>{console.error(error);process.exitCode=1;});
+"""
+        result=subprocess.run(['node','-e',script],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
 
     def test_environment_validation_accepts_literal_values_and_rejects_errors(self):

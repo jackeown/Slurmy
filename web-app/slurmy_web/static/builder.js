@@ -28,7 +28,7 @@ if(document.body.dataset.page==='new'){
   throw new Error('The progress stream ended before the workflow operation completed.');
  }
  function prefillExamples(root){root.querySelectorAll('input[placeholder],textarea[placeholder]').forEach(input=>{if(!input.value && !['glob','account'].includes(input.name))input.value=input.placeholder;});}
- function add(template,target){const node=$('#'+template).content.firstElementChild.cloneNode(true);prefillExamples(node);if(node.matches('.configuration'))node.querySelector('[name="solver_name"]').value='';$('.remove',node).addEventListener('click',()=>{node.remove();if(target==='globs'||target==='axiom-globs')updateProblemStatus();if(target==='limiter-resources')updateLimiterStatus();updateStepStates();});$('#'+target).append(node);setupBrowsers(node);shellEditors(node);node.querySelectorAll('textarea[name="postprocessor_command"]').forEach(shellEditor);window.initCollapsibles?.();if(node.matches('.configuration')){updateSolverStatus(node);queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}if(target==='globs'||target==='axiom-globs')updateProblemStatus();if(target==='limiter-resources')updateLimiterStatus();updateStepStates();return node;}
+ function add(template,target){const node=$('#'+template).content.firstElementChild.cloneNode(true);node.querySelector('.add-name-files')?.addEventListener('click',()=>node.querySelector('.problem-name-files').click());prefillExamples(node);if(node.matches('.configuration'))node.querySelector('[name="solver_name"]').value='';$('.remove',node).addEventListener('click',()=>{node.remove();if(target==='globs'||target==='axiom-globs')updateProblemStatus();if(target==='limiter-resources')updateLimiterStatus();updateStepStates();});$('#'+target).append(node);setupBrowsers(node);shellEditors(node);node.querySelectorAll('textarea[name="postprocessor_command"]').forEach(shellEditor);window.initCollapsibles?.();if(node.matches('.configuration')){updateSolverStatus(node);queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}if(target==='globs'||target==='axiom-globs')updateProblemStatus();if(target==='limiter-resources')updateLimiterStatus();updateStepStates();return node;}
  $('#add-configuration').addEventListener('click',()=>{const card=add('configuration-template','configurations');$('#builder-error').hidden=true;visibility();card.scrollIntoView({behavior:'smooth',block:'start'});});
  $('#add-glob').addEventListener('click',()=>add('glob-template','globs'));
  $('#add-axiom-glob').addEventListener('click',()=>add('axiom-glob-template','axiom-globs'));
@@ -49,12 +49,12 @@ if(document.body.dataset.page==='new'){
   list.replaceChildren();
   for(const [index,file] of (row._nameFiles||[]).entries()){
    const item=document.createElement('li'),name=document.createElement('span'),remove=document.createElement('button');
-   name.textContent=file.name;remove.type='button';remove.className='secondary';remove.textContent='Remove';remove.setAttribute('aria-label',`Remove ${file.name}`);
+   name.textContent=file.name;name.title=file.name;remove.type='button';remove.className='secondary remove-name-file';remove.textContent='×';remove.title=`Remove ${file.name}`;remove.setAttribute('aria-label',`Remove ${file.name}`);
    remove.addEventListener('click',async()=>{
-    row.querySelector('.problem-name-files')._request=null;row._nameFiles.splice(index,1);renderNameFiles(row);
+    row.querySelector('.problem-name-files')._request=null;row.querySelector('.problem-name-files')._reading=false;row._nameFiles.splice(index,1);renderNameFiles(row);
     const text=row.querySelector('[name="problem_selection"]');text.value=nameFileContents(row._nameFiles);row._filesDraft=text.value;
     const picker=row.querySelector('.problem-name-files');picker.value='';picker.setCustomValidity(row._nameFiles.length?'':'Choose one or more files of problem names.');
-    row.querySelector('.problem-names-status').textContent=row._nameFiles.length?'Loaded in order: '+row._nameFiles.map(file=>file.name).join(' → ')+'.':'No files selected.';
+    row.querySelector('.problem-names-status').textContent=row._nameFiles.length?`${row._nameFiles.length} name ${row._nameFiles.length===1?'file':'files'} selected.`:'No files selected.';
     text.dispatchEvent(new Event('input',{bubbles:true}));await validatePath(row.querySelector('[name="glob"]'));
    });
    item.append(name,remove);list.append(item);
@@ -70,7 +70,7 @@ if(document.body.dataset.page==='new'){
   row._nameFiles=Array.isArray(values?.problem_selection_files)?values.problem_selection_files.filter(file=>typeof file?.name==='string'&&typeof file?.content==='string'):[];
   if(mode.value==='files'&&nameFileContents(row._nameFiles)!==text.value)row._nameFiles=text.value?[{name:'Saved names',content:text.value}]:[];
   renderNameFiles(row);
-  if(mode.value==='files')row.querySelector('.problem-names-status').textContent='Add files to append more names, or remove a file below.';
+  if(mode.value==='files')row.querySelector('.problem-names-status').textContent=row._nameFiles.length?`${row._nameFiles.length} name ${row._nameFiles.length===1?'file':'files'} selected.`:'No name files added yet.';
   mode.refreshShell?.();
  }
  function fill(node,values){for(const [name,value] of Object.entries(values||{})){const field=node.querySelector(`[name="${name}"]`);if(field){if(field.type==='checkbox')field.checked=value===true;else if(name==='cores')setCoreRequest(field,value??'1');else field.value=name==='problem_selection'&&Array.isArray(value)?value.join('\n'):name.startsWith('omit_')?String(value||false).toLowerCase():(value??'');field.refreshShell?.();}}if(node.matches('.glob-row'))initializeProblemNames(node,values);if(node.matches('.configuration')){configurationTitle(node);updateSolverStatus(node);queueMicrotask(()=>validateSolverCommand(node));queueMicrotask(()=>validatePostprocessor(node));queueMicrotask(()=>validateEnvironment(node));queueMicrotask(()=>checkThreads(node.querySelector('[name="threads_per_core"]')));}}
@@ -484,24 +484,24 @@ if(document.body.dataset.page==='new'){
   row.querySelector('.problem-names-files').hidden=mode.value!=='files';
   row.querySelector('.problem-names-text').hidden=mode.value!=='names';
   if(event.target===mode){
-   picker._request=null;
+   picker._request=null;picker._reading=false;
    if(row._namesMode==='files')row._filesDraft=text.value;else if(row._namesMode==='names')row._namesDraft=text.value;
    text.value=mode.value==='files'?(row._filesDraft||''):mode.value==='names'?(row._namesDraft||''):'';
    row._namesMode=mode.value;picker.setCustomValidity(mode.value==='files'&&!text.value.trim()&&!picker.files.length?'Choose one or more files of problem names.':'');
-   status.textContent=mode.value==='files'&&text.value.trim()?'Add files to append more names, or remove a file below.':'';
+   status.textContent=mode.value==='files'&&text.value.trim()?row._nameFiles.length?`${row._nameFiles.length} name ${row._nameFiles.length===1?'file':'files'} selected.`:'No name files added yet.':'';
    text.dispatchEvent(new Event('input',{bubbles:true}));await validatePath(row.querySelector('[name="glob"]'));return;
   }
   const files=[...picker.files];if(!files.length)return;
-  const request={};picker._request=request;picker.setCustomValidity('Reading files of problem names…');status.textContent='Reading files…';
+  const request={};picker._request=request;picker.setCustomValidity('Reading files of problem names…');status.textContent='Reading files…';picker._reading=true;
   const finish=beginWork('Reading files of problem names…');
   try{
    const contents=await Promise.all(files.map(file=>file.text()));if(picker._request!==request)return;
    row._nameFiles=(row._nameFiles||[]).concat(files.map((file,index)=>({name:file.name,content:contents[index].replace(/^\uFEFF/,'')})));
    text.value=nameFileContents(row._nameFiles);row._filesDraft=text.value;renderNameFiles(row);picker.value='';
-   picker.setCustomValidity('');status.textContent='Loaded in order: '+row._nameFiles.map(file=>file.name).join(' → ')+'.';
+   picker.setCustomValidity('');status.textContent=`${row._nameFiles.length} name ${row._nameFiles.length===1?'file':'files'} selected.`;
    text.dispatchEvent(new Event('input',{bubbles:true}));await validatePath(row.querySelector('[name="glob"]'));
   }catch(error){if(picker._request===request){picker.setCustomValidity('Could not read the selected files. Choose them again.');status.textContent='Could not read the selected files. The previous names have been kept.';}}
-  finally{finish();}
+  finally{if(picker._request===request)picker._reading=false;finish();}
  });
 
  for(const card of document.querySelectorAll('.configuration'))for(const input of card.querySelectorAll('[data-path]')){
@@ -644,6 +644,14 @@ if(document.body.dataset.page==='new'){
   acceptedBatchWarning=JSON.stringify(payload());
  }
  async function validSection(){
+  if(step===2)for(const row of document.querySelectorAll('#globs .glob-row')){
+   if(row.querySelector('.problem-names-mode').value!=='files')continue;
+   const picker=row.querySelector('.problem-name-files');
+   if(picker._reading)throw new Error('Wait for the selected name files to finish loading.');
+   if(picker.validationMessage)throw new Error(picker.validationMessage);
+   if(!row.querySelector('[name="problem_selection"]').value.trim())throw new Error('Add a non-empty file of problem names, or choose All matched problems.');
+  }
+
   if(step===1&&rootValue('mode')==='interactive'&&!$('#configurations .configuration'))throw new Error('Add a solver configuration or copy one from an existing workflow before continuing.');
   if(step===1&&rootValue('mode')==='interactive')await Promise.all([...document.querySelectorAll('.configuration')].map(waitForPlacement));
   if(step===1&&rootValue('mode')==='interactive')for(const card of document.querySelectorAll('.configuration'))await validateEnvironment(card);

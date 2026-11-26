@@ -645,10 +645,16 @@ details[data-section-state="closing"] > summary::before { transform: rotate(0deg
 .build-parallel-info {margin-bottom:12px;font-size:13px;color:var(--ink)}
 .build-parallel-help .eta-explanation {left:0;right:auto}
 
-.problem-name-file-list { display: grid; gap: 8px; padding: 0; list-style: none; }
+.problem-name-file-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; padding: 0; list-style: none; }
 .problem-name-file-list:empty { display: none; }
-.problem-name-file-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.problem-name-file-list li { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 3px 4px 3px 9px; max-width: 100%; border: 1px solid var(--line); border-radius: var(--control-radius, 6px); }
 .problem-name-file-list li > span { overflow-wrap: anywhere; min-width: 0; }
-.problem-name-file-list button { flex-shrink: 0; }
+.problem-name-file-list .remove-name-file { flex-shrink: 0; padding: 2px; min-width: 24px; min-height: 24px; height: 24px; line-height: 1; }
+.problem-names-files > small { display: block; margin-top: 5px; }
 
 .workflow-file-name code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 1em; }
+
+.sidebar-footer-link > img { width: 18px; height: 18px; object-fit: contain; flex: none; }
+.about-identity { display: flex; align-items: center; gap: 24px; }
+.about-identity > img { flex: none; }
+@media (max-width: 520px) { .about-identity { align-items: flex-start; gap: 16px; } .about-identity > img { width: 56px; height: 56px; } }

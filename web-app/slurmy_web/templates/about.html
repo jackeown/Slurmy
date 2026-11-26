@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% block title %}About Slurmy{% endblock %}
+{% block page_heading %}<h1>About Slurmy</h1>{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="about-identity"><img src="/logo.svg" alt="Slurmy logo" width="96" height="96"><div><h2>Slurmy</h2><p>Version <code>{{ version }}</code>{% if revision %} · revision <code>{{ revision }}</code>{% endif %}</p><p class="muted">Define solver workflows, run them on a SLURM cluster, and inspect their results.</p></div></div>
+</section>
+<section class="panel">
+  <h2>Credits</h2>
+  <p>Developed by <a href="https://github.com/jackeown" target="_blank" rel="noopener noreferrer">Jack Keown</a>.</p>
+  <p>With thanks to TU Wien dataLAB for cluster infrastructure, and to FoRSyTe and APRe.</p>
+</section>
+{% endblock %}

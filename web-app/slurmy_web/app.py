@@ -770,6 +770,19 @@ def create_app():
         return page('new.html', base=str(workflows.BASE), repo=str(REPO), initial=data,
                     editing=True, directory=str(path))
 
+    @app.get('/about')
+    def about():
+        from slurmy import VERSION
+        revision = ''
+        try:
+            result = subprocess.run(['git','-C',str(REPO),'rev-parse','--short','HEAD'],
+                                    capture_output=True,text=True,timeout=2,check=False)
+            if result.returncode==0 and re.fullmatch(r'[0-9a-f]+',result.stdout.strip()):
+                revision=result.stdout.strip()
+        except (OSError,subprocess.TimeoutExpired):
+            pass
+        return page('about.html',version=VERSION,revision=revision)
+
     @app.get('/logo.svg')
     def logo():
         return send_file(REPO / 'implementation/logo.svg')
