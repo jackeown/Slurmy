@@ -128,9 +128,9 @@ def resolve_job_id(host: str, requested: str | None, timeout: float) -> str:
     return job_id
 
 
-def rsync_job(host: str, job_id: str, destination: Path, timeout: float, *, mirror=False) -> int:
+def rsync_job(host: str, job_id: str, destination: Path, timeout: float, *, mirror=False, results_only=False) -> int:
     if shutil.which("rsync") is None:
-        raise SyncError("Verbose incremental downloads require rsync. Install rsync, or use the standard download instead.")
+        raise SyncError("Debug downloads require rsync. Install rsync, or use the standard download instead.")
     destination.mkdir(parents=True, exist_ok=True)
     remote_shell = (
         shlex.join(["ssh", *connection_options(), "-o", "BatchMode=yes", "-o", f"ConnectTimeout={max(1, int(timeout))}"])
@@ -171,6 +171,8 @@ def rsync_job(host: str, job_id: str, destination: Path, timeout: float, *, mirr
         f"{host}:slurmy/jobs/{job_id}/",
         os.fspath(destination) + "/",
     ]
+    if results_only:
+        command = [arg for arg in command if not arg.startswith(('--include=/allocations', '--include=/submission', '--include=/batches', '--include=/chunks', '--include=/progress', '--include=/logs'))]
     if mirror:
         command.insert(1, '--delete')
     try:
@@ -665,12 +667,12 @@ def publish_verbose_pairs(destination: Path, raw: Path) -> None:
         'Unfinished solver-problem pairs may have no archive yet.\n')
 
 
-def sync_loop(args: argparse.Namespace) -> int:
-    job_id = resolve_job_id(args.host, args.job_id, args.ssh_timeout)
+def sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
+    job_id = resolved_job_id or resolve_job_id(args.host, args.job_id, args.ssh_timeout)
     destination = (
         Path(args.output).expanduser()
         if args.output
-        else Path.cwd() / "job-results" / "verbose" / job_id
+        else Path.cwd() / "job-results" / "debug" / job_id
     )
     if destination.exists() and not destination.is_dir():
         raise SyncError(f"output path is not a directory: {destination}")
@@ -690,8 +692,7 @@ def sync_loop(args: argparse.Namespace) -> int:
     iteration = 0
     while True:
         iteration += 1
-        changed_paths = (rsync_job(args.host, job_id, raw, args.ssh_timeout, mirror=True) if getattr(args, 'incremental', False)
-                         else rsync_job(args.host, job_id, raw, args.ssh_timeout))
+        changed_paths = rsync_job(args.host, job_id, raw, args.ssh_timeout, mirror=True)
         summary = build_summary(
             host=args.host,
             job_id=job_id,
@@ -776,6 +777,10 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
             raise SyncError(f'Remote export failed (SSH exit {code}); existing local files were kept.')
         if expected is None:
             raise SyncError('Remote export did not report its output filenames.')
+        published = list(expected)
+        if getattr(args, 'timestamp_csv', False):
+            stamp = datetime.now().strftime('_%Y-%m-%d_%H-%M-%S.%f')
+            published[0] = expected[0].removesuffix('_results-summary.csv') + stamp + '_results-summary.csv'
         # A previous concise download uses the old three filenames. Keep it
         # until the replacement download succeeds, rather than treating it as
         # a verbose result directory that must be moved out of the way.
@@ -825,14 +830,14 @@ def compact_sync_loop(args: argparse.Namespace, resolved_job_id=None) -> int:
                 raise SyncError(result.stderr.strip() or f'{transfer[0]} exited with status {result.returncode}')
             if not all((stage / name).is_file() and not (stage / name).is_symlink() for name in expected):
                 raise SyncError('The cluster export was incomplete; previous downloads were kept.')
-            for name in expected:
-                os.replace(stage / name, destination / name)
-        with (destination / expected[0]).open(newline='', encoding='utf-8') as source:
+            for name, local_name in zip(expected, published):
+                os.replace(stage / name, destination / local_name)
+        with (destination / published[0]).open(newline='', encoding='utf-8') as source:
             completed = total = 0
             for row in csv.DictReader(source):
                 total += 1
                 completed += row.get('complete', '').lower() == 'true'
-        identity = {'host': args.host, 'job_id': job_id, 'files': list(expected)}
+        identity = {'host': args.host, 'job_id': job_id, 'files': published}
         fd, identity_temporary = tempfile.mkstemp(prefix='.export-identity-', dir=destination.parent)
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as stream:
@@ -861,7 +866,7 @@ def starexec_sync_loop(args):
                                              'combined_solver_output': True})
             compact_sync_loop(download, resolved_job_id=job_id)
             print('Converting summary and solver output to StarExec-compatible ZIPs…', flush=True)
-            names, completed, total = export(compact, destination, job_id)
+            names, completed, total = export(compact, destination, job_id, csv_suffix=(datetime.now().strftime('_%Y-%m-%d_%H-%M-%S.%f') if getattr(args, 'timestamp_csv', False) else ''))
         print(f'Downloaded StarExec-compatible results: {completed}/{total} complete to {destination}', flush=True)
         for name in names:
             print(destination / name, flush=True)
@@ -870,16 +875,23 @@ def starexec_sync_loop(args):
         time.sleep(max(15, args.interval))
 
 
-def incremental_sync_loop(args):
-    """Transfer changed raw files once, then publish a complete local snapshot."""
+def cached_sync_loop(args):
+    """Reuse transferred files for every download; incremental exports are deltas."""
     import fcntl
     from download_records import record
-    from remote_export import export
+    from remote_export import export, records, ARCHIVE
     from starexec_export import export as export_starexec
-    if args.follow:
-        raise SyncError('--incremental snapshots cannot be combined with --follow.')
+    debug = getattr(args, 'debug', False) or getattr(args, 'verbose', False)
+    if debug and args.incremental:
+        raise SyncError('Debug downloads cannot be combined with --incremental.')
+    if args.incremental and args.follow:
+        raise SyncError('--incremental cannot be combined with --follow.')
     if shutil.which('rsync') is None:
-        raise SyncError('Incremental downloads require rsync. Install rsync or omit --incremental.')
+        if args.incremental or debug:
+            raise SyncError('Debug and incremental downloads require rsync. Install rsync and retry.')
+        # Keep standard downloads usable on machines with only OpenSSH.
+        fallback = argparse.Namespace(**{**vars(args), 'timestamp_csv': True})
+        return starexec_sync_loop(fallback) if args.starexec else compact_sync_loop(fallback)
     job_id = resolve_job_id(args.host, args.job_id, args.ssh_timeout)
     root = Path.cwd()/'job-results'
     key = hashlib.sha256((args.host+'\0'+job_id).encode()).hexdigest()
@@ -888,10 +900,10 @@ def incremental_sync_loop(args):
         raise SyncError('Download cache must not be a symlink.')
     cache.mkdir(parents=True, exist_ok=True)
     record(root, cache, args.host, job_id)
-    mode = 'verbose' if args.verbose else 'starexec' if args.starexec else 'default'
+    mode = 'debug' if debug else 'starexec' if args.starexec else 'default'
     destination = Path(args.output).expanduser().absolute() if args.output else root/(mode if mode!='default' else '')/job_id
-    if destination.is_symlink() or destination == cache or destination.is_relative_to(cache):
-        raise SyncError('Choose a snapshot directory outside the download cache.')
+    if destination.is_symlink() or destination == cache or destination.is_relative_to(cache) or cache.is_relative_to(destination):
+        raise SyncError('Choose a download directory outside the download cache.')
     identity_path = destination.parent/('.slurmy-export-identity-'+hashlib.sha256(os.fsencode(destination.resolve())).hexdigest()+'.json')
     try:
         identity = json.loads(identity_path.read_text())
@@ -900,47 +912,100 @@ def incremental_sync_loop(args):
     if not isinstance(identity,dict):
         raise SyncError('Invalid download identity metadata.')
     if destination.exists() and (not destination.is_dir() or any(path.is_symlink() for path in destination.rglob('*'))):
-        raise SyncError('Snapshot destination must be a normal directory without symlinks.')
+        raise SyncError('Download destination must be a normal directory without symlinks.')
     if identity and (identity.get('host'),identity.get('job_id')) != (args.host,job_id):
         raise SyncError('This output directory belongs to a different host or job.')
-    with (cache/'.lock').open('a+') as lock:
-        fcntl.flock(lock,fcntl.LOCK_EX)
-        verbose = cache/'verbose'
-        raw = verbose/'diagnostics'
-        raw.mkdir(parents=True,exist_ok=True)
-        print('Updating local cache; unchanged result files will not be downloaded again…',flush=True)
-        if args.verbose:
-            sync_loop(argparse.Namespace(**{**vars(args),'output':str(verbose),'job_id':job_id}))
-            source = verbose
-            names = [path.name for path in source.iterdir()]
-        else:
-            changed = rsync_job(args.host,job_id,raw,args.ssh_timeout,mirror=True)
-            print(f'{changed} paths updated in the local cache',flush=True)
-            export(raw,combined=args.starexec)
-            source = raw/'exports'/('starexec' if args.starexec else '')
-            names = list(export_names(load_job_metadata(raw)))
-            if args.starexec:
-                signature = (source/'.signature').read_text()
-                converted = cache/'starexec'
-                marker = cache/'.starexec-signature'
-                from starexec_export import job_number
-                names = [f'Job{job_number(job_id)}_info.zip',f'Job{job_number(job_id)}_output.zip']
-                if not marker.is_file() or marker.read_text()!=signature or not all((converted/name).is_file() for name in names):
-                    export_starexec(source,converted,job_id)
-                    marker.write_text(signature)
-                source = converted
-        destination.mkdir(parents=True,exist_ok=True)
-        for name in names:
-            original,target=source/name,destination/name
-            if original.is_dir():
-                shutil.copytree(original,target,dirs_exist_ok=True,symlinks=True,
-                                ignore=lambda directory,entries: {'exports'} if Path(directory)==raw else set())
+    while True:
+        with (cache/'.lock').open('a+') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            debug_directory = cache/'debug'
+            raw = debug_directory/'diagnostics'
+            # Reuse caches created before verbose was renamed to debug.
+            legacy = cache/'verbose'
+            if legacy.is_dir() and not debug_directory.exists():
+                legacy.rename(debug_directory)
+            raw.mkdir(parents=True,exist_ok=True)
+            print('Updating local cache; unchanged result files will not be downloaded again…',flush=True)
+            if debug:
+                sync_loop(argparse.Namespace(**{**vars(args),'output':str(debug_directory),'job_id':job_id,'follow':False}), resolved_job_id=job_id)
+                source = debug_directory
+                names = [path.name for path in source.iterdir()]
+                current = {}
             else:
-                shutil.copy2(original,target)
-        identity_path.write_text(json.dumps(dict(host=args.host,job_id=job_id,files=names)))
-        record(root,destination,args.host,job_id)
-        print(f'Complete snapshot saved to {destination}',flush=True)
-    return 0
+                changed = rsync_job(args.host,job_id,raw,args.ssh_timeout,mirror=True,results_only=True)
+                print(f'{changed} paths updated in the local cache',flush=True)
+                current = {}
+                for task_id, result in records(raw).items():
+                    archive = str(result.get('archive') or '')
+                    if str(result.get('complete','')).lower() != 'true' or not ARCHIVE.fullmatch(archive):
+                        continue
+                    path = raw/'results'/archive
+                    if not path.is_file():
+                        continue
+                    stat = path.stat()
+                    current[str(task_id)] = hashlib.sha256((json.dumps(result,sort_keys=True)+repr((stat.st_size,stat.st_mtime_ns))).encode()).hexdigest()
+                ledger = cache/(mode+'-delivered.json')
+                try:
+                    delivered = json.loads(ledger.read_text())
+                except FileNotFoundError:
+                    delivered = {}
+                if not isinstance(delivered,dict):
+                    raise SyncError('Invalid incremental download history; existing history was kept.')
+                selected = {int(key) for key,value in current.items() if delivered.get(key)!=value} if args.incremental else None
+                export(raw,combined=args.starexec,task_ids=selected)
+                source = raw/'exports'/('starexec' if args.starexec else '')
+                if selected is not None:
+                    source = source/'incremental'
+                names = list(export_names(load_job_metadata(raw)))
+                stamp = datetime.now().strftime('_%Y-%m-%d_%H-%M-%S.%f')
+                if args.starexec:
+                    # The ZIP structure and numeric job identity remain StarExec compatible.
+                    converted = cache/'starexec'
+                    names, _, _ = export_starexec(source,converted,job_id,csv_suffix=stamp)
+                    source = converted
+            destination.mkdir(parents=True,exist_ok=True)
+            published = []
+            with tempfile.TemporaryDirectory(prefix='.download-',dir=destination.parent) as folder:
+                stage = Path(folder)
+                for name in names:
+                    published_name = name
+                    if not debug and not args.starexec and name.endswith('_results-summary.csv'):
+                        published_name = name.removesuffix('_results-summary.csv')+stamp+'_results-summary.csv'
+                    original,target = source/name,stage/published_name
+                    if original.is_dir():
+                        shutil.copytree(original,target,ignore=lambda directory,entries: {'exports'} if Path(directory)==raw else set())
+                    else:
+                        shutil.copy2(original,target)
+                    published.append(published_name)
+                for name in published:
+                    if (stage/name).is_dir():
+                        shutil.copytree(stage/name,destination/name,dirs_exist_ok=True)
+                    else:
+                        os.replace(stage/name,destination/name)
+            for name in identity.get('files',[]):
+                if isinstance(name,str) and Path(name).name==name and name not in published and (destination/name).is_file():
+                    (destination/name).unlink()
+            identity_path.write_text(json.dumps(dict(host=args.host,job_id=job_id,files=published)))
+            record(root,destination,args.host,job_id)
+            if not debug:
+                # Full snapshots also establish a baseline for later deltas. Advance
+                # only after conversion, publication and recording all succeed.
+                fd, temporary = tempfile.mkstemp(prefix='.delivered-',dir=cache)
+                try:
+                    with os.fdopen(fd,'w') as stream:
+                        json.dump(current,stream)
+                    os.replace(temporary,ledger)
+                finally:
+                    Path(temporary).unlink(missing_ok=True)
+            print(f'{"Incremental results" if args.incremental else "Complete snapshot"} saved to {destination}',flush=True)
+            total = int(load_job_metadata(raw).get('task_count',0))
+            if not args.follow or (total and (len(current)>=total if not debug else sum(str(row.get('complete','')).lower()=='true' for row in records(raw).values())>=total)):
+                return 0
+        time.sleep(max(15,args.interval))
+
+
+# Retained as an internal entry point for older callers.
+incremental_sync_loop = cached_sync_loop
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -972,10 +1037,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="keep downloading until every planned task has a complete result",
     )
-    parser.add_argument('--incremental', action='store_true', help='reuse a local rsync cache and publish a complete snapshot')
+    parser.add_argument('--incremental', action='store_true', help='export only newly completed results; incompatible with --debug')
     formats = parser.add_mutually_exclusive_group()
-    formats.add_argument('--verbose', action='store_true',
+    formats.add_argument('--debug', action='store_true',
                         help='download all raw per-solver-problem pair archives, SLURM logs, plans, and metadata')
+    formats.add_argument('--verbose', dest='debug', action='store_true', help=argparse.SUPPRESS)
     formats.add_argument('--starexec', action='store_true',
                          help='download StarExec-compatible info and output ZIPs')
     parser.add_argument(
@@ -1002,11 +1068,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.ssh_timeout <= 0:
         raise SystemExit("--ssh-timeout must be greater than zero")
     try:
-        if args.incremental:
-            return incremental_sync_loop(args)
-        if args.starexec:
-            return starexec_sync_loop(args)
-        return sync_loop(args) if args.verbose else compact_sync_loop(args)
+        return cached_sync_loop(args)
     except KeyboardInterrupt:
         print("\nSlurmy download stopped; already downloaded files were kept.", file=sys.stderr)
         return 130

@@ -864,8 +864,8 @@ def create_app():
         new_id = renamed_job_id(job_id, name)
         local_old = REPO / 'job-results' / job_id
         local_new = REPO / 'job-results' / new_id
-        verbose_old = REPO / 'job-results' / 'verbose' / job_id
-        verbose_new = REPO / 'job-results' / 'verbose' / new_id
+        verbose_old = REPO / 'job-results' / 'debug' / job_id
+        verbose_new = REPO / 'job-results' / 'debug' / new_id
         if local_old.is_symlink() or verbose_old.is_symlink() or (new_id != job_id and
                 (local_new.exists() or local_new.is_symlink() or verbose_new.exists() or verbose_new.is_symlink())):
             abort(409, 'The local result directory is a symlink or the new job ID already exists locally.')
@@ -1449,9 +1449,9 @@ def create_app():
                 stopping = next((op for op in active if op['label'] == 'stop'), None)
                 if stopping:
                     return jsonify(stopping), 202
-                active = [op for op in active if op['label'] not in {'sync', 'sync_verbose', 'sync_starexec', 'resume'}]
+                active = [op for op in active if op['label'] not in {'sync', 'sync_debug', 'sync_starexec', 'resume'}]
             if active:
-                active_label = {'sync': 'download', 'sync_verbose': 'verbose download', 'sync_starexec': 'StarExec download'}.get(active[0]['label'], active[0]['label'])
+                active_label = {'sync': 'download', 'sync_debug': 'debug download', 'sync_starexec': 'StarExec download'}.get(active[0]['label'], active[0]['label'])
                 abort(409, f"Wait for the active {active_label} operation to finish.")
             key = secrets.token_hex(12)
             STATE.mkdir(exist_ok=True)
@@ -1530,15 +1530,17 @@ def create_app():
     @app.post('/api/jobs/<job_id>/action')
     def job_action(job_id):
         data = request.get_json()
+        if data.get('action') == 'sync_verbose':
+            data['action'] = 'sync_debug'
         if data.get('action') in {'stop', 'cancel'}:
             recovery_watch.stop(host(), safe_job(job_id))
         elif data.get('action') == 'resume':
             recovery_watch.resume(host(), safe_job(job_id))
         job = job_snapshot(job_id)
-        if data.get('action') in ('sync', 'sync_verbose', 'sync_starexec'):
+        if data.get('action') in ('sync', 'sync_debug', 'sync_starexec'):
             argv = [sys.executable, str(REPO/'implementation/slurmy-sync.py'), job_id, '--host', host()]
-            if data['action'] == 'sync_verbose':
-                argv.append('--verbose')
+            if data['action'] == 'sync_debug':
+                argv.append('--debug')
             elif data['action'] == 'sync_starexec':
                 argv.append('--starexec')
         elif data.get('action') in ('stop', 'resume'):
@@ -1571,7 +1573,7 @@ def create_app():
     def job_delete_options(job_id):
         job_id = safe_job(job_id)
         local = REPO / 'job-results' / job_id
-        verbose_local = REPO / 'job-results' / 'verbose' / job_id
+        verbose_local = REPO / 'job-results' / 'debug' / job_id
         starexec_local = REPO / 'job-results' / 'starexec' / job_id
         if local.is_symlink() or verbose_local.is_symlink() or starexec_local.is_symlink():
             abort(409, 'The local result directory is a symlink; remove it manually.')
@@ -1619,7 +1621,7 @@ def create_app():
                 announce_operation_job(operation, match.group(1), Path(operation['operation_cwd']),
                                        {'SLURMY_HOST': operation['operation_host']})
         op = operations[key]
-        phase = ({'sync': 'Download results', 'sync_verbose': 'Download complete/verbose results',
+        phase = ({'sync': 'Download results', 'sync_debug': 'Download debug results',
                   'sync_starexec': 'Download StarExec-compatible results',
                   'stop': 'Stop job', 'resume': 'Resume unfinished solver-problem pairs',
                   'delete': 'Stop and delete job', 'cancel': 'Cancel SLURM task'}.get(op['label'])

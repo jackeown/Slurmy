@@ -69,43 +69,102 @@ os.execvp('bash',['bash','-c',' '.join(args)])
                     elif mode=='starexec':self.assertEqual(len(list(output.glob('*.zip'))),2)
                     else:self.assertTrue((output/'solver-problem-pairs').is_dir())
 
-    def test_incremental_modes_reuse_cache_and_keep_complete_independent_snapshots(self):
+    def run_engine(self, mode, destination, incremental=False):
+        argv=[sys.executable,str(ROOT/'implementation/slurmy-sync.py'),self.identifier,'--host','fixture','--output',str(destination)]
+        if incremental:argv.append('--incremental')
+        if mode!='default':argv.append('--'+mode)
+        result=subprocess.run(argv,cwd=self.root,env={**os.environ,**self.environment},capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stdout+'\n'+result.stderr)
+        return result
+
+    def summary_rows(self, destination, mode):
+        if mode=='starexec':
+            import zipfile
+            with zipfile.ZipFile(next(destination.glob('*_info.zip'))) as archive:
+                name=next(name for name in archive.namelist() if name.endswith('.csv'))
+                return list(csv.DictReader(io.StringIO(archive.read(name).decode())))
+        with next(destination.glob('*_results-summary.csv')).open() as stream:
+            return list(csv.DictReader(stream))
+
+    def test_incremental_exports_only_new_completed_results_and_full_snapshots_reuse_cache(self):
         from download_records import snapshots
-        for mode in download.MODES:
-            outputs=[]
-            for iteration in range(2):
-                destination=self.root/'job-results'/(mode+str(iteration));outputs.append(destination)
-                argv=[sys.executable,str(ROOT/'implementation/slurmy-sync.py'),self.identifier,'--host','fixture',
-                      '--incremental','--output',str(destination)]
-                if mode!='default':argv.append('--'+mode)
-                result=subprocess.run(argv,cwd=self.root,env={**os.environ,**self.environment},capture_output=True,text=True,timeout=30)
-                self.assertEqual(result.returncode,0,result.stdout+'\n'+result.stderr)
-                if iteration==1 and mode=='default':
-                    self.assertIn('Export unchanged',result.stdout)
-            first,second=outputs
-            pattern='*.zip' if mode=='starexec' else '*.tgz'
-            for old in first.glob(pattern):
-                new=second/old.name
-                self.assertEqual(old.read_bytes(),new.read_bytes())
-                self.assertNotEqual(old.stat().st_ino,new.stat().st_ino)
-            if mode=='verbose':self.assertTrue((second/'diagnostics/results').is_dir())
-            registered=snapshots(self.root/'job-results','fixture',self.identifier)
-            self.assertIn(second,registered)
-            self.assertIn(first,registered)
-            if mode=='default':
-                # Update one remote archive; a later snapshot must change, while
-                # earlier snapshots remain byte-for-byte unchanged.
-                before={path.name:path.read_bytes() for path in first.glob('*.tgz')}
-                archive=next((self.job/'results').glob('*.tar.gz'))
-                with tarfile.open(archive,'w:gz') as target:
-                    data=b'% SZS status Theorem\nAdditional solver output\n'
-                    info=tarfile.TarInfo('task_000000000_abcdef.solver.log');info.size=len(data);target.addfile(info,io.BytesIO(data))
-                third=self.root/'job-results'/'default-updated'
-                argv[argv.index('--output')+1]=str(third)
-                result=subprocess.run(argv,cwd=self.root,env={**os.environ,**self.environment},capture_output=True,text=True,timeout=30)
-                self.assertEqual(result.returncode,0,result.stderr)
-                self.assertEqual({path.name:path.read_bytes() for path in first.glob('*.tgz')},before)
-                self.assertNotEqual(next(third.glob('*_solver-stdout.tgz')).read_bytes(),next(first.glob('*_solver-stdout.tgz')).read_bytes())
+        for mode in ('default','starexec'):
+            with self.subTest(mode=mode):
+                first=self.root/'job-results'/(mode+'-first')
+                self.run_engine(mode,first,incremental=True)
+                self.assertEqual(len(self.summary_rows(first,mode)),1)
+                before={path.name:path.read_bytes() for path in first.iterdir()}
+                second=self.root/'job-results'/(mode+'-second')
+                result=self.run_engine(mode,second,incremental=True)
+                self.assertIn('0 paths updated',result.stdout)
+                self.assertEqual(self.summary_rows(second,mode),[])
+                if mode=='default':
+                    for path in second.glob('*.tgz'):
+                        with tarfile.open(path) as archive:self.assertFalse(any(m.isfile() for m in archive))
+                full=self.root/'job-results'/(mode+'-full')
+                result=self.run_engine(mode,full)
+                self.assertIn('0 paths updated',result.stdout)
+                self.assertEqual(len(self.summary_rows(full,mode)),1)
+                self.assertEqual({path.name:path.read_bytes() for path in first.iterdir()},before)
+                self.assertIn(second,snapshots(self.root/'job-results','fixture',self.identifier))
+                if mode=='default':self.assertNotEqual(next(first.glob('*.csv')).name,next(full.glob('*.csv')).name)
+                else:
+                    import zipfile
+                    with zipfile.ZipFile(next(first.glob('*_info.zip'))) as old, zipfile.ZipFile(next(full.glob('*_info.zip'))) as new:
+                        self.assertNotEqual(old.namelist(),new.namelist())
+
+    def test_debug_full_snapshots_also_reuse_cache(self):
+        first=self.root/'debug-first';second=self.root/'debug-second'
+        self.run_engine('debug',first)
+        result=self.run_engine('debug',second)
+        self.assertIn('0 paths updated',result.stdout)
+        self.assertTrue((second/'diagnostics/results').is_dir())
+        self.assertTrue((first/'solver-problem-pairs').is_dir())
+
+    def test_full_download_sets_baseline_and_new_completion_is_in_next_delta_only(self):
+        # The unfinished definition belongs in a full CSV, but never in a delta.
+        with (self.job/'manifest.jsonl').open('a') as stream:
+            stream.write(json.dumps(dict(task_id=1,solver='Other',problem='/problems/NEW.p',command='./other'))+'\n')
+        metadata=json.loads((self.job/'metadata.json').read_text());metadata['task_count']=2
+        (self.job/'metadata.json').write_text(json.dumps(metadata))
+        full=self.root/'full';self.run_engine('default',full)
+        self.assertEqual(len(self.summary_rows(full,'default')),2)
+        self.run_engine('default',self.root/'empty',incremental=True)
+        self.assertEqual(self.summary_rows(self.root/'empty','default'),[])
+        results=self.job/'results'
+        archive='batch_1_task_000000001_bbb_1_2.tar.gz'
+        with tarfile.open(results/archive,'w:gz') as target:
+            data=b'new result\n';info=tarfile.TarInfo('task_000000001_bbb.solver.log');info.size=len(data);target.addfile(info,io.BytesIO(data))
+        with (results/'batch_000001_task_000000001.csv').open('w') as stream:
+            writer=csv.DictWriter(stream,fieldnames=RESULT_COLUMNS);writer.writeheader();writer.writerow(dict(task_id=1,complete='true',status='ok',archive=archive))
+        delta=self.root/'delta';self.run_engine('default',delta,incremental=True)
+        self.assertEqual([row['task_id'] for row in self.summary_rows(delta,'default')],['1'])
+        with tarfile.open(next(delta.glob('*_solver-stdout.tgz'))) as archive:
+            names=[m.name for m in archive if m.isfile()]
+        self.assertEqual(len(names),1);self.assertIn('NEW.p___000000001.log',names[0])
+        # Default downloads must not consume the independent StarExec baseline.
+        star=self.root/'star';self.run_engine('starexec',star,incremental=True)
+        self.assertEqual(len(self.summary_rows(star,'starexec')),2)
+
+    def test_failed_export_does_not_consume_changed_result(self):
+        self.run_engine('default',self.root/'first',incremental=True)
+        original=next((self.job/'results').glob('*.tar.gz'))
+        revised=original.with_name('batch_0_task_000000000_abcdef_12345_1795517999.tar.gz')
+        revised.write_bytes(b'corrupt archive')
+        result_path=self.job/'results/batch_000000_task_000000000.csv'
+        result_path.write_text(result_path.read_text().replace(original.name,revised.name))
+        argv=[sys.executable,str(ROOT/'implementation/slurmy-sync.py'),self.identifier,'--host','fixture','--incremental','--output',str(self.root/'failed')]
+        failed=subprocess.run(argv,cwd=self.root,env={**os.environ,**self.environment},capture_output=True,text=True)
+        self.assertNotEqual(failed.returncode,0)
+        with tarfile.open(revised,'w:gz') as archive:
+            data=b'revised output\n';member=tarfile.TarInfo('task_000000000_abcdef.solver.log');member.size=len(data);archive.addfile(member,io.BytesIO(data))
+        retry=self.root/'retry';self.run_engine('default',retry,incremental=True)
+        self.assertEqual(len(self.summary_rows(retry,'default')),1)
+
+    def test_debug_incremental_is_rejected_before_connecting(self):
+        result=subprocess.run([sys.executable,str(ROOT/'implementation/slurmy-sync.py'),self.identifier,'--debug','--incremental','--host','missing'],capture_output=True,text=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('cannot be combined',result.stderr)
 
     @unittest.skipUnless(importlib.util.find_spec('rich'),'Rich is optional')
     def test_interactive_cli_selects_from_real_lists_and_downloads(self):

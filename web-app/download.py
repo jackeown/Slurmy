@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT))
 
 from implementation.ssh_transport import connection_options
 from implementation.download_records import record as record_download
-MODES = ('default', 'verbose', 'starexec')
+MODES = ('default', 'debug', 'starexec')
 
 # One SSH request reads only immutable identity metadata, never result archives.
 # An ID embeds the original dispatch time, unlike directory/metadata mtimes,
@@ -156,7 +156,8 @@ def _reserve_destination(job, mode):
 
 def _perform(job_name, mode, *, host=None, output=None, latest=False, ssh_timeout=10,
              show_output=False, selected_job=None, incremental=False):
-    if mode not in MODES:raise ValueError('Download mode must be default, verbose, or starexec.')
+    if mode not in MODES:raise ValueError('Download mode must be default, debug, or starexec.')
+    if incremental and mode=='debug':raise ValueError('Debug downloads cannot be combined with --incremental.')
     host,timeout=_settings(host,ssh_timeout)
     if selected_job is None:
         # Reject invalid selectors before opening SSH.
@@ -172,7 +173,7 @@ def _perform(job_name, mode, *, host=None, output=None, latest=False, ssh_timeou
                    else _reserve_destination(selected_job, mode))
     argv.extend(['--output', str(destination)])
     # Redirection silences Python and native child output without changing
-    # the caller's global stdout/stderr or buffering verbose transfer logs.
+    # the caller's global stdout/stderr or buffering debug transfer logs.
     result=subprocess.run(argv,cwd=ROOT,stdin=subprocess.DEVNULL,text=True,
                           stdout=None if show_output else subprocess.DEVNULL,
                           stderr=None if show_output else subprocess.DEVNULL,check=False)
@@ -188,11 +189,12 @@ def download(job_name: str | None = None, mode: str = 'default', *, host=None,
 
     ``job_name`` is an exact display name or stable Slurmy ID. Use
     ``download(latest=True)`` to select the most recently dispatched job.
-    ``mode`` is default, verbose, or starexec. Optional output paths are relative
+    ``mode`` is default, debug, or starexec. Optional output paths are relative
     to the caller. Defaults reserve a unique display-name/local-time directory
-    under this repository's job-results (verbose/ or starexec/ for those modes).
-    Set ``incremental=True`` to reuse a local rsync cache while still publishing a
-    complete snapshot. Errors and cancellation return False without printing.
+    under this repository's job-results (debug/ or starexec/ for those modes).
+    All modes reuse a local rsync cache. Set ``incremental=True`` to export only
+    newly completed results since the last successful download in this format.
+    Debug downloads cannot be incremental. Errors and cancellation return False without printing.
     """
     try:
         return _perform(job_name,mode,host=host,output=output,latest=latest,ssh_timeout=ssh_timeout,incremental=incremental)
@@ -236,7 +238,7 @@ def build_parser():
     selection=parser.add_mutually_exclusive_group()
     selection.add_argument('--latest',action='store_true',help='download the most recently dispatched job')
     selection.add_argument('--interactive',action='store_true',help='pick the mode and job from Rich lists')
-    parser.add_argument('--incremental',action='store_true',help='reuse a local rsync cache; still create a complete snapshot')
+    parser.add_argument('--incremental',action='store_true',help='export only newly completed results (not available in debug mode)')
     parser.add_argument('--mode',choices=MODES,default='default',help='download format (default: default)')
     parser.add_argument('--host',default=os.environ.get('SLURMY_HOST','datalab'),help='SSH alias (default: $SLURMY_HOST or datalab)')
     parser.add_argument('--output',type=Path,help='destination directory (relative paths use the current directory)')

@@ -26,7 +26,7 @@ class DownloadTests(unittest.TestCase):
                    api.Job('old_1795516000_1','Workflow',1795516000)]
 
     def test_function_maps_modes_to_same_engine_and_is_silent(self):
-        for mode,flag in [('default',None),('verbose','--verbose'),('starexec','--starexec')]:
+        for mode,flag in [('default',None),('debug','--debug'),('starexec','--starexec')]:
             with self.subTest(mode=mode),patch.object(api,'list_jobs',return_value=self.jobs),patch.object(api.subprocess,'run',return_value=subprocess.CompletedProcess([],0)) as run:
                 stdout,stderr=io.StringIO(),io.StringIO()
                 with contextlib.redirect_stdout(stdout),contextlib.redirect_stderr(stderr):
@@ -34,7 +34,7 @@ class DownloadTests(unittest.TestCase):
                 self.assertIs(result,True);self.assertEqual(stdout.getvalue()+stderr.getvalue(),'')
                 argv=run.call_args.args[0]
                 self.assertEqual(argv[:3],[sys.executable,str(ROOT/'implementation/slurmy-sync.py'),self.jobs[0].id])
-                self.assertEqual('--verbose' in argv,flag=='--verbose')
+                self.assertEqual('--debug' in argv,flag=='--debug')
                 self.assertEqual('--starexec' in argv,flag=='--starexec')
                 self.assertEqual(argv[argv.index('--output')+1],str(Path('relative results').absolute()))
                 self.assertEqual(run.call_args.kwargs['cwd'],ROOT)
@@ -48,6 +48,11 @@ class DownloadTests(unittest.TestCase):
         with patch.object(api,'_perform',return_value=True) as perform:
             self.assertEqual(api.main(['--latest','--incremental']),0)
             self.assertTrue(perform.call_args.kwargs['incremental'])
+
+    def test_debug_incremental_rejected_before_ssh(self):
+        with patch.object(api,'list_jobs') as jobs, patch.object(api.subprocess,'run') as run:
+            self.assertFalse(api.download('Workflow',mode='debug',incremental=True))
+            jobs.assert_not_called();run.assert_not_called()
 
     def test_default_destinations_preserve_readable_names_and_mode_folders(self):
         instant = datetime(2026, 11, 25, 13, 14, 15, 123456)
@@ -176,15 +181,15 @@ class DownloadTests(unittest.TestCase):
 
     def test_cli_arguments_latest_and_interactive_use_one_catalog(self):
         with patch.object(api,'_perform',return_value=True) as perform:
-            self.assertEqual(api.main(['Workflow','--mode','verbose']),0)
-            self.assertEqual(perform.call_args.args,('Workflow','verbose'))
+            self.assertEqual(api.main(['Workflow','--mode','debug']),0)
+            self.assertEqual(perform.call_args.args,('Workflow','debug'))
             self.assertTrue(perform.call_args.kwargs['show_output'])
             self.assertEqual(api.main(['--latest','--mode','starexec']),0)
             self.assertTrue(perform.call_args.kwargs['latest'])
-        with patch.object(api,'list_jobs',return_value=self.jobs) as jobs,patch.object(api,'_pick',return_value=(self.jobs[1],'verbose')),patch.object(api,'_perform',return_value=True) as perform:
+        with patch.object(api,'list_jobs',return_value=self.jobs) as jobs,patch.object(api,'_pick',return_value=(self.jobs[1],'debug')),patch.object(api,'_perform',return_value=True) as perform:
             self.assertEqual(api.main(['--interactive']),0)
             jobs.assert_called_once();self.assertEqual(perform.call_args.kwargs['selected_job'],self.jobs[1])
-            self.assertEqual(perform.call_args.args[1],'verbose')
+            self.assertEqual(perform.call_args.args[1],'debug')
 
     @unittest.skipUnless(importlib.util.find_spec('rich'),'Rich is optional')
     def test_rich_picker_selects_mode_and_exact_job_from_lists(self):

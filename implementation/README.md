@@ -289,12 +289,12 @@ Each solver-problem pair's result CSV includes `szs_status` and `szs_output`; fo
 `SZS output end Proof` records `Proof` in `szs_output`. The `time` member of a
 solver-problem pair's original result archive measures the entire per-solver-problem pair limiter invocation,
 including the solver. Runsolver's measurements of the solver tree replace that
-fallback when available. Default download exports `<job-name>_results-summary.csv`,
+fallback when available. Default download exports `<job-name>_<download-time>_results-summary.csv`,
 `<job-name>_solver-stdout.tgz`, `<job-name>_solver-stderr.tgz`, and
 `<job-name>_postprocessing.tgz` into `job-results/JOB_ID/`.
 The public [`web-app/download.py`](../web-app/download.py) wrapper uses these same
 formats but reserves a fresh display-name/local-download-time directory on every
-call (under `job-results/`, `job-results/verbose/`, or `job-results/starexec/`).
+call (under `job-results/`, `job-results/debug/`, or `job-results/starexec/`).
 Run `python web-app/download.py "Job name"` from the repository root; see the
 [root download guide](../README.md#downloading-from-python-or-the-terminal) for
 environment setup, Python imports and explicit destinations. Its `--latest`
@@ -303,9 +303,11 @@ Each archive extracts into a same-named top-level directory and contains logs
 named `<solver>___<original-problem-filename>___<solver-problem-pair-id>.log` (or
 `.stderr.log` for stderr). The full problem filename is preserved exactly,
 including its extension and characters such as `+` and `^`. Original archives
-and diagnostics stay on the cluster. Use `slurmy-sync.py --verbose`
-for readable per-pair archives under `job-results/verbose/JOB_ID/solver-problem-pairs/`
-and original cluster files under `job-results/verbose/JOB_ID/diagnostics/`.
+and diagnostics stay on the cluster. Use `slurmy-sync.py --debug`
+for readable per-pair archives under `job-results/debug/JOB_ID/solver-problem-pairs/`
+and original cluster files under `job-results/debug/JOB_ID/diagnostics/`.
+All formats reuse a local rsync cache. `--incremental` exports only new or changed completed results since the last successful download in that format, with matching CSV rows and logs; it cannot be combined with `--debug`. A full download still includes every pair and updates that baseline.
+
 Each per-pair archive extracts into its own directory; the original archive
 references and retry history are preserved in `diagnostics/results/`.
 
@@ -329,7 +331,7 @@ selected full-collection axiom glob takes precedence over that environment setti
 | Script | Purpose |
 | --- | --- |
 | `slurmy-pairs.py` | Expand configurations × all selected problem globs into an explicit `jobpairs.csv`; supports problem-major, solver-major, or reproducible random order. |
-| `slurmy-sync.py` | Download the summary and three log archives into `job-results/JOB_ID/`; `--verbose` downloads raw files, and `--follow` keeps updating. |
+| `slurmy-sync.py` | Download the summary and three log archives into `job-results/JOB_ID/`; `--debug` downloads raw files, and `--follow` keeps updating. |
 | `slurmy-cancel.py` | Choose an active SLURM allocation to cancel, or provide its ID non-interactively. |
 | `slurmy-job.py` | Stop or resume an entire Slurmy job by ID (`stop` or `resume`); resume keeps completed calls. |
 | `check_threads.py` | Check requested threads per core against the selected partition before preparation or dispatch. |
@@ -480,7 +482,7 @@ passes the native EOF smoke test. New defaults and bundled example workflows use
 `--timestamp --add-eof` in that order. Add `--add-eof` after `--timestamp` in
 existing custom invocations too; previously collected logs are not given an
 artificial EOF when downloaded.
-Standard and verbose downloads remain separate.
+Standard and debug downloads remain separate.
 
 ## Workflow Builder and REST Transport
 
@@ -760,7 +762,7 @@ Stdout and stderr from postprocessing are inspectable with each pair's other
 output streams. Standard downloads include a fourth file,
 `<job-name>_postprocessing.tgz`, containing the raw reports and diagnostics inside
 a same-named directory, using the same solver/problem/pair filename convention.
-Verbose downloads retain these files in the individual pair archives as well.
+Debug downloads retain these files in the individual pair archives as well.
 
 The bundled example lives at `implementation/postprocessors/default_szs.py`. It
 recognizes SZS statuses and output forms (including official three-letter names)

@@ -104,7 +104,7 @@ def copy_output(source, output, prefix, defer_eof=False):
     return None
 
 
-def export(compact: Path, destination: Path, job_id: str):
+def export(compact: Path, destination: Path, job_id: str, *, csv_suffix: str = ""):
     summaries = list(compact.glob('*_results-summary.csv'))
     if len(summaries) != 1: raise ValueError('Expected one downloaded results summary.')
     with summaries[0].open(newline='', encoding='utf-8') as stream:
@@ -126,7 +126,7 @@ def export(compact: Path, destination: Path, job_id: str):
     with tempfile.TemporaryDirectory(prefix='.starexec-', dir=destination) as folder:
         stage = Path(folder)
         with zipfile.ZipFile(stage / names[0], 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
-            with archive.open(f'{name}/{name}_info.csv', 'w', force_zip64=True) as member:
+            with archive.open(f'{name}/{name}_info{csv_suffix}.csv', 'w', force_zip64=True) as member:
                 with io.TextIOWrapper(member, encoding='utf-8', newline='') as text:
                     writer = csv.DictWriter(text, fieldnames=FIELDS); writer.writeheader()
                     writer.writerows(summary_row(row, benchmarks[row['problem']]) for row in rows)

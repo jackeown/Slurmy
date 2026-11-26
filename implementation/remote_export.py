@@ -92,16 +92,18 @@ def records(root: Path) -> dict[int, dict[str, str]]:
     return found
 
 
-def export(root: Path, combined: bool = False) -> None:
+def export(root: Path, combined: bool = False, task_ids: set[int] | None = None) -> None:
     # StarExec staging must not replace the standard four-file download.
     directory = root / 'exports' / 'starexec' if combined else root / 'exports'
+    if task_ids is not None:
+        directory = directory / 'incremental'
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (directory / '.lock').open('a+') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         source_files = [root / 'metadata.json', root / 'manifest.jsonl',
                         *sorted((root / 'results').glob('batch_*_task_*.csv')),
                         *sorted((root / 'results').glob('*.tar.gz'))]
-        signature = hashlib.sha256(('streams-v4-execution-provenance' + str(combined) + szs.REGISTRY_VERSION + repr([(path.name, path.stat().st_size, path.stat().st_mtime_ns)
+        signature = hashlib.sha256(('streams-v4-execution-provenance' + str(combined) + repr(sorted(task_ids) if task_ids is not None else None) + szs.REGISTRY_VERSION + repr([(path.name, path.stat().st_size, path.stat().st_mtime_ns)
                                          for path in source_files if path.is_file()])).encode()).hexdigest()
         signature_file = directory / '.signature'
         metadata = json.loads((root / 'metadata.json').read_text(encoding='utf-8'))
@@ -134,7 +136,7 @@ def export(root: Path, combined: bool = False) -> None:
                 fields = (*base_fields, *columns.values())
                 writer = csv.DictWriter(csv_file, fieldnames=fields)
                 writer.writeheader()
-                for task_id in range(count):
+                for task_id in (range(count) if task_ids is None else sorted(task_ids)):
                     definition = definitions.get(task_id, {})
                     result = results.get(task_id, {})
                     row = {field: result.get(field, '') for field in RESULT_FIELDS}
@@ -197,7 +199,10 @@ def export(root: Path, combined: bool = False) -> None:
             (staging / '.signature').write_text(signature + '\n', encoding='ascii')
             os.replace(staging / '.signature', signature_file)
         completed = sum(str(result.get('complete', '')).lower() == 'true' for result in results.values())
-        print(f'Export ready: {completed}/{count} solver-problem pairs finished; summary includes unfinished pairs', flush=True)
+        if task_ids is None:
+            print(f'Export ready: {completed}/{count} solver-problem pairs finished; summary includes unfinished pairs', flush=True)
+        else:
+            print(f'Incremental export ready: {len(task_ids)} newly completed or updated solver-problem pairs; no unfinished rows', flush=True)
         print('EXPORT_FILES|' + '|'.join(names), flush=True)
 
 

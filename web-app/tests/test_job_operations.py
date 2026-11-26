@@ -62,6 +62,16 @@ class JobOperationTests(unittest.TestCase):
         self.assertNotEqual(download.json['id'], stop.json['id'])
         self.assertEqual(self.action('resume').status_code, 409)
 
+    def test_debug_download_uses_debug_mode(self):
+        response=self.action('sync_debug')
+        self.assertEqual(response.status_code,202)
+        worker=web.threading.Thread.call_args.kwargs['target']
+        with patch.object(web.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
+            worker()
+        self.assertIn('--debug',run.call_args.args[0])
+        operation=self.client.get('/api/operations/'+response.json['id']).json
+        self.assertEqual(operation['phase'],'Download debug results')
+
     def test_starexec_download_uses_new_format_and_does_not_block_stop(self):
         response=self.action('sync_starexec')
         self.assertEqual(response.status_code,202)

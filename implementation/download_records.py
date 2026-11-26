@@ -46,7 +46,7 @@ def snapshots(root, host, job_id):
             continue
     # Older compact/verbose downloads already have exact identity metadata.
     # Recover those too; never guess ownership from a display-name prefix.
-    for parent in (root, root/'verbose', root/'starexec'):
+    for parent in (root, root/'debug', root/'verbose', root/'starexec'):
         if parent.is_symlink() or not parent.is_dir():
             continue
         for path in parent.iterdir():

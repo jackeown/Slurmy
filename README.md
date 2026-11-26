@@ -43,13 +43,13 @@ On macOS, the built-in Bash, OpenSSH, and tar are sufficient; install Python 3
 if needed, and run `xcode-select --install` if `make` is missing. On Debian/Ubuntu,
 install `python3 python3-venv python3-pip bash openssh-client tar make`.
 **`rsync` is additionally required for downloading cluster build outputs and for
-verbose incremental result downloads.** Standard result downloads use `rsync`
+debug incremental result downloads.** Standard result downloads use `rsync`
 when available and otherwise fall back to `scp`; prebuilt solvers do not require
 local build tools. Install `rsync` only if you need those additional operations
 (`brew install rsync` on macOS, or your Linux package manager).
 
 The cluster needs Python 3.9+, Bash 4+, SLURM commands, tar/gzip, and standard
-Linux tools (`lscpu`, `taskset`, `flock`, `setsid`, and `timeout`); remote builds and verbose downloads also need rsync.
+Linux tools (`lscpu`, `taskset`, `flock`, `setsid`, and `timeout`); remote builds and debug downloads also need rsync.
 Solver build recipes may require additional **cluster-side** build tools.
 Missing local submission/build tools are reported before the corresponding work
 starts. SSH authentication and any required VPN access must already be configured.
@@ -224,7 +224,7 @@ In **Job history**, follow progress and open a job to inspect solver-problem pai
 solver comparisons, problems, output streams, and diagnostics. Select solver-problem pair
 outcomes to filter the solver-problem pairs table by multiple statuses; the 3D plot compares outcome
 counts across solvers. **Download** saves four files under
-`job-results/JOB_ID/`: `<job-name>_results-summary.csv`,
+`job-results/JOB_ID/`: `<job-name>_<download-time>_results-summary.csv`,
 `<job-name>_solver-stdout.tgz`, `<job-name>_solver-stderr.tgz`, and
 `<job-name>_postprocessing.tgz`.
 Each archive extracts into its own directory, with one log per solver-problem pair named
@@ -232,15 +232,15 @@ Each archive extracts into its own directory, with one log per solver-problem pa
 for stderr). Problem filenames, including their extensions and characters such
 as `+` and `^`, are preserved exactly. Unsafe filename characters in the job
 name are replaced with hyphens. The arrow menu offers
-**Complete/verbose download**
-under `job-results/verbose/JOB_ID/`. Readable individual archives are grouped in
+**Complete/debug download**
+under `job-results/debug/JOB_ID/`. Readable individual archives are grouped in
 `solver-problem-pairs/` and named
 `<solver>___<original-problem-filename>___<solver-problem-pair-id>.tgz`.
 Each extracts into a matching directory containing solver logs and diagnostic
 files. The `diagnostics/` directory preserves the original cluster files,
 including raw archives and retry history, SLURM logs, plans, and metadata.
 Consolidated stdout/stderr archives and download statistics remain at the top
-level. `CONTENTS.txt` explains the layout. Existing verbose downloads are
+level. `CONTENTS.txt` explains the layout. Existing debug downloads are
 organized into this layout on their next download.
 
 The workflow editor suggests a batch size in **SLURM Settings**. It conservatively assumes
@@ -410,7 +410,7 @@ From the repository root, activate your environment and install the root require
 source .venv/bin/activate  # Create first with python3 -m venv .venv if needed.
 python -m pip install -r requirements.txt
 python web-app/download.py "Job name" --mode default
-python web-app/download.py "Job name" --mode verbose
+python web-app/download.py "Job name" --mode debug
 python web-app/download.py --latest --mode starexec
 python web-app/download.py "Job name" --mode starexec --incremental
 python web-app/download.py --interactive
@@ -423,7 +423,7 @@ originally dispatched job, unaffected by renames, result updates or resumes.
 in `requirements.txt`, or install it with `python -m pip install rich`; normal
 commands and the Python function work without it.
 
-`--incremental` uses rsync to download only changed raw result files into a local cache. Each timestamped download is still a complete, independent snapshot; existing snapshots are not modified. All three formats are supported. The first incremental download populates the cache and may transfer more data than a standard download. Later downloads reuse it, and unchanged StarExec ZIPs are reused too. Local conversion and copying can still take time for large jobs. Install rsync before using this option. Downloads within `job-results/` are recorded so the job deletion dialog can offer to remove the snapshots and cache; explicitly chosen destinations outside that folder are left alone. Older unrecorded timestamped downloads may need manual cleanup.
+Every download reuses a per-job local rsync cache, so unchanged cluster files are not transferred again. Without `--incremental`, the output is a complete snapshot. With `--incremental`, only newly completed solver-problem pairs (or completed results that have changed since the last successful download in that format) are included: the CSV and output archives contain the same selected pairs, with no unfinished rows. The first download includes all completed results. Default and StarExec formats keep separate histories; a full snapshot also establishes the baseline for later incremental downloads. A failed download does not advance that history. `--mode debug` cannot be combined with `--incremental`. Each summary CSV has a download timestamp in its filename, including the CSV inside the StarExec information ZIP. Earlier snapshots stay unchanged. Install rsync for cached transfers; standard downloads can fall back to SCP if it is unavailable. Downloads within `job-results/` and their cache are tracked for the job deletion dialog; explicitly chosen destinations outside that folder remain under your control.
 
 Run Python from `web-app/`, or add the absolute `web-app/` directory to
 `PYTHONPATH`, to import the function:
@@ -439,7 +439,7 @@ success = download(latest=True, mode="starexec", host="datalab", incremental=Tru
 The function prints nothing and returns `True` on success or `False` on failure
 (including missing/ambiguous names and connection errors). It downloads the
 currently available results; it does not wait for a running job to finish.
-Formats are `default` (CSV and three output archives), `verbose` (complete
+Formats are `default` (CSV and three output archives), `debug` (complete
 results and diagnostics), and `starexec` (compatible ZIPs). The normal CLI prints
 progress and exits 0 on success, 1 on failure, or 130 on cancellation.
 
@@ -448,9 +448,9 @@ Both interfaces accept an SSH host (`--host` / `host=`), destination
 Without a destination, each call reserves a new folder named after the job's
 display name and the local download date/time (with microseconds), for example
 `job-results/starexec/demo-workflow_2026-11-25_14-30-05.123456`. Default mode
-uses `job-results/`; verbose and StarExec use `job-results/verbose/` and
+uses `job-results/`; debug and StarExec use `job-results/debug/` and
 `job-results/starexec/`. Unsafe filename characters are replaced, and collisions
 receive a unique suffix; existing download folders are never reused. The stable
 internal job ID still selects the remote results. Explicit output paths retain
-the existing behavior; relative paths resolve from your current directory. Verbose downloads require rsync,
-just like the verbose button in the interface.
+the existing behavior; relative paths resolve from your current directory. Debug downloads require rsync,
+just like the debug button in the interface.

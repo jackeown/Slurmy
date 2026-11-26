@@ -206,7 +206,7 @@ class ExportTests(unittest.TestCase):
                                output=str(self.root), follow=False)
         with patch.object(sync, 'resolve_job_id', return_value='study'), patch.object(sync, 'rsync_job', return_value=0) as transfer:
             self.assertEqual(sync.sync_loop(args), 0)
-            transfer.assert_called_with('test-host', 'study', self.root/'diagnostics', 10)
+            transfer.assert_called_with('test-host', 'study', self.root/'diagnostics', 10, mirror=True)
             self.assertFalse((self.root/'results').exists())
             self.assert_archives(self.root)
             for name, body in originals.items():

@@ -33,6 +33,7 @@ def main():
     templates = Path(__file__).with_name('templates')
     local_paths = [Path(__file__).resolve().parent.parent / 'job-results' / args.job_id,
                    Path(__file__).resolve().parent.parent / 'job-results' / 'verbose' / args.job_id,
+                   Path(__file__).resolve().parent.parent / 'job-results' / 'debug' / args.job_id,
                    Path(__file__).resolve().parent.parent / 'job-results' / 'starexec' / args.job_id]
     local_paths += snapshots(Path(__file__).resolve().parent.parent/'job-results', args.host, args.job_id)
     if args.action == 'delete' and args.delete_local and any(p.is_symlink() for p in local_paths):
